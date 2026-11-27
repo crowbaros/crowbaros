@@ -9562,6 +9562,136 @@ fn write_sessions_file(path: &Path, sessions: &Value) {
     std::fs::rename(&tmp, path).unwrap();
 }
 
+fn count_lines(path: &Path) -> usize {
+    std::fs::read_to_string(path).map(|t| t.lines().count()).unwrap_or(0)
+}
+
+#[test]
+fn a_listing_that_writes_to_the_store_it_watches_does_not_start_the_harness_again_and_again() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    let sessions_file = store_dir.join("sessions.json");
+    let starts = store_dir.join("starts.log");
+    let cwd = dir.0.join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    write_sessions_file(
+        &sessions_file,
+        &json!([{
+            "session_id": "ses_hand_1",
+            "cwd": cwd.to_str().unwrap(),
+            "title": "By hand",
+            "history": [{ "kind": "user_text", "text": "hi" }, { "kind": "text", "text": "hello" }]
+        }]),
+    );
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "touch_on_start": starts.to_str().unwrap(),
+        }),
+    );
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    let initial = read_frame(&mut watcher).unwrap();
+    if initial["threads"].as_array().is_none_or(Vec::is_empty) {
+        read_until(&mut watcher, |f| {
+            f["event"] == "threads" && f["threads"].as_array().is_some_and(|t| t.len() == 1)
+        });
+    }
+
+    // Each listing writes to the store, which must not bring the next.
+    std::thread::sleep(Duration::from_millis(1500));
+    let settled = count_lines(&starts);
+    assert!(settled <= 2, "the harness started {settled} times for one store change");
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(
+        count_lines(&starts),
+        settled,
+        "the harness kept starting on a quiet store"
+    );
+
+    // A change of the person's is still seen.
+    let mut sessions: Value = serde_json::from_slice(&std::fs::read(&sessions_file).unwrap()).unwrap();
+    sessions.as_array_mut().unwrap().push(json!({
+        "session_id": "ses_hand_2",
+        "cwd": cwd.to_str().unwrap(),
+        "title": "Also by hand",
+        "history": [{ "kind": "user_text", "text": "again" }, { "kind": "text", "text": "yes" }]
+    }));
+    write_sessions_file(&sessions_file, &sessions);
+    read_until(&mut watcher, |f| {
+        f["event"] == "threads" && f["threads"].as_array().is_some_and(|t| t.len() == 2)
+    });
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_session_appears_while_its_store_keeps_changing() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let cwd = dir.0.join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({ "list_sessions": true, "sessions_file": sessions_file.to_str().unwrap() }),
+    );
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+
+    write_sessions_file(
+        &sessions_file,
+        &json!([{
+            "session_id": "ses_streaming",
+            "cwd": cwd.to_str().unwrap(),
+            "title": "Still answering",
+            "history": [{ "kind": "user_text", "text": "go" }]
+        }]),
+    );
+    // The session's turn goes on writing to the store, faster than the
+    // debounce, for longer than the longest wait.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer = {
+        let stop = std::sync::Arc::clone(&stop);
+        let part = store_dir.join("parts.log");
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) && started.elapsed() < Duration::from_secs(8) {
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&part)
+                    .unwrap();
+                std::io::Write::write_all(&mut f, b"part\n").unwrap();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        })
+    };
+    let started = Instant::now();
+    read_until(&mut watcher, |f| {
+        f["event"] == "threads" && f["threads"].as_array().is_some_and(|t| t.len() == 1)
+    });
+    let took = started.elapsed();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    writer.join().unwrap();
+    assert!(
+        took < Duration::from_secs(4),
+        "the session appeared only after {took:?}"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
 #[test]
 fn external_sessions_appear_on_store_change_without_keeping_harness_running_and_import_on_resume() {
     let dir = TempDir::new();
@@ -9976,7 +10106,7 @@ fn external_session_load_failure_is_retryable_and_delete_does_not_resurrect() {
             "list_sessions": true,
             "sessions_file": sessions_file.to_str().unwrap(),
             "delete_session": false,
-            "load_session_error": { "code": -32000, "message": "temporary load failure" },
+            "load_session_error": { "code": -32000, "message": "Session not found: ses_flaky_load" },
             "turns": []
         }),
     );
@@ -10015,6 +10145,10 @@ fn external_session_load_failure_is_retryable_and_delete_does_not_resurrect() {
     let err = read_frame(&mut peer).unwrap();
     assert_eq!(err["reply"], "error", "{err}");
     assert_eq!(err["code"], "harness-error", "{err}");
+    assert!(
+        !err.to_string().contains("ses_flaky_load"),
+        "harness session ID leaked: {err}"
+    );
 
     // Restart Lever with a working script (no load_session_error) and retry resume.
     lever.signal(libc::SIGTERM);
@@ -10077,6 +10211,185 @@ fn external_session_load_failure_is_retryable_and_delete_does_not_resurrect() {
     let threads = pushed["threads"].as_array().unwrap();
     assert_eq!(threads.len(), 1, "deleted session must not resurrect: {threads:?}");
     assert_eq!(threads[0]["title"], "Fresh session");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_thread_the_harness_deleted_stays_deleted_and_is_not_opened_while_deleting() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    let sessions_file = store_dir.join("sessions.json");
+    let session = |id: &str, title: &str| {
+        json!({
+            "session_id": id,
+            "cwd": "/tmp",
+            "title": title,
+            "history": [{ "kind": "user_text", "text": "hi" }, { "kind": "text", "text": "hello" }]
+        })
+    };
+    write_sessions_file(
+        &sessions_file,
+        &json!([session("ses_gone", "Gone"), session("ses_slow", "Slow")]),
+    );
+    // The harness deletes its copy, but a listing taken before that still
+    // shows it: the stub's list keeps every session in its file.
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "delete_session": true,
+            "delete_delay_ms": 600,
+        }),
+    );
+    let mut lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    let initial = read_frame(&mut watcher).unwrap();
+    let listed = if initial["threads"].as_array().is_some_and(|t| t.len() == 2) {
+        initial
+    } else {
+        read_until(&mut watcher, |f| {
+            f["event"] == "threads" && f["threads"].as_array().is_some_and(|t| t.len() == 2)
+        })
+    };
+    let id_of = |title: &str| {
+        listed["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["title"] == title)
+            .unwrap()["thread"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (gone, slow) = (id_of("Gone"), id_of("Slow"));
+
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut peer, &json!({ "op": "delete", "thread": gone })).unwrap();
+    // While the harness deletes it, the thread is not opened from its session.
+    let mut other = handshake(&lever.person);
+    other.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut other, &json!({ "op": "resume", "thread": gone })).unwrap();
+    let refused = read_until(&mut other, |f| f.get("reply").is_some());
+    assert_eq!(refused["code"], "working", "{refused}");
+    let deleted = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(deleted["reply"], "deleted", "{deleted}");
+    assert!(deleted["warning"].is_null(), "{deleted}");
+
+    // The next listing still has it, and it does not come back.
+    let mut sessions: Value = serde_json::from_slice(&std::fs::read(&sessions_file).unwrap()).unwrap();
+    sessions.as_array_mut().unwrap().push(session("ses_new", "New"));
+    write_sessions_file(&sessions_file, &sessions);
+    let pushed = read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.iter().any(|t| t["title"] == "New"))
+    });
+    let titles: Vec<&str> = pushed["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["title"].as_str())
+        .collect();
+    assert!(!titles.contains(&"Gone"), "a deleted thread came back: {titles:?}");
+    assert!(
+        pushed["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["thread"] == slow)
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_session_lever_opened_to_read_the_models_is_never_a_thread() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "list_sessions": true,
+            "sessions_file": sessions_file.to_str().unwrap(),
+            "session_prefix": "ses_lever_",
+            "models": [{ "id": "stub/stub-1", "name": "Stub 1" }],
+        }),
+    );
+    let mut extra: Vec<String> = [
+        "--harness",
+        STUB_BIN,
+        "--harness-name",
+        "Stub",
+        "--harness-arg",
+        "--script",
+        "--harness-arg",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    extra.push(script.to_str().unwrap().into());
+    for arg in [
+        "--harness-watch",
+        store_dir.to_str().unwrap(),
+        "--discovery-debounce-ms",
+        "40",
+        "--idle-timeout-ms",
+        "300",
+    ] {
+        extra.push(arg.into());
+    }
+    let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut peer, &json!({ "op": "models" })).unwrap();
+    let models = read_until(&mut peer, |f| f.get("reply").is_some());
+    assert_eq!(models["reply"], "models", "{models}");
+
+    // Once the harness that opened it is gone, a listing still shows it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        write_frame(&mut peer, &json!({ "op": "status" })).unwrap();
+        let status = read_until(&mut peer, |f| f["reply"] == "status");
+        if status["harness_started"] == false {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the harness never idled out: {status}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+    write_sessions_file(
+        &sessions_file,
+        &json!([
+            { "session_id": "ses_lever_1", "cwd": "/tmp", "title": "New session" },
+            {
+                "session_id": "ses_hand",
+                "cwd": "/tmp",
+                "title": "By hand",
+                "history": [{ "kind": "user_text", "text": "hi" }, { "kind": "text", "text": "hello" }]
+            }
+        ]),
+    );
+    let pushed = read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.iter().any(|t| t["title"] == "By hand"))
+    });
+    assert_eq!(pushed["threads"].as_array().unwrap().len(), 1, "{pushed}");
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));

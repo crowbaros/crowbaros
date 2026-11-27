@@ -292,17 +292,26 @@ ACP today:
     watch directories can be passed with `--harness-watch <dir>` for any ACP
     harness.
   - **Listing without keeping the harness running.** After a short debounce
-    (`--discovery-debounce-ms`, default `400` ms), a background worker runs a
-    one-shot listing command against the harness and closes it as soon as the
-    list is returned, so no harness stays running for discovery. Generic ACP
-    harnesses are queried via one-shot `initialize` + paginated `session/list`.
-    For OpenCode, Lever lists across all directories via one-shot `opencode acp`
-    `session/list` and classifies unseen sessions with OpenCode's own CLI
-    (`opencode session list --standalone --format json` and, where ambiguous,
-    `opencode session export --standalone <id>`) so subagent sessions and empty
-    0-message sessions are excluded without reading OpenCode's internal SQLite
-    schema directly. Sessions Lever started itself and subagents Lever knows
-    about are never listed twice or promoted to threads.
+    (`--discovery-debounce-ms`, default `400` ms, and never more than 2 s after
+    the first change while the store keeps changing), a background worker runs
+    a one-shot listing command against the harness and closes it as soon as the
+    list is returned, so no harness stays running for discovery. Listing writes
+    to the harness's own store, so a change seen while a pass runs, or within
+    the debounce after it, brings at most one follow-up pass, and a quiet store
+    stays quiet. Each listing command has a 15 s deadline and ends with Lever.
+    Generic ACP harnesses are queried via one-shot `initialize` + paginated
+    `session/list`. For OpenCode, Lever lists across all directories via
+    one-shot `opencode acp` `session/list` and classifies unseen sessions with
+    OpenCode's own CLI (`opencode session list --standalone --format json` and
+    `opencode session export --standalone <id>`), without reading OpenCode's
+    internal SQLite schema. A session becomes a thread only on positive
+    evidence: OpenCode's top-level list shows it with a title and activity, or
+    its export has messages and no parent. Only an export that names a parent
+    marks it a subagent; a session whose classification fails is tried again on
+    a later pass, and an empty or archived one again once it changes. Sessions
+    Lever started itself, the sessions it opens to read what the harness
+    offers, the sessions a replacement took over from, and subagents Lever
+    knows about are never listed twice or promoted to threads.
   - **Lazy import on open or send.** A newly discovered session becomes a thread
     in Lever's database with its own `t-...` ID and the folder (`cwd`) it was
     started in, and appears in `list` and live `threads` updates. The first
@@ -310,19 +319,25 @@ ACP today:
     `session/load`, records its replayed turns, acts, and subagents atomically
     in Lever's SQLite database, and clears its pending-import flag. Later
     resumes read straight from SQLite without starting the harness, and a
-    follow-up message continues the same harness session. If a thread is
-    deleted when the harness cannot delete its own copy, Lever remembers its
-    harness session ID so later store changes do not resurrect it.
-  - **Same session open in a terminal and in the Agent's surface at once.**
-    Once Lever has imported a session into its record, both Lever and a
-    terminal running the harness share the harness's underlying session store
-    (for OpenCode 2.4.1, SQLite in WAL mode). Sending from both places does not
-    crash either side: the Model sees turns from both on its next call because
-    both read the shared store. However, neither process pushes live updates to
-    the other: turns sent later in the terminal are not streamed back into
-    Lever's record (per ADR 0036, what the person sees in the Agent's surface
-    is Lever's record), and turns sent from the Agent's surface are not shown
-    live in an already-open terminal TUI until it reloads.
+    follow-up message continues the same harness session. A thread is not
+    opened while it is being deleted. Deleting a thread deletes the harness's
+    own copy too where the harness can, so the session is gone from the
+    terminal as well; either way Lever remembers its harness session ID and its
+    subagents', so a listing taken before the delete does not bring it back.
+  - **Same session in a terminal and in the Agent's surface.** What the person
+    sees in the Agent's surface is Lever's record (ADR 0036), read from the
+    harness once, when the thread is first opened. What follows from that:
+    - A session opened while its first terminal turn still works is recorded
+      as far as the harness had written it; the rest of that turn, and turns
+      sent later in the terminal, are not read into Lever's record.
+    - A message sent from the drawer goes to the same harness session, and the
+      Model sees the terminal's turns with it. The desktop check shows this for
+      a session whose terminal turn had ended.
+    - A terminal that has the session open is not told of turns sent from the
+      drawer until it loads the session again.
+    - Sending from both places at the same moment is not tested. Each harness
+      process writes to the same session in the harness's store, and nothing
+      orders the two turns.
 
 ## Channels and framing
 

@@ -870,8 +870,8 @@ impl Store {
                     "UPDATE threads \
                      SET needs_history = 0, \
                          title = COALESCE(?1, title), \
-                         model = COALESCE(?2, model), \
-                         effort = COALESCE(?3, effort), \
+                         model = COALESCE(model, ?2), \
+                         effort = COALESCE(effort, ?3), \
                          updated_at = MAX(updated_at, ?4) \
                      WHERE id = ?5",
                     params![
@@ -932,6 +932,16 @@ impl Store {
             .execute(
                 "UPDATE threads SET harness_session_id = '' WHERE harness_session_id = ?1 AND id <> ?2",
                 params![session_id, thread_id],
+            )
+            .map_err(|e| format!("could not store harness session id: {e}"))?;
+        // A session this one replaces is Lever's still, and never a thread
+        // of its own when a listing finds it.
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO ignored_sessions (harness_session_id, reason, created_at)
+                 SELECT harness_session_id, 'replaced', strftime('%s', 'now') FROM threads
+                 WHERE id = ?1 AND harness_session_id IS NOT NULL AND harness_session_id NOT IN ('', ?2)",
+                params![thread_id, session_id],
             )
             .map_err(|e| format!("could not store harness session id: {e}"))?;
         self.conn
@@ -1492,11 +1502,28 @@ impl Store {
         Ok(())
     }
 
-    pub fn delete_thread(&self, thread: &str) -> Result<(), String> {
-        self.conn
-            .execute("DELETE FROM threads WHERE id = ?1", params![thread])
-            .map_err(|e| format!("could not delete thread: {e}"))?;
-        Ok(())
+    /// Deletes a thread, and remembers its harness session and its
+    /// subagents' sessions as deleted in the same transaction, so a listing
+    /// of the harness's sessions taken before the delete never brings them
+    /// back as threads.
+    pub fn delete_thread(&self, thread: &str, now: i64) -> Result<(), String> {
+        self.all_or_none("delete thread", || {
+            self.conn
+                .execute(
+                    "INSERT OR IGNORE INTO ignored_sessions (harness_session_id, reason, created_at)
+                     SELECT harness_session_id, 'deleted', ?2 FROM threads
+                     WHERE id = ?1 AND harness_session_id IS NOT NULL AND harness_session_id <> ''
+                     UNION
+                     SELECT harness_session_id, 'deleted', ?2 FROM subagents
+                     WHERE thread_id = ?1 AND harness_session_id <> ''",
+                    params![thread, now],
+                )
+                .map_err(|e| format!("could not delete thread: {e}"))?;
+            self.conn
+                .execute("DELETE FROM threads WHERE id = ?1", params![thread])
+                .map_err(|e| format!("could not delete thread: {e}"))?;
+            Ok(())
+        })
     }
 
     pub fn get_thread(&self, thread_id: &str) -> Result<Option<ThreadRecord>, String> {
@@ -2659,6 +2686,24 @@ mod tests {
         assert!(!meta.needs_history);
         assert_eq!(meta.model.as_deref(), Some("stub/stub-1"));
         assert_eq!(meta.effort.as_deref(), Some("high"));
+        // A Model the person chose before opening it outlives the import.
+        store
+            .create_discovered_thread(
+                "t-ext2",
+                "Thread",
+                "/tmp",
+                Some("OpenCode"),
+                "ses-ext-2",
+                "ask-first",
+                90,
+                96,
+            )
+            .unwrap();
+        store.set_thread_model("t-ext2", "stub/chosen", 100).unwrap();
+        store.import_thread_history("t-ext2", &history, None, 105).unwrap();
+        let meta = store.thread_meta("t-ext2").unwrap().unwrap();
+        assert_eq!(meta.model.as_deref(), Some("stub/chosen"));
+        assert_eq!(meta.effort.as_deref(), Some("high"));
 
         let rec = store.get_thread("t-ext1").unwrap().unwrap();
         assert_eq!(rec.title, "Terminal chat");
@@ -2672,6 +2717,28 @@ mod tests {
 
         let (_, ignored_after) = store.known_harness_sessions().unwrap();
         assert!(ignored_after.contains("ses-sub-2"));
+
+        // A session a new one replaces is never taken for one started by hand.
+        store.set_harness_session_id("t-ext1", "ses-ext-1b").unwrap();
+        let (owned, ignored) = store.known_harness_sessions().unwrap();
+        assert!(owned.contains("ses-ext-1b"));
+        assert!(ignored.contains("ses-ext-1"));
+
+        // Deleting remembers the thread's session and its subagents', whether
+        // or not the harness deleted its own copy.
+        store
+            .conn
+            .execute(
+                "DELETE FROM ignored_sessions WHERE harness_session_id = 'ses-sub-2'",
+                [],
+            )
+            .unwrap();
+        store.delete_thread("t-ext1", 110).unwrap();
+        let (owned, ignored) = store.known_harness_sessions().unwrap();
+        assert!(!owned.contains("ses-ext-1b"));
+        assert!(ignored.contains("ses-ext-1b"));
+        assert!(ignored.contains("ses-sub-2"));
+        assert!(store.thread_meta("t-ext1").unwrap().is_none());
 
         store.close().unwrap();
         let _ = std::fs::remove_dir_all(&dir);

@@ -4,7 +4,7 @@
 
 use crate::acp::{self, AcpEvent, AcpHarness, EffortOption, HarnessCommand, HarnessConfig, ModelCatalog, TurnOutcome};
 use crate::channel::LEVER_VERSION;
-use crate::discovery::{self, DiscoveryRunner, ExternalSession, SessionHistory};
+use crate::discovery::{self, DiscoveryRunner, DiscoverySchedule, ExternalSession, SessionHistory};
 use crate::fulcrum;
 use crate::log::{Event, Log};
 use crate::store::{
@@ -282,9 +282,11 @@ pub struct Service {
     harness: Option<AcpHarness>,
     watcher: Option<StoreWatcher>,
     discovery: Option<DiscoveryRunner>,
+    discovery_schedule: DiscoverySchedule,
     discovery_debounce: Duration,
-    discovery_due: Option<Instant>,
-    /// True if another store change arrived while a live `session/list` RPC
+    /// True while a live `session/list` RPC is in flight on `self.harness`.
+    live_list_in_flight: bool,
+    /// True if another pass was asked for while a live `session/list` RPC
     /// was already in flight on `self.harness`.
     live_list_rescan_wanted: bool,
     /// Discovered threads whose history load is queued or in flight:
@@ -402,10 +404,10 @@ impl Service {
         let watcher = discovery
             .as_ref()
             .and_then(|d| StoreWatcher::new(d.watch_specs()).ok().flatten());
-        let discovery_due = discovery
-            .as_ref()
-            .is_some_and(DiscoveryRunner::has_store_data)
-            .then(Instant::now);
+        let mut discovery_schedule = DiscoverySchedule::new(discovery_debounce, discovery::DISCOVERY_MAX_WAIT);
+        if discovery.as_ref().is_some_and(DiscoveryRunner::has_store_data) {
+            discovery_schedule.request(Instant::now());
+        }
         Self {
             pending_deletes: Vec::new(),
             store,
@@ -414,8 +416,9 @@ impl Service {
             harness: None,
             watcher,
             discovery,
+            discovery_schedule,
             discovery_debounce,
-            discovery_due,
+            live_list_in_flight: false,
             live_list_rescan_wanted: false,
             loading_history: HashMap::new(),
             dispatched_history: HashSet::new(),
@@ -483,7 +486,34 @@ impl Service {
     /// debounced discovery scan when anything changed.
     pub fn on_store_changed(&mut self) {
         if self.watcher.as_mut().is_some_and(StoreWatcher::drain_changed) && self.discovery.is_some() {
-            self.discovery_due = Some(Instant::now() + self.discovery_debounce);
+            let busy = self.discovery_busy();
+            self.discovery_schedule.store_changed(Instant::now(), busy);
+        }
+    }
+
+    /// Whether a discovery pass is running: a one-shot listing or
+    /// classification on the background thread, or a live `session/list`.
+    fn discovery_busy(&self) -> bool {
+        self.live_list_in_flight || self.discovery.as_ref().is_some_and(DiscoveryRunner::in_flight)
+    }
+
+    /// A live `session/list` the harness will not answer, as it stopped or
+    /// exited, is a lost pass: another runs after a quiet period.
+    fn lose_live_list(&mut self) {
+        let lost = std::mem::take(&mut self.live_list_in_flight);
+        let rescan = std::mem::take(&mut self.live_list_rescan_wanted);
+        if lost || rescan {
+            self.discovery_pass_finished(true);
+        }
+    }
+
+    /// A discovery pass ended, or was lost; one more runs after a quiet
+    /// period if another was asked for while it ran.
+    fn discovery_pass_finished(&mut self, rescan: bool) {
+        let now = Instant::now();
+        self.discovery_schedule.pass_finished(now);
+        if rescan {
+            self.discovery_schedule.request(now + self.discovery_debounce);
         }
     }
 
@@ -493,9 +523,7 @@ impl Service {
         let Some((outcome, rescan)) = self.discovery.as_mut().and_then(DiscoveryRunner::take_result) else {
             return Effects::default();
         };
-        if rescan {
-            self.discovery_due = Some(Instant::now() + self.discovery_debounce);
-        }
+        self.discovery_pass_finished(rescan);
         let sessions = match outcome {
             Ok(sessions) => sessions,
             Err(_) => {
@@ -520,7 +548,7 @@ impl Service {
                 self.live_list_rescan_wanted = true;
             } else {
                 self.live_list_rescan_wanted = false;
-                let _ = harness.list_sessions();
+                self.live_list_in_flight = harness.list_sessions();
             }
             return;
         }
@@ -575,7 +603,7 @@ impl Service {
                 continue;
             }
             match self.store.thread_by_harness_session(&sid) {
-                Ok(Some((tid, _cur_title, _cur_updated, needs_history))) => {
+                Ok(Some((tid, cur_title, _cur_updated, needs_history))) => {
                     if needs_history {
                         let updated = session.updated.unwrap_or(now);
                         match self
@@ -583,7 +611,7 @@ impl Service {
                             .update_discovered_thread(&tid, session.title.as_deref(), updated)
                         {
                             Ok(true) => {
-                                let title = session.title.as_deref().unwrap_or("Thread");
+                                let title = session.title.as_deref().unwrap_or(&cur_title);
                                 broadcasts.push(Broadcast {
                                     thread_id: tid.clone(),
                                     message: json!({
@@ -654,6 +682,7 @@ impl Service {
             || !self.pending_resumes.is_empty()
             || !self.pending_sends.is_empty()
             || self.probe_wanted
+            || self.live_list_in_flight
             || self.harness.as_ref().is_some_and(AcpHarness::probing_models)
     }
 
@@ -881,9 +910,7 @@ impl Service {
             .iter()
             .filter_map(|(tid, active)| self.harness_turn_quiet_in(tid, active))
             .min();
-        let discovery = self
-            .discovery_due
-            .map(|due| due.saturating_duration_since(Instant::now()));
+        let discovery = self.discovery_schedule.wait(Instant::now());
         match [self.idle_remaining(), retry, stop, quiet, discovery]
             .into_iter()
             .flatten()
@@ -911,8 +938,7 @@ impl Service {
     /// the harness if no thread has worked for `idle_timeout`.
     pub fn on_wake(&mut self, log: &mut Log) -> Effects {
         sys::reap_orphans(self.harness.as_ref().map(AcpHarness::pid));
-        if self.discovery_due.is_some_and(|due| Instant::now() >= due) {
-            self.discovery_due = None;
+        if self.discovery_schedule.take_due(Instant::now()) {
             self.trigger_discovery();
         }
         self.save_endings();
@@ -1159,6 +1185,18 @@ impl Service {
             }
         }
         self.in_harness_batch = false;
+        // A session Lever opened only to read what the harness offers is
+        // never a thread, after this harness is gone too.
+        let probes = self
+            .harness
+            .as_mut()
+            .map(AcpHarness::take_new_probe_sessions)
+            .unwrap_or_default();
+        for probe in probes {
+            if let Err(err) = self.store.remember_ignored_session(&probe, "probe", unix_now()) {
+                store_failed(log, &err);
+            }
+        }
         // A request the harness withdrew, or a subagent's end, can free a
         // prompt that waited on it, as can the end of the batch.
         self.send_held_prompts();
@@ -1345,19 +1383,12 @@ impl Service {
     }
 
     fn delete_record(&mut self, thread: &str, warning: Option<&str>) -> RequestOutcome {
-        let deleted_session = warning
-            .and_then(|_| self.store.thread_meta(thread).ok().flatten())
-            .and_then(|m| m.harness_session_id)
-            .filter(|s| !s.is_empty());
         self.subagent_threads.remove(thread);
         self.held_stops.remove(thread);
         self.drain_wanted.remove(thread);
         self.queued_prompts.retain(|_, (t, _)| t != thread);
-        if let Err(e) = self.store.delete_thread(thread) {
+        if let Err(e) = self.store.delete_thread(thread, unix_now()) {
             return error_outcome("storage-error", &e);
-        }
-        if let Some(sid) = deleted_session {
-            let _ = self.store.remember_ignored_session(&sid, "deleted", unix_now());
         }
         if let Some(h) = self.harness.as_mut() {
             h.forget_session(thread);
@@ -1501,6 +1532,10 @@ impl Service {
         if self.harness_config.is_none() {
             return Err(("no-harness", "No harness is available.".to_string()));
         }
+        // Its session may be gone by the time a load would answer.
+        if self.deleting(thread_id) {
+            return Err(("working", "This thread is being deleted.".to_string()));
+        }
         if self.harness_env_stale {
             return Err((
                 "working",
@@ -1581,6 +1616,10 @@ impl Service {
             .import_thread_history(thread_id, &history, fallback_title.as_deref(), unix_now())
         {
             store_failed(log, &err);
+            // Not imported, so not yet the thread's: the next open loads it again.
+            if let Some(h) = self.harness.as_mut() {
+                h.forget_session(thread_id);
+            }
             effects.extend(self.fail_history_waiters(thread_id, "storage-error", &err));
             return effects;
         }
@@ -3389,9 +3428,7 @@ impl Service {
         self.probe_wanted = false;
         self.harness_env_stale = false;
         self.models_refresh_pending = false;
-        if std::mem::take(&mut self.live_list_rescan_wanted) {
-            self.discovery_due = Some(Instant::now() + self.discovery_debounce);
-        }
+        self.lose_live_list();
         self.idle_since = None;
         self.subagent_threads.clear();
         self.held_stops.clear();
@@ -4321,12 +4358,12 @@ impl Service {
             } => self.finish_history_loaded(&thread_id, history, catalog, log),
             AcpEvent::HistoryLoadFailed { thread_id, message } => self.fail_history_load(&thread_id, &message),
             AcpEvent::SessionsListed(result) => {
-                if std::mem::take(&mut self.live_list_rescan_wanted) {
-                    self.discovery_due = Some(Instant::now() + self.discovery_debounce);
-                }
+                self.live_list_in_flight = false;
+                let rescan = std::mem::take(&mut self.live_list_rescan_wanted);
                 let sessions = match result {
                     Ok(sessions) => sessions,
                     Err(_) => {
+                        self.discovery_pass_finished(rescan);
                         let _ = log.write(Event::Error, "could not list external harness sessions");
                         return Effects::default();
                     }
@@ -4343,10 +4380,17 @@ impl Service {
                             && !ignored.contains(&s.harness_session_id)
                     });
                     if has_unseen && let Some(runner) = self.discovery.as_mut() {
+                        // The pass goes on in the classification; a rescan
+                        // asked for meanwhile follows it.
                         runner.request_classify(sessions, owned, ignored);
+                        if rescan {
+                            self.discovery_schedule
+                                .request(Instant::now() + self.discovery_debounce);
+                        }
                         return Effects::default();
                     }
                 }
+                self.discovery_pass_finished(rescan);
                 self.apply_discovered_sessions(sessions, log)
             }
             AcpEvent::Exited => Effects::default(),
@@ -4909,9 +4953,7 @@ impl Service {
         self.probe_wanted = false;
         self.harness_env_stale = false;
         self.models_refresh_pending = false;
-        if std::mem::take(&mut self.live_list_rescan_wanted) {
-            self.discovery_due = Some(Instant::now() + self.discovery_debounce);
-        }
+        self.lose_live_list();
         self.idle_since = None;
 
         let mut replies = self.fail_pending_peer_requests(why);

@@ -8,8 +8,9 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static SIGNAL_PIPE_WRITE: AtomicI32 = AtomicI32::new(-1);
 
@@ -218,8 +219,13 @@ pub fn spawn_harness(
     env_set: &[(String, String)],
     env_remove: &[&str],
 ) -> io::Result<Child> {
-    // SAFETY: `getpid` cannot fail.
-    let parent_pid = unsafe { libc::getpid() };
+    let mut cmd = harness_command(program, args, env_set, env_remove);
+    die_with_lever(&mut cmd);
+    cmd.spawn()
+}
+
+/// A harness command with piped stdin and stdout and the given environment.
+pub fn harness_command(program: &str, args: &[String], env_set: &[(String, String)], env_remove: &[&str]) -> Command {
     let mut cmd = Command::new(program);
     cmd.args(args)
         .stdin(Stdio::piped())
@@ -231,6 +237,13 @@ pub fn spawn_harness(
     for (key, value) in env_set {
         cmd.env(key, value);
     }
+    cmd
+}
+
+/// Has the command's child end when Lever does.
+fn die_with_lever(cmd: &mut Command) {
+    // SAFETY: `getpid` cannot fail.
+    let parent_pid = unsafe { libc::getpid() };
     // SAFETY: `prctl(PR_SET_PDEATHSIG)`, `getppid`, and `_exit` are
     // async-signal-safe.
     unsafe {
@@ -248,7 +261,129 @@ pub fn spawn_harness(
             Ok(())
         });
     }
-    cmd.spawn()
+}
+
+/// Children a worker thread started and waits for itself. Lever's main loop
+/// neither reaps them nor counts them as its harness's: they are not its to
+/// wait for or to end.
+static WORKER_CHILDREN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+fn worker_children() -> std::sync::MutexGuard<'static, Vec<u32>> {
+    WORKER_CHILDREN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// A child a worker thread owns: started so Lever's reaper and harness stop
+/// pass it by, and ended and waited for when dropped.
+pub struct WorkerChild {
+    child: Child,
+    done: bool,
+}
+
+impl WorkerChild {
+    /// Starts `cmd` as a worker's child that ends when Lever does. The
+    /// registry is held while it starts, so the reaper never sees the child
+    /// before it is known.
+    pub fn spawn(mut cmd: Command) -> io::Result<Self> {
+        die_with_lever(&mut cmd);
+        let mut owned = worker_children();
+        let child = cmd.spawn()?;
+        owned.push(child.id());
+        Ok(Self { child, done: false })
+    }
+
+    pub fn child(&mut self) -> &mut Child {
+        &mut self.child
+    }
+
+    /// Waits up to `grace` for the child to end, then ends it: `SIGTERM`,
+    /// another `grace`, then `SIGKILL`. Returns how it ended.
+    pub fn finish(&mut self, grace: Duration) -> Option<std::process::ExitStatus> {
+        if self.done {
+            return None;
+        }
+        self.done = true;
+        let status = wait_until(&mut self.child, Instant::now() + grace).or_else(|| {
+            signal_pid(self.child.id(), libc::SIGTERM);
+            wait_until(&mut self.child, Instant::now() + grace)
+        });
+        let status = status.or_else(|| {
+            let _ = self.child.kill();
+            self.child.wait().ok()
+        });
+        worker_children().retain(|&pid| pid != self.child.id());
+        status
+    }
+}
+
+impl Drop for WorkerChild {
+    fn drop(&mut self) {
+        self.finish(Duration::from_millis(300));
+    }
+}
+
+fn wait_until(child: &mut Child, deadline: Instant) -> Option<std::process::ExitStatus> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            _ => return None,
+        }
+    }
+}
+
+/// What a bounded one-shot command printed.
+#[derive(Debug)]
+pub struct BoundedOutput {
+    pub success: bool,
+    pub stdout: Vec<u8>,
+}
+
+/// Runs `cmd` as a worker's child with no stdin, reading its stdout until it
+/// closes. The child is ended when `timeout` passes or it prints more than
+/// `max_stdout` bytes, and the run is then an error.
+pub fn run_bounded(mut cmd: Command, timeout: Duration, max_stdout: usize) -> Result<BoundedOutput, String> {
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = WorkerChild::spawn(cmd).map_err(|e| format!("could not start: {e}"))?;
+    let mut stdout = child.child().stdout.take().ok_or("no stdout pipe")?;
+    set_nonblocking(stdout.as_raw_fd()).map_err(|e| format!("could not set stdout nonblocking: {e}"))?;
+    let deadline = Instant::now() + timeout;
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Err("timed out".to_string());
+        };
+        let mut pfd = [libc::pollfd {
+            fd: stdout.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        }];
+        let timeout_ms = remaining.as_millis().clamp(1, i32::MAX as u128) as libc::c_int;
+        poll(&mut pfd, timeout_ms).map_err(|e| format!("poll failed: {e}"))?;
+        match std::io::Read::read(&mut stdout, &mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                out.extend_from_slice(&chunk[..n]);
+                if out.len() > max_stdout {
+                    return Err("printed too much".to_string());
+                }
+            }
+            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => {}
+            Err(e) => return Err(format!("could not read: {e}")),
+        }
+    }
+    drop(stdout);
+    let grace = deadline
+        .checked_duration_since(Instant::now())
+        .unwrap_or_default()
+        .min(Duration::from_millis(300));
+    let status = child.finish(grace);
+    Ok(BoundedOutput {
+        success: status.is_some_and(|s| s.success()),
+        stdout: out,
+    })
 }
 
 /// Every process under `pid`, read from `/proc`: its children, theirs, and so
@@ -317,8 +452,10 @@ fn own_children() -> Vec<u32> {
 /// end is its own to wait for. What a harness left behind comes to Lever,
 /// and is taken when it ends.
 pub fn reap_orphans(keep: Option<u32>) {
+    // Held while reaping, so a worker's child is known before it can be seen.
+    let workers = worker_children();
     for pid in own_children() {
-        if Some(pid) == keep {
+        if Some(pid) == keep || workers.contains(&pid) {
             continue;
         }
         let mut status = 0;
@@ -354,7 +491,11 @@ pub fn start_time(pid: u32) -> Option<u64> {
 /// harness left it, and it is not this one's to end.
 pub fn live_of_harness(harness: u32, started: u64) -> Vec<u32> {
     let mut found = Vec::new();
+    let workers = worker_children().clone();
     for root in own_children() {
+        if workers.contains(&root) {
+            continue;
+        }
         if root != harness && start_time(root).is_none_or(|t| t < started) {
             continue;
         }
@@ -405,5 +546,45 @@ pub fn signal_pid(pid: u32, sig: libc::c_int) {
     // SAFETY: sending a signal to Lever's own child process.
     unsafe {
         let _ = libc::kill(pid as libc::pid_t, sig);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_reaper_and_the_harness_stop_leave_a_workers_child_alone() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "exit 7"]);
+        let mut child = WorkerChild::spawn(cmd).unwrap();
+        let pid = child.child().id();
+        // Wait for it to end without reaping it.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while process_state(pid) != Some('Z') && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(process_state(pid), Some('Z'));
+        reap_orphans(None);
+        assert!(!live_of_harness(u32::MAX, 0).contains(&pid));
+        // Still its own to wait for, with its own exit status.
+        let status = child.finish(Duration::from_secs(1)).unwrap();
+        assert_eq!(status.code(), Some(7));
+    }
+
+    #[test]
+    fn a_bounded_run_ends_a_command_that_runs_too_long() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo started; exec sleep 30"]);
+        let started = Instant::now();
+        let err = run_bounded(cmd, Duration::from_millis(200), 1024).unwrap_err();
+        assert!(err.contains("timed out"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo done"]);
+        let out = run_bounded(cmd, Duration::from_secs(5), 1024).unwrap();
+        assert!(out.success);
+        assert_eq!(out.stdout, b"done\n");
     }
 }

@@ -100,6 +100,10 @@ struct StubExternalSession {
 
 #[derive(Debug, Deserialize)]
 struct Script {
+    /// A file the stub appends a line to each time it starts, as OpenCode
+    /// writes to its own store whenever it opens it.
+    #[serde(default)]
+    touch_on_start: Option<String>,
     #[serde(default)]
     list_sessions: bool,
     #[serde(default)]
@@ -1779,6 +1783,14 @@ fn read_external_sessions(script: &Script) -> Vec<StubExternalSession> {
 fn run(options: Options) -> Result<(), String> {
     let script_text = std::fs::read_to_string(&options.script).map_err(|e| format!("could not read script: {e}"))?;
     let script: Script = serde_json::from_str(&script_text).map_err(|e| format!("invalid script JSON: {e}"))?;
+    if let Some(path) = &script.touch_on_start {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| format!("could not open {path}: {e}"))?;
+        writeln!(file, "started").map_err(|e| format!("could not write {path}: {e}"))?;
+    }
     if let Some(env_path) = &options.env_out {
         let snapshot = json!({
             "OPENCODE_CONFIG_CONTENT": std::env::var("OPENCODE_CONFIG_CONTENT").ok(),

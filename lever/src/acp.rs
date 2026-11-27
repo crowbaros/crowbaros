@@ -476,6 +476,7 @@ pub struct AcpHarness {
     /// What the harness says of one after is its commands, which Lever keeps.
     /// Bounded so long-running harnesses do not accumulate stale probe IDs.
     probe_sessions: VecDeque<String>,
+    new_probe_sessions: Vec<String>,
     /// Models whose effort levels are being read.
     probing_efforts: HashSet<String>,
     loading_sessions: HashSet<String>,
@@ -599,6 +600,7 @@ impl AcpHarness {
             session_models: HashMap::new(),
             session_efforts: HashMap::new(),
             probe_sessions: VecDeque::new(),
+            new_probe_sessions: Vec::new(),
             probing_efforts: HashSet::new(),
             loading_sessions: HashSet::new(),
             history_loads: HashMap::new(),
@@ -782,7 +784,14 @@ impl AcpHarness {
         if self.probe_sessions.len() >= MAX_PROBE_SESSIONS {
             self.probe_sessions.pop_front();
         }
+        self.new_probe_sessions.push(session_id.clone());
         self.probe_sessions.push_back(session_id);
+    }
+
+    /// Probe sessions opened since this was last asked, for Lever to remember
+    /// as its own past this harness's life.
+    pub fn take_new_probe_sessions(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.new_probe_sessions)
     }
 
     /// Closes a session Lever opened to read what the harness offers. What
@@ -1557,7 +1566,11 @@ impl AcpHarness {
                 }
                 PendingRpc::LoadHistory { thread_id, session_id } => {
                     self.history_loads.remove(&session_id);
-                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                    // The session is not yet the thread's, so it is named here.
+                    let message = redact_ids(
+                        &self.redact_for_thread(Some(&thread_id), &raw_msg),
+                        vec![session_id.as_str()],
+                    );
                     events.push(AcpEvent::HistoryLoadFailed { thread_id, message });
                 }
                 PendingRpc::ListSessions { .. } => {
@@ -1858,7 +1871,7 @@ impl AcpHarness {
                             .next_cursor
                             .filter(|c| !c.is_empty() && Some(c) != prev_cursor.as_ref());
                         if added > 0
-                            && page + 1 < 32
+                            && page + 1 < crate::discovery::MAX_LIST_PAGES
                             && let Some(cursor) = next
                         {
                             let req = ListSessionsRequest::new().cursor(cursor.clone());
@@ -3016,6 +3029,7 @@ struct HistoryBuilder {
     title: Option<String>,
     turns: Vec<ImportedTurn>,
     in_user_message: bool,
+    last_user_message_id: Option<String>,
     last_agent_message_id: Option<String>,
     tool_ids: Vec<String>,
     subagent_ids: Vec<String>,
@@ -3032,6 +3046,7 @@ impl HistoryBuilder {
             title: None,
             turns: Vec::new(),
             in_user_message: false,
+            last_user_message_id: None,
             last_agent_message_id: None,
             tool_ids: Vec::new(),
             subagent_ids: Vec::new(),
@@ -3060,7 +3075,14 @@ impl HistoryBuilder {
         match serde_json::from_value::<SessionUpdate>(raw_update.clone()) {
             Ok(SessionUpdate::UserMessageChunk(chunk)) => {
                 if let Some(text) = content_block_text(&chunk.content) {
-                    if !self.in_user_message || self.turns.is_empty() {
+                    // Two messages in a row, the first left unanswered, are
+                    // two turns.
+                    let new_message =
+                        msg_id.is_some() && self.last_user_message_id.is_some() && msg_id != self.last_user_message_id;
+                    if msg_id.is_some() {
+                        self.last_user_message_id = msg_id.clone();
+                    }
+                    if !self.in_user_message || self.turns.is_empty() || new_message {
                         self.turns.push(ImportedTurn {
                             message: text,
                             answer: String::new(),
@@ -4388,6 +4410,29 @@ mod tests {
             extract_opencode_error(Some(&json!({ "message": "boom" }))).as_deref(),
             Some("boom")
         );
+    }
+
+    #[test]
+    fn history_builder_keeps_consecutive_user_messages_as_their_own_turns() {
+        let mut b = HistoryBuilder::new(true);
+        for (id, text) in [("u1", "First "), ("u1", "part"), ("u2", "Second")] {
+            b.push_update(&json!({
+                "sessionUpdate": "user_message_chunk",
+                "messageId": id,
+                "content": { "type": "text", "text": text }
+            }));
+        }
+        b.push_update(&json!({
+            "sessionUpdate": "agent_message_chunk",
+            "messageId": "a1",
+            "content": { "type": "text", "text": "Answer" }
+        }));
+        let turns = b.turns;
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].message, "First part");
+        assert_eq!(turns[0].answer, "");
+        assert_eq!(turns[1].message, "Second");
+        assert_eq!(turns[1].answer, "Answer");
     }
 
     #[test]

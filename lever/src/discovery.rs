@@ -1,8 +1,7 @@
 //! Harness-agnostic external session discovery and imported history types.
 //!
-//! When a person runs a harness by hand in a terminal (OpenCode, Codex, Claude
-//! Code, Pi, or any ACP harness), Lever discovers those sessions without
-//! keeping the harness running:
+//! When a person runs a harness by hand in a terminal, Lever discovers those
+//! sessions without keeping the harness running:
 //!
 //! 1. Each harness implements [`SessionDiscoverer`], declaring which on-disk
 //!    store paths to watch ([`WatchSpec`]) and how to list sessions on demand.
@@ -35,7 +34,7 @@ use std::time::{Duration, Instant};
 /// future discovery passes.
 const DISCOVERY_RPC_TIMEOUT: Duration = Duration::from_secs(15);
 /// Maximum pages followed via `nextCursor` in one `session/list` pass.
-const MAX_LIST_PAGES: usize = 50;
+pub(crate) const MAX_LIST_PAGES: usize = 50;
 /// Maximum line length accepted from a one-shot discovery child.
 const MAX_DISCOVERY_LINE: usize = 16 * 1024 * 1024;
 
@@ -187,30 +186,10 @@ impl DiscoveryRunner {
     /// Starts a background scan if none is running; otherwise marks that one
     /// more scan should run after the current one completes.
     pub fn request_scan(&mut self, known_sessions: HashSet<String>, known_subagents: HashSet<String>) {
-        if self.in_flight {
-            self.rescan_wanted = true;
-            return;
-        }
-        self.in_flight = true;
         let discoverer = Arc::clone(&self.discoverer);
-        let result_slot = Arc::clone(&self.result);
-        let write_fd = Arc::clone(&self.write_fd);
-        let spawned = std::thread::Builder::new()
-            .name("lever-discover".to_string())
-            .spawn(move || {
-                let outcome = discoverer.list_sessions(&known_sessions, &known_subagents);
-                if let Ok(mut guard) = result_slot.lock() {
-                    *guard = Some(outcome);
-                }
-                let byte = 1u8;
-                // SAFETY: writing one byte to an owned non-blocking pipe descriptor.
-                unsafe {
-                    let _ = libc::write(write_fd.as_raw_fd(), (&raw const byte).cast(), 1);
-                }
-            });
-        if spawned.is_err() {
-            self.in_flight = false;
-        }
+        self.start_job("lever-discover", move || {
+            discoverer.list_sessions(&known_sessions, &known_subagents)
+        });
     }
 
     /// Classifies raw `session/list` results from an already-running harness on
@@ -221,27 +200,38 @@ impl DiscoveryRunner {
         known_sessions: HashSet<String>,
         known_subagents: HashSet<String>,
     ) {
+        let discoverer = Arc::clone(&self.discoverer);
+        self.start_job("lever-classify", move || {
+            discoverer.classify_sessions(sessions, &known_sessions, &known_subagents)
+        });
+    }
+
+    /// Whether a scan or classification is running on the background thread.
+    pub fn in_flight(&self) -> bool {
+        self.in_flight
+    }
+
+    fn start_job(&mut self, name: &str, job: impl FnOnce() -> Result<Vec<ExternalSession>, String> + Send + 'static) {
         if self.in_flight {
             self.rescan_wanted = true;
             return;
         }
         self.in_flight = true;
-        let discoverer = Arc::clone(&self.discoverer);
         let result_slot = Arc::clone(&self.result);
         let write_fd = Arc::clone(&self.write_fd);
-        let spawned = std::thread::Builder::new()
-            .name("lever-classify".to_string())
-            .spawn(move || {
-                let outcome = discoverer.classify_sessions(sessions, &known_sessions, &known_subagents);
-                if let Ok(mut guard) = result_slot.lock() {
-                    *guard = Some(outcome);
-                }
-                let byte = 1u8;
-                // SAFETY: writing one byte to an owned non-blocking pipe descriptor.
-                unsafe {
-                    let _ = libc::write(write_fd.as_raw_fd(), (&raw const byte).cast(), 1);
-                }
-            });
+        let spawned = std::thread::Builder::new().name(name.to_string()).spawn(move || {
+            // A job that panics still reports, so discovery is never left in flight.
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job))
+                .unwrap_or_else(|_| Err("session discovery failed".to_string()));
+            if let Ok(mut guard) = result_slot.lock() {
+                *guard = Some(outcome);
+            }
+            let byte = 1u8;
+            // SAFETY: writing one byte to an owned non-blocking pipe descriptor.
+            unsafe {
+                let _ = libc::write(write_fd.as_raw_fd(), (&raw const byte).cast(), 1);
+            }
+        });
         if spawned.is_err() {
             self.in_flight = false;
         }
@@ -262,6 +252,94 @@ impl DiscoveryRunner {
         self.in_flight = false;
         let rescan = std::mem::take(&mut self.rescan_wanted);
         Some((outcome, rescan))
+    }
+}
+
+/// The longest a store that keeps changing holds back a discovery pass.
+pub const DISCOVERY_MAX_WAIT: Duration = Duration::from_secs(2);
+
+/// When Lever runs a discovery pass. A change to a harness's store schedules
+/// one after a quiet `debounce`, but never later than `max_wait` after the
+/// first change, so a store that keeps changing is still read.
+///
+/// Listing a harness's sessions writes to its store, so a change seen while a
+/// pass runs, or within `debounce` after it ends, may be the pass's own. Such
+/// a change brings one follow-up pass, in case it was the person's, and the
+/// follow-up's own changes bring none: a quiet store goes quiet.
+#[derive(Debug)]
+pub struct DiscoverySchedule {
+    debounce: Duration,
+    max_wait: Duration,
+    due: Option<Instant>,
+    dirty_since: Option<Instant>,
+    settle_until: Option<Instant>,
+    missed: bool,
+    followup_next: bool,
+    followup_now: bool,
+}
+
+impl DiscoverySchedule {
+    pub fn new(debounce: Duration, max_wait: Duration) -> Self {
+        Self {
+            debounce,
+            max_wait,
+            due: None,
+            dirty_since: None,
+            settle_until: None,
+            missed: false,
+            followup_next: false,
+            followup_now: false,
+        }
+    }
+
+    /// The harness's store changed. `busy` is whether a pass is running.
+    pub fn store_changed(&mut self, now: Instant, busy: bool) {
+        if busy {
+            if !self.followup_now {
+                self.missed = true;
+            }
+            return;
+        }
+        if let Some(until) = self.settle_until.filter(|until| now < *until) {
+            if !self.followup_now {
+                self.followup_next = true;
+                self.request(until);
+            }
+            return;
+        }
+        let since = *self.dirty_since.get_or_insert(now);
+        self.due = Some((now + self.debounce).min(since + self.max_wait));
+    }
+
+    /// Asks for a pass at `at` at the latest, whatever the store does.
+    pub fn request(&mut self, at: Instant) {
+        self.due = Some(self.due.map_or(at, |due| due.min(at)));
+    }
+
+    /// Whether a pass is due now, and if so, takes it.
+    pub fn take_due(&mut self, now: Instant) -> bool {
+        if !self.due.is_some_and(|due| now >= due) {
+            return false;
+        }
+        self.due = None;
+        self.dirty_since = None;
+        self.followup_now = std::mem::take(&mut self.followup_next);
+        true
+    }
+
+    /// The pass that was taken has ended, or was lost.
+    pub fn pass_finished(&mut self, now: Instant) {
+        let until = now + self.debounce;
+        self.settle_until = Some(until);
+        if std::mem::take(&mut self.missed) && !self.followup_now {
+            self.followup_next = true;
+            self.request(until);
+        }
+    }
+
+    /// How long until the next pass is due.
+    pub fn wait(&self, now: Instant) -> Option<Duration> {
+        self.due.map(|due| due.saturating_duration_since(now))
     }
 }
 
@@ -313,21 +391,22 @@ impl AcpSessionDiscoverer {
     /// `self.config` and immediately terminates the child process.
     pub fn list_via_acp(&self) -> Result<Vec<ExternalSession>, String> {
         let (env_set, env_remove) = acp::build_discovery_env(&self.config);
-        let mut child = sys::spawn_harness(&self.config.program, &self.config.args, &env_set, &env_remove)
+        let cmd = sys::harness_command(&self.config.program, &self.config.args, &env_set, &env_remove);
+        // Dropping the child on any early return ends and waits for it.
+        let mut child = sys::WorkerChild::spawn(cmd)
             .map_err(|e| format!("could not start {} to list sessions: {e}", self.config.name))?;
         let mut stdin = child
+            .child()
             .stdin
             .take()
             .ok_or_else(|| "discovery child had no stdin pipe".to_string())?;
         let mut stdout = child
+            .child()
             .stdout
             .take()
             .ok_or_else(|| "discovery child had no stdout pipe".to_string())?;
-        if let Err(e) = sys::set_nonblocking(stdout.as_raw_fd()) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("could not set discovery stdout nonblocking: {e}"));
-        }
+        sys::set_nonblocking(stdout.as_raw_fd())
+            .map_err(|e| format!("could not set discovery stdout nonblocking: {e}"))?;
 
         let deadline = Instant::now() + DISCOVERY_RPC_TIMEOUT;
         let mut read_buf = Vec::new();
@@ -397,7 +476,7 @@ impl AcpSessionDiscoverer {
         // harness process is ever left running for session discovery.
         drop(stdin);
         drop(stdout);
-        stop_short_lived_child(&mut child);
+        child.finish(Duration::from_millis(300));
         outcome
     }
 }
@@ -422,10 +501,10 @@ impl SessionDiscoverer for AcpSessionDiscoverer {
 
 /// Selects the right [`SessionDiscoverer`] for a configured harness.
 ///
-/// Harnesses with specialized stores or subagent rules plug in here behind the
-/// single [`SessionDiscoverer`] contract (OpenCode today; Claude Code, Codex,
-/// and Pi in Milestone 4). Any other ACP harness configured with
-/// `--harness-watch` gets the generic [`AcpSessionDiscoverer`].
+/// A harness with its own store or subagent rules plugs in here behind the
+/// single [`SessionDiscoverer`] contract, as OpenCode does. Any other ACP
+/// harness configured with `--harness-watch` gets the generic
+/// [`AcpSessionDiscoverer`].
 pub fn for_harness(config: &HarnessConfig) -> Option<Box<dyn SessionDiscoverer>> {
     if opencode::is_opencode_config(config) {
         return Some(Box::new(opencode::OpenCodeSessionDiscoverer::new(config.clone())));
@@ -437,7 +516,7 @@ pub fn for_harness(config: &HarnessConfig) -> Option<Box<dyn SessionDiscoverer>>
     Some(Box::new(AcpSessionDiscoverer::new(config.clone(), specs)))
 }
 
-/// Converts user- or test-supplied watch paths into [`WatchSpec`]s. A path
+/// Converts the paths given with `--harness-watch` into [`WatchSpec`]s. A path
 /// pointing to a specific file watches its parent directory filtered to that
 /// filename; a directory (or not-yet-existing path without a clear file parent)
 /// watches the directory itself.
@@ -556,36 +635,18 @@ fn recv_acp_response(
     }
 }
 
-fn stop_short_lived_child(child: &mut std::process::Child) {
-    let deadline = Instant::now() + Duration::from_millis(300);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            _ => break,
-        }
-    }
-    sys::signal_pid(child.id(), libc::SIGTERM);
-    let deadline = Instant::now() + Duration::from_millis(300);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            _ => break,
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
 /// Parses an RFC 3339 UTC/offset timestamp (e.g. `2026-11-27T05:16:54.415Z` or
 /// `2026-11-27T00:16:54-05:00`) into Unix seconds.
 pub fn parse_rfc3339_unix(input: &str) -> Option<i64> {
     let s = input.trim();
-    if s.len() < 20 {
+    if s.len() < 20 || !s.is_ascii() {
         return None;
     }
     let bytes = s.as_bytes();
+    let digits = |range: std::ops::Range<usize>| bytes[range].iter().all(u8::is_ascii_digit);
+    if !(digits(0..4) && digits(5..7) && digits(8..10) && digits(11..13) && digits(14..16) && digits(17..19)) {
+        return None;
+    }
     if bytes[4] != b'-'
         || bytes[7] != b'-'
         || !matches!(bytes[10], b'T' | b't' | b' ')
@@ -615,6 +676,9 @@ pub fn parse_rfc3339_unix(input: &str) -> Option<i64> {
         0
     } else if rest.len() == 6 && (rest.starts_with('+') || rest.starts_with('-')) && rest.as_bytes()[3] == b':' {
         let sign = if rest.starts_with('-') { -1 } else { 1 };
+        if !rest[1..3].bytes().chain(rest[4..6].bytes()).all(|b| b.is_ascii_digit()) {
+            return None;
+        }
         let oh: i64 = rest[1..3].parse().ok()?;
         let om: i64 = rest[4..6].parse().ok()?;
         if oh > 23 || om > 59 {
@@ -664,6 +728,71 @@ mod tests {
         assert_eq!(parse_rfc3339_unix("2024-02-29T12:00:00Z"), Some(1_709_208_000));
         assert_eq!(parse_rfc3339_unix("2025-02-29T12:00:00Z"), None);
         assert_eq!(parse_rfc3339_unix("not-a-timestamp"), None);
+        // Neither panics nor reads a sign as an hour.
+        assert_eq!(parse_rfc3339_unix("2026-01-01T00:00:0\u{e9}Z"), None);
+        assert_eq!(parse_rfc3339_unix("2026-01-01T-1:00:00Z"), None);
+        assert_eq!(parse_rfc3339_unix("2026-01-01T00:00:00+-1:00"), None);
+    }
+
+    fn schedule() -> (DiscoverySchedule, Instant) {
+        let ms = Duration::from_millis;
+        (DiscoverySchedule::new(ms(400), ms(2000)), Instant::now())
+    }
+
+    #[test]
+    fn a_passs_own_store_writes_bring_one_follow_up_and_then_quiet() {
+        let ms = Duration::from_millis;
+        let (mut s, t0) = schedule();
+        s.store_changed(t0, false);
+        assert!(!s.take_due(t0 + ms(399)));
+        assert!(s.take_due(t0 + ms(400)));
+        // The listing writes to the store while it runs and as it closes.
+        s.store_changed(t0 + ms(450), true);
+        s.pass_finished(t0 + ms(600));
+        s.store_changed(t0 + ms(650), false);
+        assert!(
+            s.take_due(t0 + ms(1000)),
+            "one follow-up, in case a change was the person's"
+        );
+        // The follow-up's own writes bring nothing more.
+        s.store_changed(t0 + ms(1050), true);
+        s.pass_finished(t0 + ms(1200));
+        s.store_changed(t0 + ms(1300), false);
+        assert_eq!(s.wait(t0 + ms(1300)), None);
+        for step in 0..100 {
+            assert!(!s.take_due(t0 + ms(1300 + step * 100)));
+        }
+        // A change once the store has settled is the person's again.
+        s.store_changed(t0 + ms(2000), false);
+        assert!(s.take_due(t0 + ms(2400)));
+    }
+
+    #[test]
+    fn a_change_just_after_a_pass_ends_brings_a_follow_up() {
+        let ms = Duration::from_millis;
+        let (mut s, t0) = schedule();
+        s.store_changed(t0, false);
+        assert!(s.take_due(t0 + ms(400)));
+        s.pass_finished(t0 + ms(500));
+        s.store_changed(t0 + ms(600), false);
+        assert!(!s.take_due(t0 + ms(899)));
+        assert!(s.take_due(t0 + ms(900)));
+    }
+
+    #[test]
+    fn a_store_that_keeps_changing_is_read_within_the_longest_wait() {
+        let ms = Duration::from_millis;
+        let (mut s, t0) = schedule();
+        let mut taken = None;
+        for step in 0..100 {
+            let now = t0 + ms(step * 100);
+            if s.take_due(now) {
+                taken = Some(now);
+                break;
+            }
+            s.store_changed(now, false);
+        }
+        assert_eq!(taken, Some(t0 + ms(2000)));
     }
 
     #[test]

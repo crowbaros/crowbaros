@@ -16,11 +16,14 @@ use crate::acp::{self, HarnessConfig};
 use crate::discovery::{
     AcpSessionDiscoverer, ExternalSession, SessionDiscoverer, spec_has_data, watch_specs_from_paths,
 };
+use crate::sys;
 use crate::watcher::WatchSpec;
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+use std::sync::Mutex;
+use std::time::Duration;
 
 /// What a rule does.
 const ASK: &str = "ask";
@@ -226,10 +229,20 @@ pub fn data_dir(env: &[(String, String)]) -> Option<PathBuf> {
 /// sessions with OpenCode's own `opencode session list` / `export` commands so
 /// subagents and empty sessions are never listed as threads. OpenCode is never
 /// kept running for this.
+///
+/// A session becomes a thread only on positive evidence that it is a
+/// top-level session with a message: OpenCode's top-level list shows it with a
+/// title and activity, or its export has messages and no parent. A session
+/// whose classification fails is left for a later pass, and only an export
+/// that names a parent marks it a subagent for good.
 pub struct OpenCodeSessionDiscoverer {
     config: HarnessConfig,
     acp: AcpSessionDiscoverer,
     watch_specs: Vec<WatchSpec>,
+    cli_timeout: Duration,
+    /// Sessions an export showed empty or archived, by the `updated` time the
+    /// list gave then: they are not exported again until that time changes.
+    not_threads: Mutex<HashMap<String, i64>>,
 }
 
 const OPENCODE_STORE_FILES: [&str; 4] = [
@@ -241,9 +254,17 @@ const OPENCODE_STORE_FILES: [&str; 4] = [
 /// Limit passed to `opencode session list --max-count` when classifying new
 /// sessions in a project directory.
 const CLI_LIST_MAX_COUNT: usize = 1000;
+/// How long one `opencode session` command may run before it is ended.
+const CLI_TIMEOUT: Duration = Duration::from_secs(15);
+/// The most a `session list` or `session export` may print.
+const CLI_MAX_STDOUT: usize = 64 * 1024 * 1024;
 
 impl OpenCodeSessionDiscoverer {
     pub fn new(config: HarnessConfig) -> Self {
+        Self::with_cli_timeout(config, CLI_TIMEOUT)
+    }
+
+    fn with_cli_timeout(config: HarnessConfig, cli_timeout: Duration) -> Self {
         let mut watch_specs = watch_specs_from_paths(&config.watch_paths);
         if let Some(dir) = data_dir(&config.env) {
             let filenames = OPENCODE_STORE_FILES.iter().map(|s| (*s).to_string()).collect();
@@ -254,58 +275,43 @@ impl OpenCodeSessionDiscoverer {
             config,
             acp,
             watch_specs,
+            cli_timeout,
+            not_threads: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Runs `opencode session <args>` in `cwd`, bounded in time and output.
+    fn run_cli(&self, args: &[&str], cwd: Option<&Path>) -> Option<String> {
+        let (env_set, env_remove) = acp::build_discovery_env(&self.config);
+        let mut cmd = Command::new(&self.config.program);
+        cmd.arg("session").args(args).env_remove("PWD");
+        if let Some(cwd) = cwd {
+            cmd.current_dir(cwd);
+        }
+        for key in &env_remove {
+            cmd.env_remove(key);
+        }
+        for (key, value) in &env_set {
+            cmd.env(key, value);
+        }
+        let out = sys::run_bounded(cmd, self.cli_timeout, CLI_MAX_STDOUT).ok()?;
+        out.success.then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
     fn run_cli_list(&self, cwd: &Path) -> Option<Vec<CliSessionEntry>> {
-        let (env_set, env_remove) = acp::build_discovery_env(&self.config);
-        let mut cmd = Command::new(&self.config.program);
-        cmd.args([
-            "session",
-            "list",
-            "--standalone",
-            "--format",
-            "json",
-            "--max-count",
-            &CLI_LIST_MAX_COUNT.to_string(),
-        ])
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .env_remove("PWD");
-        for key in &env_remove {
-            cmd.env_remove(key);
-        }
-        for (key, value) in &env_set {
-            cmd.env(key, value);
-        }
-        let out = cmd.output().ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        parse_cli_session_list(&String::from_utf8_lossy(&out.stdout))
+        let max = CLI_LIST_MAX_COUNT.to_string();
+        let args = ["list", "--standalone", "--format", "json", "--max-count", &max];
+        parse_cli_session_list(&self.run_cli(&args, Some(cwd))?)
     }
 
     fn run_cli_export(&self, session_id: &str) -> Option<ExportSummary> {
-        let (env_set, env_remove) = acp::build_discovery_env(&self.config);
-        let mut cmd = Command::new(&self.config.program);
-        cmd.args(["session", "export", "--standalone", session_id])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .env_remove("PWD");
-        for key in &env_remove {
-            cmd.env_remove(key);
-        }
-        for (key, value) in &env_set {
-            cmd.env(key, value);
-        }
-        let out = cmd.output().ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        parse_cli_session_export(&String::from_utf8_lossy(&out.stdout))
+        parse_cli_session_export(&self.run_cli(&["export", "--standalone", session_id], None)?)
+    }
+
+    fn not_threads(&self) -> std::sync::MutexGuard<'_, HashMap<String, i64>> {
+        self.not_threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -333,95 +339,86 @@ impl SessionDiscoverer for OpenCodeSessionDiscoverer {
 
     fn classify_sessions(
         &self,
-        mut sessions: Vec<ExternalSession>,
+        sessions: Vec<ExternalSession>,
         known_sessions: &HashSet<String>,
         known_subagents: &HashSet<String>,
     ) -> Result<Vec<ExternalSession>, String> {
-        // Group brand-new unseen sessions by their directory so we run at most
-        // one `opencode session list` per directory that has unseen sessions.
-        let mut unseen_by_cwd: HashMap<String, Vec<usize>> = HashMap::new();
-        for (idx, session) in sessions.iter().enumerate() {
+        let mut kept = Vec::new();
+        // Brand-new unseen sessions, grouped by directory so at most one
+        // `opencode session list` runs per directory that has them.
+        let mut unseen_by_cwd: HashMap<String, Vec<ExternalSession>> = HashMap::new();
+        for session in sessions {
             if session.is_subagent
                 || known_sessions.contains(&session.harness_session_id)
                 || known_subagents.contains(&session.harness_session_id)
             {
+                kept.push(session);
                 continue;
             }
-            unseen_by_cwd.entry(session.cwd.clone()).or_default().push(idx);
+            let skip = session
+                .updated
+                .is_some_and(|updated| self.not_threads().get(&session.harness_session_id) == Some(&updated));
+            if !skip {
+                unseen_by_cwd.entry(session.cwd.clone()).or_default().push(session);
+            }
         }
 
-        let mut drop_indices: HashSet<usize> = HashSet::new();
-        for (cwd, indices) in unseen_by_cwd {
+        for (cwd, unseen) in unseen_by_cwd {
             let cwd_path = Path::new(&cwd);
             let cli_entries = if cwd_path.is_dir() {
                 self.run_cli_list(cwd_path)
             } else {
                 None
             };
-            let list_complete = cli_entries
-                .as_ref()
-                .is_some_and(|entries| entries.len() < CLI_LIST_MAX_COUNT);
             let by_id: HashMap<&str, &CliSessionEntry> = cli_entries
                 .as_ref()
                 .map(|entries| entries.iter().map(|e| (e.id.as_str(), e)).collect())
                 .unwrap_or_default();
 
-            for idx in indices {
-                let sid = sessions[idx].harness_session_id.clone();
+            for mut session in unseen {
+                let sid = session.harness_session_id.clone();
+                // The time the ACP list gave, which the next pass compares.
+                let listed_updated = session.updated;
                 if let Some(entry) = by_id.get(sid.as_str()) {
                     if let Some(created) = entry.created_secs {
-                        sessions[idx].created = Some(created);
+                        session.created = Some(created);
                     }
                     if let Some(updated) = entry.updated_secs {
-                        sessions[idx].updated = Some(updated);
+                        session.updated = Some(updated);
                     }
                     if let Some(title) = entry.title.as_ref().filter(|t| !t.trim().is_empty()) {
-                        sessions[idx].title = Some(title.clone());
+                        session.title = Some(title.clone());
                     }
-                    // OpenCode's `session list` only returns top-level sessions.
-                    // A session with a title and activity beyond its creation
-                    // timestamp already has its first message.
+                    // OpenCode's `session list` returns top-level sessions
+                    // only. One with a title and activity beyond its creation
+                    // already has its first message.
                     let has_activity = entry.title.as_deref().is_some_and(|t| !t.trim().is_empty())
                         && entry.updated_ms > entry.created_ms;
                     if has_activity {
+                        kept.push(session);
                         continue;
                     }
-                    // Ambiguous (no title yet or same-ms timestamps): check
-                    // whether any messages exist via `session export`.
-                    if let Some(summary) = self.run_cli_export(&sid) {
-                        if summary.has_parent {
-                            sessions[idx].is_subagent = true;
-                        } else if !summary.has_messages {
-                            drop_indices.insert(idx);
+                }
+                // Not shown with activity in the top-level list, which may be
+                // missing, capped, or for a project whose identity changed:
+                // only the session's own export decides.
+                match self.run_cli_export(&sid) {
+                    Some(summary) if summary.has_parent => {
+                        session.is_subagent = true;
+                        kept.push(session);
+                    }
+                    Some(summary) if summary.archived || !summary.has_messages => {
+                        if let Some(updated) = listed_updated {
+                            self.not_threads().insert(sid, updated);
                         }
-                    } else {
-                        // Skip empty-looking sessions until a message arrives.
-                        drop_indices.insert(idx);
                     }
-                } else if list_complete {
-                    // Absent from OpenCode's complete top-level session list for
-                    // this directory: subagent (or archived) session.
-                    sessions[idx].is_subagent = true;
-                } else if let Some(summary) = self.run_cli_export(&sid) {
-                    if summary.has_parent {
-                        sessions[idx].is_subagent = true;
-                    } else if !summary.has_messages {
-                        drop_indices.insert(idx);
-                    }
+                    Some(_) => kept.push(session),
+                    // Unknown: left for a later pass, never published.
+                    None => {}
                 }
             }
         }
-
-        if !drop_indices.is_empty() {
-            let mut filtered = Vec::with_capacity(sessions.len() - drop_indices.len());
-            for (idx, session) in sessions.into_iter().enumerate() {
-                if !drop_indices.contains(&idx) {
-                    filtered.push(session);
-                }
-            }
-            sessions = filtered;
-        }
-        Ok(sessions)
+        Ok(kept)
     }
 }
 
@@ -439,6 +436,7 @@ struct CliSessionEntry {
 struct ExportSummary {
     has_parent: bool,
     has_messages: bool,
+    archived: bool,
 }
 
 fn parse_cli_session_list(stdout: &str) -> Option<Vec<CliSessionEntry>> {
@@ -481,9 +479,14 @@ fn parse_cli_session_export(stdout: &str) -> Option<ExportSummary> {
         .get("messages")
         .and_then(Value::as_array)
         .is_some_and(|m| !m.is_empty());
+    let archived = info
+        .get("time")
+        .and_then(|t| t.get("archived"))
+        .is_some_and(|a| !a.is_null());
     Some(ExportSummary {
         has_parent,
         has_messages,
+        archived,
     })
 }
 
@@ -740,7 +743,8 @@ mod tests {
             top,
             ExportSummary {
                 has_parent: false,
-                has_messages: true
+                has_messages: true,
+                archived: false,
             }
         );
         let child =
@@ -750,7 +754,8 @@ mod tests {
             child,
             ExportSummary {
                 has_parent: true,
-                has_messages: true
+                has_messages: true,
+                archived: false,
             }
         );
         let empty = parse_cli_session_export(r#"{"info":{"id":"ses_empty"},"messages":[]}"#).unwrap();
@@ -758,8 +763,201 @@ mod tests {
             empty,
             ExportSummary {
                 has_parent: false,
-                has_messages: false
+                has_messages: false,
+                archived: false,
             }
         );
+        let archived =
+            parse_cli_session_export(r#"{"info":{"id":"ses_a","time":{"archived":1795756614000}},"messages":[{}]}"#)
+                .unwrap();
+        assert!(archived.archived);
+    }
+
+    /// A stand-in for `opencode session list` and `export`, answering from
+    /// files in its directory and logging each call.
+    struct FakeOpenCode {
+        dir: PathBuf,
+    }
+
+    impl FakeOpenCode {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("lever-fake-opencode-{}", sys::random_hex(6)));
+            std::fs::create_dir_all(&dir).unwrap();
+            let script = dir.join("opencode");
+            std::fs::write(
+                &script,
+                "#!/bin/sh\n\
+                 d=\"$FAKE_OPENCODE_DIR\"\n\
+                 echo \"$2 $4\" >> \"$d/calls\"\n\
+                 case \"$2\" in\n\
+                 list) [ -f \"$d/list.json\" ] || exit 1; cat \"$d/list.json\" ;;\n\
+                 export) [ -f \"$d/hang-$4\" ] && exec sleep 30; [ -f \"$d/export-$4.json\" ] || exit 1; cat \"$d/export-$4.json\" ;;\n\
+                 esac\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+            Self { dir }
+        }
+
+        fn discoverer(&self, timeout: Duration) -> OpenCodeSessionDiscoverer {
+            let config = HarnessConfig {
+                id: "opencode".into(),
+                name: "OpenCode".into(),
+                program: self.dir.join("opencode").to_string_lossy().into_owned(),
+                args: vec!["acp".into()],
+                env: vec![
+                    ("FAKE_OPENCODE_DIR".into(), self.dir.to_string_lossy().into_owned()),
+                    (
+                        "XDG_DATA_HOME".into(),
+                        self.dir.join("data").to_string_lossy().into_owned(),
+                    ),
+                ],
+                watch_paths: Vec::new(),
+            };
+            OpenCodeSessionDiscoverer::with_cli_timeout(config, timeout)
+        }
+
+        fn write(&self, name: &str, content: &str) {
+            std::fs::write(self.dir.join(name), content).unwrap();
+        }
+
+        fn calls(&self) -> Vec<String> {
+            std::fs::read_to_string(self.dir.join("calls"))
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+
+        fn session(&self, id: &str, updated: i64) -> ExternalSession {
+            ExternalSession {
+                harness_session_id: id.into(),
+                cwd: self.dir.to_string_lossy().into_owned(),
+                title: None,
+                created: None,
+                updated: Some(updated),
+                is_subagent: false,
+            }
+        }
+    }
+
+    impl Drop for FakeOpenCode {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn by_id(sessions: &[ExternalSession]) -> HashMap<&str, bool> {
+        sessions
+            .iter()
+            .map(|s| (s.harness_session_id.as_str(), s.is_subagent))
+            .collect()
+    }
+
+    #[test]
+    fn only_positive_evidence_makes_a_session_a_thread_or_a_subagent() {
+        let fake = FakeOpenCode::new();
+        fake.write(
+            "list.json",
+            r#"[
+                {"id": "ses_root", "title": "Fix bug", "created": 1000, "updated": 5000},
+                {"id": "ses_new", "created": 2000, "updated": 2000},
+                {"id": "ses_empty", "title": "New session", "created": 3000, "updated": 3000}
+            ]"#,
+        );
+        fake.write("export-ses_new.json", r#"{"info":{"id":"ses_new"},"messages":[{}]}"#);
+        fake.write("export-ses_empty.json", r#"{"info":{"id":"ses_empty"},"messages":[]}"#);
+        fake.write(
+            "export-ses_child.json",
+            r#"{"info":{"id":"ses_child","parentID":"ses_root"},"messages":[{}]}"#,
+        );
+        // Missing from the folder's list, as after its project identity changed.
+        fake.write(
+            "export-ses_moved.json",
+            r#"{"info":{"id":"ses_moved"},"messages":[{}]}"#,
+        );
+        fake.write(
+            "export-ses_archived.json",
+            r#"{"info":{"id":"ses_archived","time":{"archived":4000}},"messages":[{}]}"#,
+        );
+        let discoverer = fake.discoverer(Duration::from_secs(10));
+        let ids = [
+            "ses_root",
+            "ses_new",
+            "ses_empty",
+            "ses_child",
+            "ses_moved",
+            "ses_archived",
+            "ses_unknown",
+        ];
+        let sessions = || ids.iter().map(|id| fake.session(id, 7)).collect::<Vec<_>>();
+
+        let kept = discoverer
+            .classify_sessions(sessions(), &HashSet::new(), &HashSet::new())
+            .unwrap();
+        let kept = by_id(&kept);
+        assert_eq!(kept.get("ses_root"), Some(&false));
+        assert_eq!(kept.get("ses_new"), Some(&false));
+        assert_eq!(
+            kept.get("ses_moved"),
+            Some(&false),
+            "absence from the list is not a subagent"
+        );
+        assert_eq!(kept.get("ses_child"), Some(&true));
+        assert!(!kept.contains_key("ses_empty"));
+        assert!(!kept.contains_key("ses_archived"));
+        // Its export failed: neither a thread nor a subagent, so it is tried again.
+        assert!(!kept.contains_key("ses_unknown"));
+
+        let exports_before = fake.calls().iter().filter(|c| c.starts_with("export")).count();
+        let again = discoverer
+            .classify_sessions(sessions(), &HashSet::new(), &HashSet::new())
+            .unwrap();
+        let exports: Vec<String> = fake.calls().into_iter().filter(|c| c.starts_with("export")).collect();
+        let new_exports = &exports[exports_before..];
+        assert!(
+            !new_exports
+                .iter()
+                .any(|c| c.ends_with("ses_empty") || c.ends_with("ses_archived"))
+        );
+        assert!(new_exports.iter().any(|c| c.ends_with("ses_unknown")));
+        assert!(!by_id(&again).contains_key("ses_unknown"));
+
+        // Once it changes, an empty session is looked at again.
+        fake.write(
+            "export-ses_empty.json",
+            r#"{"info":{"id":"ses_empty"},"messages":[{}]}"#,
+        );
+        let mut changed = sessions();
+        changed.iter_mut().for_each(|s| s.updated = Some(8));
+        let kept = discoverer
+            .classify_sessions(changed, &HashSet::new(), &HashSet::new())
+            .unwrap();
+        assert_eq!(by_id(&kept).get("ses_empty"), Some(&false));
+    }
+
+    #[test]
+    fn a_classification_command_that_hangs_is_ended_and_tried_again() {
+        let fake = FakeOpenCode::new();
+        fake.write("list.json", "[]");
+        fake.write("export-ses_slow.json", r#"{"info":{"id":"ses_slow"},"messages":[{}]}"#);
+        fake.write("hang-ses_slow", "");
+        let discoverer = fake.discoverer(Duration::from_millis(300));
+        let started = std::time::Instant::now();
+        let kept = discoverer
+            .classify_sessions(vec![fake.session("ses_slow", 1)], &HashSet::new(), &HashSet::new())
+            .unwrap();
+        assert!(kept.is_empty());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+
+        std::fs::remove_file(fake.dir.join("hang-ses_slow")).unwrap();
+        let kept = discoverer
+            .classify_sessions(vec![fake.session("ses_slow", 1)], &HashSet::new(), &HashSet::new())
+            .unwrap();
+        assert_eq!(by_id(&kept).get("ses_slow"), Some(&false));
     }
 }

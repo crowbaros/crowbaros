@@ -1604,6 +1604,8 @@ finally:
                 },
                 {
                     'match': 'hand-session-check',
+                    # Held, so the session is listed while its first turn works.
+                    'hold_until': f'{tmp}/hand-release',
                     'tool_call': {
                         'name': 'shell',
                         'arguments': {
@@ -2773,47 +2775,82 @@ finally:
 
             # 8c. Terminal session started by hand (#382): `opencode run` in a
             # folder against the stub Model becomes a thread in that folder
-            # within a few seconds without keeping a discovery harness running,
-            # does not duplicate Lever threads or list subagents, loads its
-            # history on open, and accepts a follow-up from the drawer.
+            # while its first turn still works, with Lever's own harness
+            # stopped so discovery runs OpenCode once to list and then stops
+            # it. It does not duplicate Lever threads or list subagents, and
+            # once the store is quiet no listing starts again. It loads its
+            # history on open and accepts a follow-up from the drawer.
             hand_dir = f'{tmp}/hand-session'
             self.run(f'install -d -o {person} -g {person} {hand_dir}')
+            self.run("pkill -x -P \"$(pgrep -x -d, crowbar-lever)\" opencode; true")
+            self.wait("Lever's own OpenCode stopped before the hand-started session",
+                      lambda: not self.guest.ssh('pgrep -x opencode', check=False).stdout.strip())
             threads_before_hand = list(self.agent_view()['state']['threads'])
-            oc_pids_before = set(self.guest.ssh('pgrep -x opencode', check=False).stdout.split())
-            hand_out = self.run(
-                f'cd {hand_dir} && chpst -u {person}:{person} env -i HOME={home} '
+            self.run(
+                f'cd {hand_dir} && nohup chpst -u {person}:{person} env -i HOME={home} '
                 f'XDG_CONFIG_HOME={home}/.config XDG_DATA_HOME={home}/.local/share '
                 f'XDG_CACHE_HOME={home}/.cache XDG_STATE_HOME={home}/.local/state '
                 f'PATH=/usr/local/bin:/usr/bin:/bin '
                 f'OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_FREE_MODELS=1 '
-                f'opencode run --model stub/stub-1 "please hand-session-check" </dev/null',
-                timeout=90,
+                f'opencode run --model stub/stub-1 "please hand-session-check" '
+                f'</dev/null >{tmp}/hand-run.log 2>&1 &'
             )
-            self.log(f'opencode run output:\n{hand_out}')
+            hand_started = time.monotonic()
             hand_listed = self.wait(
-                'session started by hand with opencode run appears in Lever thread list',
+                'session started by hand with opencode run appears in Lever thread list while its turn works',
                 lambda: (v := self.agent_view())
                 and any(t.get('cwd') == hand_dir for t in v['state']['threads'])
                 and v,
-                timeout=15,
+                timeout=20,
             )
-            threads_after_hand = hand_listed['state']['threads']
+            hand_listed_after = time.monotonic() - hand_started
+            turn_still_held = self.guest.ssh(f'test -e {tmp}/hand-release', check=False).returncode != 0
+            self.run(f'touch {tmp}/hand-release')
+            self.wait('opencode run started by hand finishes',
+                      lambda: not self.guest.ssh("pgrep -f '[o]pencode run --model stub/stub-1'",
+                                                 check=False).stdout.strip(),
+                      timeout=90)
+            self.log('opencode run output:\n' + self.guest.ssh(f'cat {tmp}/hand-run.log', check=False).stdout)
+            # Once the store goes quiet, Lever starts no OpenCode to list it.
+            time.sleep(5)
+            listing_pids = json.loads(self.python("""
+import json, time
+from pathlib import Path
+def stats():
+    for path in Path('/proc').glob('[0-9]*/stat'):
+        try:
+            stat = path.read_text()
+        except OSError:
+            continue
+        yield path.parent.name, stat[stat.index('(') + 1:stat.rindex(')')], stat[stat.rindex(')') + 2:].split()[1]
+seen = set()
+end = time.monotonic() + 8
+while time.monotonic() < end:
+    found = list(stats())
+    levers = {pid for pid, name, _ in found if name == 'crowbar-lever'}
+    seen.update(pid for pid, name, ppid in found if name == 'opencode' and ppid in levers)
+    time.sleep(0.05)
+print(json.dumps(sorted(seen)))
+"""))
+            threads_after_hand = self.agent_view()['state']['threads']
             hand_entry = next(t for t in threads_after_hand if t.get('cwd') == hand_dir)
             hand_thread_id = hand_entry['thread']
-            oc_pids_after = set(self.guest.ssh('pgrep -x opencode', check=False).stdout.split())
             self.check(
-                'a session started by hand with opencode run becomes a thread in its folder without '
-                'duplicating Lever threads, listing subagents, or keeping a discovery harness running',
+                'a session started by hand with opencode run becomes a thread in its folder while its turn '
+                'works, without duplicating Lever threads, listing subagents, or starting OpenCode again on a '
+                'quiet store',
                 hand_thread_id.startswith('t-')
+                and turn_still_held
                 and 'ses_' not in json.dumps(threads_after_hand)
                 and len(threads_after_hand) == len(threads_before_hand) + 1
-                and oc_pids_after <= oc_pids_before,
+                and not listing_pids,
                 json.dumps({
                     'before': len(threads_before_hand),
                     'after': len(threads_after_hand),
                     'entry': hand_entry,
-                    'oc_before': sorted(oc_pids_before),
-                    'oc_after': sorted(oc_pids_after),
+                    'listed_after_s': round(hand_listed_after, 1),
+                    'turn_still_held': turn_still_held,
+                    'listings_on_quiet_store': listing_pids,
                 }),
             )
             self.key('meta_l', 'spc')

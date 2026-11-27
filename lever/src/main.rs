@@ -45,7 +45,7 @@ const USAGE: &str = "usage: crowbar-lever \
   --surface-socket <path> --shell-uid <uid> \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
-  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-watch <path>]... [--harness-name <name>]] \
+  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-watch <dir>]... [--harness-name <name>]] \
   [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>] [--discovery-debounce-ms <ms>]";
 
 struct Options {
