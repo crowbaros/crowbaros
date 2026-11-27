@@ -1827,14 +1827,15 @@ impl AcpHarness {
                         }
                         self.take_effort(&session_id, resp.config_options.as_deref().unwrap_or(&[]));
                         let effort = self.session_efforts.get(&session_id).map(|e| e.current.clone());
+                        // The mode it reports is its own default, not the session's:
+                        // the thread keeps its own.
                         let modes = self.take_modes(&session_id, resp.config_options.as_deref());
-                        let current_mode = modes.as_ref().and_then(|s| s.current.clone());
                         if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
                             cat.modes = selector.modes.clone();
                         }
                         let (mut history, tool_ids, subagent_ids) = builder
                             .unwrap_or_else(|| HistoryBuilder::new(self.is_opencode))
-                            .finish(current_model.clone(), effort, current_mode);
+                            .finish(current_model.clone(), effort);
                         if !tool_ids.is_empty() {
                             self.remember_tool_ids(&thread_id, tool_ids);
                         }
@@ -3282,12 +3283,7 @@ impl HistoryBuilder {
         self.launcher_calls.insert(call_id.to_string(), (turn_idx, sub_idx));
     }
 
-    fn finish(
-        mut self,
-        model: Option<String>,
-        effort: Option<String>,
-        mode: Option<String>,
-    ) -> (SessionHistory, Vec<String>, Vec<String>) {
+    fn finish(mut self, model: Option<String>, effort: Option<String>) -> (SessionHistory, Vec<String>, Vec<String>) {
         // Normalize any still-pending replayed acts to done since the historical
         // turn already completed before import.
         for turn in &mut self.turns {
@@ -3303,7 +3299,6 @@ impl HistoryBuilder {
                 turns: self.turns,
                 model,
                 effort,
-                mode,
             },
             self.tool_ids,
             self.subagent_ids,
@@ -4504,7 +4499,7 @@ mod tests {
             "title": "Terminal session"
         }));
 
-        let (history, tool_ids, sub_ids) = b.finish(Some("stub/stub-1".into()), Some("default".into()), None);
+        let (history, tool_ids, sub_ids) = b.finish(Some("stub/stub-1".into()), Some("default".into()));
         assert_eq!(history.title.as_deref(), Some("Terminal session"));
         assert_eq!(history.model.as_deref(), Some("stub/stub-1"));
         assert_eq!(history.turns.len(), 2);

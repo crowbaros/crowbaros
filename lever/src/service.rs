@@ -31,6 +31,11 @@ pub const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the harness says nothing in a turn it began itself before Lever
 /// takes that turn as done. ACP gives such a turn no end of its own.
 pub const DEFAULT_WAKE_QUIET: Duration = Duration::from_secs(10);
+/// How long a discovery pass waits after Lever's database could not be read,
+/// doubling while the reads fail, up to [`DISCOVERY_READ_RETRY_MAX`].
+const DISCOVERY_READ_RETRY: Duration = Duration::from_secs(1);
+const DISCOVERY_READ_RETRY_MAX: Duration = Duration::from_secs(60);
+
 /// How long a running harness has to answer a `session/list`, by default.
 const DEFAULT_LIVE_LIST_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -298,6 +303,8 @@ pub struct Service {
     /// True once the running harness left a `session/list` unanswered: until
     /// it is gone, discovery lists with a one-shot harness instead.
     live_list_unanswered: bool,
+    /// How long a pass waits after Lever's database could not be read.
+    discovery_read_retry: Duration,
     /// True if another pass was asked for while a live `session/list` RPC
     /// was already in flight on `self.harness`.
     live_list_rescan_wanted: bool,
@@ -435,6 +442,7 @@ impl Service {
             live_list_timeout: DEFAULT_LIVE_LIST_TIMEOUT,
             live_list_unanswered: false,
             live_list_rescan_wanted: false,
+            discovery_read_retry: DISCOVERY_READ_RETRY,
             loading_history: HashMap::new(),
             dispatched_history: HashSet::new(),
             pending_resumes: Vec::new(),
@@ -584,6 +592,11 @@ impl Service {
                 ran_after: found.ran_after,
             },
         );
+        if let Some(retry) = found.retry_at {
+            // A session whose export failed is tried again then, though the
+            // store is quiet by then.
+            self.discovery_schedule.request(retry);
+        }
         for (sid, stamp) in &found.quiet {
             if let Err(err) = self.store.remember_quiet_session(sid, stamp) {
                 store_failed(log, &err);
@@ -592,7 +605,7 @@ impl Service {
         self.apply_discovered_sessions(found.sessions, log)
     }
 
-    fn trigger_discovery(&mut self) {
+    fn trigger_discovery(&mut self, log: &mut Log) {
         // One pass at a time: a classification still running takes this one
         // after it.
         match self.discovery.as_mut() {
@@ -619,14 +632,30 @@ impl Service {
             }
             return;
         }
-        let known = self.known_sessions_for_discovery();
+        let Some(known) = self.known_sessions_for_discovery(log) else {
+            return;
+        };
         if let Some(runner) = self.discovery.as_mut() {
             runner.request_scan(known);
         }
     }
 
-    fn known_sessions_for_discovery(&self) -> KnownSessions {
-        let (mut owned, mut ignored) = self.store.known_harness_sessions().unwrap_or_default();
+    /// What Lever knows of the harness's sessions, or `None` when its
+    /// database could not be read: without it, Lever's own sessions and
+    /// deleted ones would be taken for new.
+    fn known_sessions_for_discovery(&mut self, log: &mut Log) -> Option<KnownSessions> {
+        let read = self
+            .store
+            .known_harness_sessions()
+            .and_then(|known| Ok((known, self.store.quiet_sessions()?)));
+        let ((mut owned, mut ignored), quiet) = match read {
+            Ok(read) => read,
+            Err(err) => {
+                self.discovery_read_failed(&err, log);
+                return None;
+            }
+        };
+        self.discovery_read_retry = DISCOVERY_READ_RETRY;
         if let Some(harness) = self.harness.as_ref() {
             for sid in harness.own_session_ids() {
                 owned.insert(sid);
@@ -635,22 +664,29 @@ impl Service {
         for cid in &self.harness_children {
             ignored.insert(cid.clone());
         }
-        KnownSessions {
-            owned,
-            ignored,
-            quiet: self.store.quiet_sessions().unwrap_or_default(),
-        }
+        Some(KnownSessions { owned, ignored, quiet })
+    }
+
+    /// Lever's database could not be read for a pass: the pass is listed
+    /// again after a wait that doubles while the reads fail.
+    fn discovery_read_failed(&mut self, err: &str, log: &mut Log) {
+        store_failed(log, err);
+        self.discovery_schedule
+            .request(Instant::now() + self.discovery_read_retry);
+        self.discovery_read_retry = (self.discovery_read_retry * 2).min(DISCOVERY_READ_RETRY_MAX);
     }
 
     fn apply_discovered_sessions(&mut self, sessions: Vec<ExternalSession>, log: &mut Log) -> Effects {
         // Without what Lever knows of, a deleted thread could come back.
-        let (known_owned, known_ignored) = match self.store.known_harness_sessions() {
-            Ok(known) => known,
+        let read = self
+            .store
+            .known_harness_sessions()
+            .and_then(|known| Ok((known, self.store.quiet_sessions()?)));
+        let ((known_owned, known_ignored), quiet) = match read {
+            Ok(read) => read,
             Err(err) => {
-                store_failed(log, &err);
                 // What was listed is not lost: it is listed again.
-                self.discovery_schedule
-                    .request(Instant::now() + self.discovery_debounce);
+                self.discovery_read_failed(&err, log);
                 return Effects::default();
             }
         };
@@ -665,6 +701,10 @@ impl Service {
         let mut broadcasts = Vec::new();
 
         for session in sessions {
+            // One found empty or archived, unchanged since, is no thread.
+            if session.stamp.is_some() && quiet.get(&session.harness_session_id) == session.stamp.as_ref() {
+                continue;
+            }
             let sid = session.harness_session_id;
             if sid.is_empty() {
                 continue;
@@ -1029,7 +1069,7 @@ impl Service {
         sys::reap_orphans(self.harness.as_ref().map(AcpHarness::pid));
         self.give_up_unanswered_live_list(log);
         if self.discovery_schedule.take_due(Instant::now()) {
-            self.trigger_discovery();
+            self.trigger_discovery(log);
         }
         self.save_endings();
         self.send_held_prompts();
@@ -4484,7 +4524,10 @@ impl Service {
                     .as_ref()
                     .is_some_and(DiscoveryRunner::needs_classification);
                 if needs_classify {
-                    let known = self.known_sessions_for_discovery();
+                    let Some(known) = self.known_sessions_for_discovery(log) else {
+                        self.discovery_pass_finished(rescan, PassEnd::Failed);
+                        return Effects::default();
+                    };
                     let has_unseen = sessions.iter().any(|s| known.unseen(s));
                     if has_unseen && let Some(runner) = self.discovery.as_mut() {
                         // The pass goes on in the classification; a rescan

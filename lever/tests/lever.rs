@@ -10419,6 +10419,7 @@ fn an_opened_hand_started_thread_keeps_its_mode_and_the_persons_chosen_effort() 
             "list_sessions": true,
             "sessions_file": sessions_file.to_str().unwrap(),
             "modes": true,
+            "load_mode": "plan",
             "models": [{ "id": "stub/stub-1", "name": "Stub 1", "efforts": ["low", "high"] }],
             "turns": [{ "match": "go on", "steps": [{ "kind": "text", "text": "Going on." }] }]
         }),
@@ -10544,6 +10545,83 @@ fn a_running_harness_that_never_answers_a_listing_does_not_stall_discovery() {
             && f["threads"]
                 .as_array()
                 .is_some_and(|ts| ts.iter().any(|t| t["title"] == "By hand"))
+    });
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_session_found_empty_is_no_thread_until_it_changes() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let script = write_script(
+        &dir.0,
+        &json!({ "list_sessions": true, "sessions_file": sessions_file.to_str().unwrap() }),
+    );
+    // A pass before this one found it empty, as OpenCode's export does.
+    let lever = start_lever_with_discovery(&dir.0, &script, None, &store_dir);
+    let mut lever = {
+        let mut lever = lever;
+        lever.signal(libc::SIGTERM);
+        assert_eq!(lever.wait().code(), Some(0));
+        let db = rusqlite::Connection::open(dir.0.join("state").join("lever.sqlite")).unwrap();
+        db.execute(
+            "INSERT INTO quiet_sessions (harness_session_id, stamp) VALUES ('ses_quiet', '2026-04-10T12:00:00.100Z')",
+            [],
+        )
+        .unwrap();
+        start_lever_with_discovery(&dir.0, &script, None, &store_dir)
+    };
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+    let session = |id: &str, title: &str, stamp: &str| {
+        json!({
+            "session_id": id,
+            "cwd": "/tmp",
+            "title": title,
+            "updated_at": stamp,
+            "history": [{ "kind": "user_text", "text": "hi" }, { "kind": "text", "text": "hello" }]
+        })
+    };
+    write_sessions_file(
+        &sessions_file,
+        &json!([
+            session("ses_quiet", "Quiet", "2026-04-10T12:00:00.100Z"),
+            session("ses_real", "Real", "2026-04-10T12:00:01Z")
+        ]),
+    );
+    let pushed = read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.iter().any(|t| t["title"] == "Real"))
+    });
+    let titles: Vec<&str> = pushed["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["title"].as_str())
+        .collect();
+    assert_eq!(titles, ["Real"], "a session found empty was made a thread");
+
+    // Once it changes, it is looked at again.
+    write_sessions_file(
+        &sessions_file,
+        &json!([
+            session("ses_quiet", "Quiet", "2026-04-10T12:00:00.500Z"),
+            session("ses_real", "Real", "2026-04-10T12:00:01Z")
+        ]),
+    );
+    read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.iter().any(|t| t["title"] == "Quiet"))
     });
 
     lever.signal(libc::SIGTERM);

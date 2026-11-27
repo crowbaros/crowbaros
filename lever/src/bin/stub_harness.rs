@@ -106,6 +106,10 @@ struct Script {
     touch_on_start: Option<String>,
     #[serde(default)]
     list_sessions: bool,
+    /// If set, the mode a session this process did not begin is reported in
+    /// when it is loaded, as OpenCode reports its own default agent.
+    #[serde(default)]
+    load_mode: Option<String>,
     /// If true, `session/list` goes unanswered once this process has taken
     /// a prompt, as a harness that is busy and never gets to it.
     #[serde(default)]
@@ -2337,6 +2341,13 @@ fn run(options: Options) -> Result<(), String> {
                         writer.send_error(id, AcpError::new(err.code, err.message.clone()));
                     } else {
                         let sid = load_req.session_id.0.as_ref().to_string();
+                        if let Some(mode) = &script.load_mode {
+                            session_modes
+                                .lock()
+                                .unwrap()
+                                .entry(sid.clone())
+                                .or_insert_with(|| mode.clone());
+                        }
                         let external = read_external_sessions(&script)
                             .into_iter()
                             .find(|s| s.session_id == sid);

@@ -307,15 +307,18 @@ impl OpenCodeSessionDiscoverer {
         self.failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Whether a session's export failed too lately to try it again.
-    fn backing_off(&self, sid: &str) -> bool {
+    /// When a session whose export failed lately may be tried again, while
+    /// it may not yet.
+    fn backing_off(&self, sid: &str) -> Option<Instant> {
         self.failures()
             .get(sid)
-            .is_some_and(|(_, retry)| Instant::now() < *retry)
+            .map(|(_, retry)| *retry)
+            .filter(|retry| Instant::now() < *retry)
     }
 
-    /// A session's export failed: it waits longer each time before the next.
-    fn failed(&self, sid: &str) {
+    /// A session's export failed: it waits longer each time before the
+    /// next. Returns when it may be tried again.
+    fn failed(&self, sid: &str) -> Instant {
         let mut failures = self.failures();
         let entry = failures.entry(sid.to_string()).or_insert((0, Instant::now()));
         entry.0 = entry.0.saturating_add(1);
@@ -323,6 +326,7 @@ impl OpenCodeSessionDiscoverer {
             .saturating_mul(1 << entry.0.min(6).saturating_sub(1))
             .min(EXPORT_RETRY_MAX);
         entry.1 = Instant::now() + wait;
+        entry.1
     }
 }
 
@@ -347,13 +351,15 @@ impl SessionDiscoverer for OpenCodeSessionDiscoverer {
         let started = Instant::now();
         let mut found = Classified::default();
         let (mut unseen, seen): (Vec<_>, Vec<_>) = sessions.into_iter().partition(|s| known.unseen(s));
-        found.sessions = seen;
+        // One found empty or archived, unchanged since, is no thread.
+        found.sessions = seen.into_iter().filter(|s| !known.is_quiet(s)).collect();
         // The newest first, so a session started just now is not held back
         // behind older ones Lever has yet to look at.
         unseen.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| b.stamp.cmp(&a.stamp)));
         for mut session in unseen {
             let sid = session.harness_session_id.clone();
-            if self.backing_off(&sid) {
+            if let Some(retry) = self.backing_off(&sid) {
+                found.retry_at = Some(found.retry_at.map_or(retry, |at| at.min(retry)));
                 continue;
             }
             if started.elapsed() >= CLASSIFY_BUDGET {
@@ -364,8 +370,9 @@ impl SessionDiscoverer for OpenCodeSessionDiscoverer {
             // Only the session's own export says it has a message and no
             // parent: a title and a later `updated` come from a rename too.
             let Some(summary) = self.run_cli_export(&sid) else {
-                // Unknown: left for a later pass, never published.
-                self.failed(&sid);
+                // Unknown: never published, and tried again after a wait.
+                let retry = self.failed(&sid);
+                found.retry_at = Some(found.retry_at.map_or(retry, |at| at.min(retry)));
                 continue;
             };
             self.failures().remove(&sid);
@@ -872,6 +879,11 @@ mod tests {
         let again = discoverer.classify_sessions(sessions(first), &known);
         assert!(fake.calls()[calls_before..].is_empty(), "{:?}", fake.calls());
         assert!(!again.ran_after, "nothing was exported");
+        let again_ids = by_id(&again.sessions);
+        for quiet in ["ses_empty", "ses_archived", "ses_renamed"] {
+            assert!(!again_ids.contains_key(quiet), "{quiet} was handed on as a thread");
+        }
+        assert!(again.retry_at.is_some(), "the failed export's retry is asked for");
 
         // Its first message comes within the same second: a new stamp all the
         // same, so it is looked at again.
@@ -903,6 +915,7 @@ mod tests {
         // Not straight away: it waits before it is tried again.
         let found = discoverer.classify_sessions(session(), &KnownSessions::default());
         assert!(found.sessions.is_empty() && !found.ran_after);
+        assert!(found.retry_at.is_some());
         discoverer.failures().get_mut("ses_slow").unwrap().1 = Instant::now();
         let found = discoverer.classify_sessions(session(), &KnownSessions::default());
         assert_eq!(by_id(&found.sessions).get("ses_slow"), Some(&false));

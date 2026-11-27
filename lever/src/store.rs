@@ -668,8 +668,6 @@ impl Store {
         Ok((owned, ignored))
     }
 
-    /// Remembers a harness session ID that must never be listed as a top-level
-    /// thread (a subagent session or a deleted session whose copy may remain).
     /// Sessions a harness's own export found empty or archived, by the
     /// `updated` stamp they had then: not looked at again until it changes.
     pub fn quiet_sessions(&self) -> Result<HashMap<String, String>, String> {
@@ -694,6 +692,8 @@ impl Store {
         Ok(())
     }
 
+    /// Remembers a harness session ID that must never be listed as a top-level
+    /// thread (a subagent session or a deleted session whose copy may remain).
     pub fn remember_ignored_session(&self, harness_session_id: &str, reason: &str, now: i64) -> Result<(), String> {
         if harness_session_id.is_empty() {
             return Ok(());
@@ -2720,7 +2720,6 @@ mod tests {
             }],
             model: Some("stub/stub-1".to_string()),
             effort: Some("high".to_string()),
-            mode: None,
         };
         store.import_thread_history("t-ext1", &history, None, 105).unwrap();
 
@@ -2742,11 +2741,7 @@ mod tests {
             )
             .unwrap();
         store.set_thread_model("t-ext2", "stub/chosen", 100).unwrap();
-        let planned = SessionHistory {
-            mode: Some("plan".into()),
-            ..history.clone()
-        };
-        store.import_thread_history("t-ext2", &planned, None, 105).unwrap();
+        store.import_thread_history("t-ext2", &history, None, 105).unwrap();
         let meta = store.thread_meta("t-ext2").unwrap().unwrap();
         assert_eq!(meta.model.as_deref(), Some("stub/chosen"));
         assert_eq!(meta.effort.as_deref(), Some("high"));

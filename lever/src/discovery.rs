@@ -93,7 +93,6 @@ pub struct SessionHistory {
     pub turns: Vec<ImportedTurn>,
     pub model: Option<String>,
     pub effort: Option<String>,
-    pub mode: Option<String>,
 }
 
 /// Pluggable per-harness contract for discovering sessions started outside Lever.
@@ -140,13 +139,16 @@ pub struct KnownSessions {
 }
 
 impl KnownSessions {
+    /// Whether a listed session is one found empty or archived, unchanged
+    /// since: it is not a thread.
+    pub fn is_quiet(&self, session: &ExternalSession) -> bool {
+        session.stamp.is_some() && self.quiet.get(&session.harness_session_id) == session.stamp.as_ref()
+    }
+
     /// Whether a listed session needs classifying.
     pub fn unseen(&self, session: &ExternalSession) -> bool {
         let sid = &session.harness_session_id;
-        !session.is_subagent
-            && !self.owned.contains(sid)
-            && !self.ignored.contains(sid)
-            && !(session.stamp.is_some() && self.quiet.get(sid) == session.stamp.as_ref())
+        !session.is_subagent && !self.owned.contains(sid) && !self.ignored.contains(sid) && !self.is_quiet(session)
     }
 }
 
@@ -162,6 +164,9 @@ pub struct Classified {
     pub more: bool,
     /// Sessions newly found empty or archived, with their stamps.
     pub quiet: Vec<(String, String)>,
+    /// The soonest a session whose export failed may be tried again, when
+    /// one was left for then.
+    pub retry_at: Option<Instant>,
 }
 
 /// What a job found, and a fingerprint of the listing it classified.
