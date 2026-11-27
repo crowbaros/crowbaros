@@ -57,12 +57,13 @@
     "libspa-bluetooth",
     "bluez",
     "mpv",
+    "poppler",
     "xdg-utils",
     "perl-File-MimeInfo",
     "ripgrep",
     "git"
   ],
-  "lab_packages": ["python3"],
+  "lab_packages": ["python3", "wl-clipboard"],
   "build_packages": [
     "base-minimal",
     "gcc",
@@ -80,7 +81,9 @@
     "fontconfig-devel",
     "freetype-devel",
     "patch",
-    "libxcrypt-devel"
+    "libxcrypt-devel",
+    "poppler",
+    "dejavu-fonts-ttf"
   ],
   "kernel_args": ["nvidia-drm.modeset=1", "nvidia-drm.fbdev=1"],
   "nvidia_options": ["NVreg_PreserveVideoMemoryAllocations=1", "NVreg_TemporaryFilePath=/var/tmp"],

@@ -11,6 +11,8 @@ name = "crowbar-helpers"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.22"
+crowbar-theme = { path = "../../libs/crowbar-theme" }
 # Peer credentials, accounts, and dropping root: what std does not offer.
 libc = "0.2"
 serde_json = "1"

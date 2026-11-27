@@ -22,6 +22,17 @@ the compositor, `crowbar-unlock` speaks the compositor's framing
 [the control channel](../../compositor/README.md#the-control-channel) has
 it.
 
+The launcher also serves Viewer's fixed `wallpaper.rgba` preference through
+`wallpaper_info` (revision and dimensions) and `wallpaper_data` (pixels for
+that revision). These requests retain the shell-only peer check. The helper
+opens the fixed configuration directory without following symlinks, requires
+a regular file owned by the person with one link, and validates dimensions
+and the exact length before reading pixels. A wallpaper is at most 4096 pixels
+on either side and 4,194,304 pixels total. The shared format is in
+[`crowbar-theme`](../../libs/crowbar-theme/src/wallpaper.rs); the data response
+is base64 so the request protocol remains one JSON line. Neither the shell
+nor the helper decodes an image file or accepts a caller-supplied path.
+
 ## Build and test
 
 Base's build builds and tests it in its Void build root with the compositor

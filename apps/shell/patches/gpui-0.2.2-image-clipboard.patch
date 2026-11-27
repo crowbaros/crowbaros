@@ -1,0 +1,211 @@
+--- a/src/platform/linux/wayland/clipboard.rs
++++ b/src/platform/linux/wayland/clipboard.rs
+@@ -15,9 +15,9 @@
+     platform::linux::platform::read_fd,
+ };
+ 
+-/// Text mime types that we'll offer to other programs.
+-pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
+-    ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
++mod data;
++
++pub(crate) use data::TEXT_MIME_TYPES;
+ pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
+ 
+ /// Text mime types that we'll accept from other programs.
+@@ -179,9 +179,18 @@
+         self.self_mime.clone()
+     }
+ 
+-    pub fn send(&self, _mime_type: String, fd: OwnedFd) {
+-        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
+-            self.send_internal(fd, text.as_bytes().to_owned());
++    pub fn mime_types(&self) -> Vec<&'static str> {
++        self.contents
++            .as_ref()
++            .map(|contents| data::mime_types(contents.entries()))
++            .unwrap_or_default()
++    }
++
++    pub fn send(&self, mime_type: String, fd: OwnedFd) {
++        if let Some(bytes) = self.contents.as_ref().and_then(|contents| {
++            data::bytes_for_mime(contents.entries(), &mime_type, &self.self_mime)
++        }) {
++            self.send_internal(fd, bytes);
+         }
+     }
+ 
+--- a/src/platform/linux/wayland/client.rs
++++ b/src/platform/linux/wayland/client.rs
+@@ -837,7 +837,7 @@
+             state.clipboard.set(item);
+             let serial = state.serial_tracker.get(SerialKind::KeyPress);
+             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
+-            for mime_type in TEXT_MIME_TYPES {
++            for mime_type in state.clipboard.mime_types() {
+                 data_source.offer(mime_type.to_string());
+             }
+             data_source.offer(state.clipboard.self_mime());
+--- /dev/null
++++ b/src/platform/linux/wayland/clipboard/data.rs
+@@ -0,0 +1,160 @@
++// CrowbarOS: keep Wayland's advertised formats and transferred bytes in step.
++// This module is also compiled by the shell's gpui_clipboard integration test
++// with the real GPUI clipboard types, without starting a display server.
++use crate::ClipboardEntry;
++
++/// Text mime types that we'll offer to other programs.
++pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
++    ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
++
++pub(super) fn mime_types(entries: &[ClipboardEntry]) -> Vec<&'static str> {
++    let mut types = Vec::new();
++    for entry in entries {
++        match entry {
++            ClipboardEntry::String(_) => {
++                for mime in TEXT_MIME_TYPES {
++                    if !types.contains(&mime) {
++                        types.push(mime);
++                    }
++                }
++            }
++            ClipboardEntry::Image(image) => {
++                let mime = image.format().mime_type();
++                if !types.contains(&mime) {
++                    types.push(mime);
++                }
++            }
++        }
++    }
++    types
++}
++
++pub(super) fn bytes_for_mime(
++    entries: &[ClipboardEntry],
++    mime_type: &str,
++    self_mime: &str,
++) -> Option<Vec<u8>> {
++    if TEXT_MIME_TYPES.contains(&mime_type) || mime_type == self_mime {
++        // Match ClipboardItem::text(): concatenate strings, preserve empty
++        // strings, and keep metadata on the process-local clipboard only.
++        let mut bytes = None;
++        for entry in entries {
++            if let ClipboardEntry::String(text) = entry {
++                bytes
++                    .get_or_insert_with(Vec::new)
++                    .extend_from_slice(text.text().as_bytes());
++            }
++        }
++        return bytes;
++    }
++
++    entries.iter().find_map(|entry| match entry {
++        ClipboardEntry::Image(image) if image.format().mime_type() == mime_type => {
++            Some(image.bytes().to_vec())
++        }
++        _ => None,
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::{ClipboardItem, Image, ImageFormat};
++
++    #[test]
++    fn image_copy_advertises_png_and_sends_the_encoded_bytes() {
++        let bytes = b"\x89PNG\r\n\x1a\n\0\xffencoded image".to_vec();
++        let item = ClipboardItem::new_image(&Image::from_bytes(ImageFormat::Png, bytes.clone()));
++        assert_eq!(mime_types(item.entries()), vec!["image/png"]);
++        assert_eq!(
++            bytes_for_mime(item.entries(), "image/png", "pid/test"),
++            Some(bytes)
++        );
++        for mime in TEXT_MIME_TYPES {
++            assert_eq!(bytes_for_mime(item.entries(), mime, "pid/test"), None);
++        }
++    }
++
++    #[test]
++    fn each_image_format_offers_and_sends_only_its_own_encoding() {
++        for format in [
++            ImageFormat::Png,
++            ImageFormat::Jpeg,
++            ImageFormat::Webp,
++            ImageFormat::Gif,
++            ImageFormat::Svg,
++            ImageFormat::Bmp,
++            ImageFormat::Tiff,
++        ] {
++            let bytes = vec![0, 128, 255, 42];
++            let item = ClipboardItem::new_image(&Image::from_bytes(format, bytes.clone()));
++            assert_eq!(mime_types(item.entries()), vec![format.mime_type()]);
++            assert_eq!(
++                bytes_for_mime(item.entries(), format.mime_type(), "pid/test"),
++                Some(bytes)
++            );
++            assert_eq!(
++                bytes_for_mime(item.entries(), "application/octet-stream", "pid/test"),
++                None
++            );
++            assert_eq!(bytes_for_mime(item.entries(), "pid/test", "pid/test"), None);
++        }
++    }
++
++    #[test]
++    fn text_aliases_and_the_process_marker_preserve_text_without_metadata() {
++        let item =
++            ClipboardItem::new_string_with_metadata("α\r\nnotes".into(), "private metadata".into());
++        assert_eq!(mime_types(item.entries()), TEXT_MIME_TYPES);
++        for mime in TEXT_MIME_TYPES.into_iter().chain(["pid/test"]) {
++            assert_eq!(
++                bytes_for_mime(item.entries(), mime, "pid/test"),
++                Some("α\r\nnotes".as_bytes().to_vec())
++            );
++        }
++        assert_eq!(
++            bytes_for_mime(item.entries(), "image/png", "pid/test"),
++            None
++        );
++        let empty = ClipboardItem::new_string(String::new());
++        assert_eq!(
++            bytes_for_mime(empty.entries(), "text/plain", "pid/test"),
++            Some(Vec::new())
++        );
++        assert_eq!(bytes_for_mime(&[], "text/plain", "pid/test"), None);
++    }
++
++    #[test]
++    fn mixed_entries_deduplicate_offers_and_select_the_requested_payload() {
++        let entries = vec![
++            ClipboardEntry::from("first ".to_string()),
++            ClipboardEntry::from(Image::from_bytes(ImageFormat::Png, vec![1, 2])),
++            ClipboardEntry::from("second".to_string()),
++            ClipboardEntry::from(Image::from_bytes(ImageFormat::Png, vec![3, 4])),
++            ClipboardEntry::from(Image::from_bytes(ImageFormat::Jpeg, vec![5, 6])),
++        ];
++        assert_eq!(
++            mime_types(&entries),
++            vec![
++                "text/plain;charset=utf-8",
++                "UTF8_STRING",
++                "text/plain",
++                "image/png",
++                "image/jpeg"
++            ]
++        );
++        assert_eq!(
++            bytes_for_mime(&entries, "text/plain", "pid/test"),
++            Some(b"first second".to_vec())
++        );
++        assert_eq!(
++            bytes_for_mime(&entries, "image/png", "pid/test"),
++            Some(vec![1, 2])
++        );
++        assert_eq!(
++            bytes_for_mime(&entries, "image/jpeg", "pid/test"),
++            Some(vec![5, 6])
++        );
++        assert_eq!(bytes_for_mime(&entries, "image/webp", "pid/test"), None);
++    }
++}

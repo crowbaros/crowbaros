@@ -7,10 +7,13 @@
 //! the person, with their home, at the compositor's socket for apps (ADR
 //! 0032), as an app would on any desktop. It takes requests only from the
 //! shell's user ID. Read-only requests give the shell the person's saved
-//! appearance, Input, and Power preferences from fixed filenames.
+//! appearance, Input, and Power preferences and bounded wallpaper pixels from
+//! fixed filenames.
 
 use crate::request;
 use crate::sys::{self, Account};
+use base64::Engine;
+use crowbar_theme::wallpaper;
 use serde_json::{Value, json};
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -58,6 +61,23 @@ pub fn appearance(home: &Path, uid: u32) -> Result<Option<Value>, String> {
 /// Reads one fixed preference filename with the same bounds and ownership
 /// checks as appearance. Callers choose the filename, never a request.
 fn preferences(home: &Path, uid: u32, filename: &str) -> Result<Option<Value>, String> {
+    let Some(file) = person_file(home, uid, filename)? else {
+        return Ok(None);
+    };
+    let mut data = Vec::new();
+    file.take(MAX_PREFERENCES as u64 + 1)
+        .read_to_end(&mut data)
+        .map_err(|e| e.to_string())?;
+    if data.len() > MAX_PREFERENCES {
+        return Err("Preferences exceed 64 KiB".into());
+    }
+    serde_json::from_slice(&data).map(Some).map_err(|e| e.to_string())
+}
+
+/// Opens a fixed file through directory descriptors, following no symlinks.
+/// A request never chooses this filename. O_NONBLOCK lets us reject a FIFO
+/// without waiting for its writer.
+fn person_file(home: &Path, uid: u32, filename: &str) -> Result<Option<File>, String> {
     use std::os::fd::AsRawFd;
     let found = (|| -> io::Result<File> {
         let home = home.to_str().ok_or_else(|| io::Error::other("The home is not UTF-8"))?;
@@ -74,16 +94,51 @@ fn preferences(home: &Path, uid: u32, filename: &str) -> Result<Option<Value>, S
     };
     let info = file.metadata().map_err(|e| e.to_string())?;
     if !info.file_type().is_file() || info.uid() != uid || info.nlink() != 1 {
-        return Err("Preferences must be a regular file owned only by the person".into());
+        return Err("The saved file must be a regular file owned only by the person".into());
     }
-    let mut data = Vec::new();
-    file.take(MAX_PREFERENCES as u64 + 1)
-        .read_to_end(&mut data)
+    Ok(Some(file))
+}
+
+fn wallpaper_header(file: &mut File) -> Result<(wallpaper::Info, [u8; wallpaper::HEADER_LEN]), String> {
+    let length = file.metadata().map_err(|e| e.to_string())?.len();
+    if length > wallpaper::MAX_FILE_BYTES as u64 {
+        return Err("Wallpaper exceeds its pixel limit".into());
+    }
+    let mut header = [0; wallpaper::HEADER_LEN];
+    file.read_exact(&mut header).map_err(|e| e.to_string())?;
+    Ok((wallpaper::read_header(&header, length)?, header))
+}
+
+/// Reads only the bounded header, so polling never copies an unchanged image.
+fn wallpaper_info(home: &Path, uid: u32) -> Result<Option<wallpaper::Info>, String> {
+    let Some(mut file) = person_file(home, uid, wallpaper::FILE_NAME)? else {
+        return Ok(None);
+    };
+    wallpaper_header(&mut file).map(|(info, _)| Some(info))
+}
+
+/// Reads the pixels only for the revision the shell observed. An atomic
+/// replacement between the two requests asks the shell to poll again.
+fn wallpaper_data(home: &Path, uid: u32, revision: &str) -> Result<Value, String> {
+    if !wallpaper::valid_revision(revision) {
+        return Err("Wallpaper revision must be 32 lowercase hexadecimal characters".into());
+    }
+    let mut file = person_file(home, uid, wallpaper::FILE_NAME)?.ok_or("No custom wallpaper is saved")?;
+    let (info, header) = wallpaper_header(&mut file)?;
+    if info.revision != revision {
+        return Err("Wallpaper changed; read its revision again".into());
+    }
+    let mut bytes = header.to_vec();
+    file.take((wallpaper::MAX_FILE_BYTES - wallpaper::HEADER_LEN) as u64 + 1)
+        .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
-    if data.len() > MAX_PREFERENCES {
-        return Err("Preferences exceed 64 KiB".into());
-    }
-    serde_json::from_slice(&data).map(Some).map_err(|e| e.to_string())
+    // Also checks the actual payload length if the file changed during reading.
+    wallpaper::decode(&bytes)?;
+    Ok(json!({
+        "ok": true,
+        "wallpaper": info,
+        "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+    }))
 }
 
 /// The system's `LANG`, as Void's locale.conf sets it, or C.UTF-8.
@@ -489,6 +544,16 @@ fn dispatch(request: serde_json::Map<String, Value>, person: &Account, run: &mut
     match op {
         Some("appearance") if request.len() == 1 => {
             Ok(json!({"ok": true, "preferences": appearance(&person.dir, person.uid)?}))
+        }
+        Some("wallpaper_info") if request.len() == 1 => {
+            Ok(json!({"ok": true, "wallpaper": wallpaper_info(&person.dir, person.uid)?}))
+        }
+        Some("wallpaper_data") if request.len() == 2 => {
+            let revision = request
+                .get("revision")
+                .and_then(Value::as_str)
+                .ok_or("Wallpaper revision must be a string")?;
+            wallpaper_data(&person.dir, person.uid, revision)
         }
         Some("input_preferences") if request.len() == 1 => {
             Ok(json!({"ok": true, "preferences": preferences(&person.dir, person.uid, "input.json")?}))
@@ -916,6 +981,160 @@ mod tests {
         assert_eq!(home.read(crate::sys::uid()), Ok(None));
         std::fs::write(home.folder().join("appearance.json"), r#"{"theme":"light"}"#).unwrap();
         assert_eq!(home.read(crate::sys::uid()), Ok(Some(json!({"theme": "light"}))));
+    }
+
+    fn save_wallpaper(home: &Home, revision: [u8; 16]) -> Vec<u8> {
+        let bytes = wallpaper::encode(2, 1, revision, &[255, 0, 0, 255, 0, 255, 0, 128]).unwrap();
+        std::fs::write(home.folder().join(wallpaper::FILE_NAME), &bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn the_shell_reads_wallpaper_metadata_then_the_same_revision_pixels() {
+        let home = Home::new();
+        let person = person(home.path());
+        let (reply, ran) = ask(b"{\"op\":\"wallpaper_info\"}\n", SHELL_UID, &person);
+        assert_eq!(reply, json!({"ok": true, "wallpaper": null}));
+        assert!(ran.is_empty());
+        let bytes = save_wallpaper(&home, [0xab; 16]);
+        let (reply, ran) = ask(b"{\"op\":\"wallpaper_info\"}\n", SHELL_UID, &person);
+        assert_eq!(
+            reply,
+            json!({"ok": true, "wallpaper": {
+                "revision": "abababababababababababababababab", "width": 2, "height": 1,
+            }})
+        );
+        assert!(ran.is_empty());
+        let line = format!(
+            "{}\n",
+            json!({"op": "wallpaper_data", "revision": reply["wallpaper"]["revision"]})
+        );
+        let (data, ran) = ask(line.as_bytes(), SHELL_UID, &person);
+        assert_eq!(data["ok"], true);
+        assert_eq!(data["wallpaper"], reply["wallpaper"]);
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(data["data"].as_str().unwrap())
+                .unwrap(),
+            bytes
+        );
+        assert!(ran.is_empty());
+    }
+
+    #[test]
+    fn wallpaper_requests_cannot_choose_paths_or_skip_the_shell_account() {
+        let home = Home::new();
+        save_wallpaper(&home, [0xab; 16]);
+        let person = person(home.path());
+        for request in [
+            json!({"op": "wallpaper_info"}),
+            json!({"op": "wallpaper_data", "revision": "abababababababababababababababab"}),
+        ] {
+            let line = format!("{request}\n");
+            let (reply, ran) = ask(line.as_bytes(), SHELL_UID + 1, &person);
+            assert_eq!(
+                reply,
+                json!({"ok": false, "error": "Only the shell may make a request"})
+            );
+            assert!(ran.is_empty());
+        }
+        for request in [
+            json!({"op": "wallpaper_info", "path": "/etc/shadow"}),
+            json!({"op": "wallpaper_data", "revision": "abababababababababababababababab", "path": "/etc/shadow"}),
+            json!({"op": "wallpaper_data"}),
+            json!({"op": "wallpaper_data", "revision": 2}),
+            json!({"op": "wallpaper_data", "revision": "ABABABABABABABABABABABABABABABAB"}),
+        ] {
+            let line = format!("{request}\n");
+            let (reply, ran) = ask(line.as_bytes(), SHELL_UID, &person);
+            assert_eq!(reply["ok"], false);
+            assert!(ran.is_empty());
+        }
+        let oversized = format!(
+            "{}\n",
+            json!({"op": "wallpaper_data", "revision": "a".repeat(request::MAX_REQUEST)})
+        );
+        assert_eq!(ask(oversized.as_bytes(), SHELL_UID, &person).0["ok"], false);
+    }
+
+    #[test]
+    fn a_replaced_or_removed_wallpaper_is_not_returned_under_an_old_revision() {
+        let home = Home::new();
+        let original = save_wallpaper(&home, [0xab; 16]);
+        let (old, _) = wallpaper::decode(&original).unwrap();
+        save_wallpaper(&home, [0xcd; 16]);
+        assert!(wallpaper_data(home.path(), sys::uid(), &old.revision).is_err());
+        std::fs::remove_file(home.folder().join(wallpaper::FILE_NAME)).unwrap();
+        assert!(wallpaper_data(home.path(), sys::uid(), &old.revision).is_err());
+    }
+
+    #[test]
+    fn wallpaper_rejects_symlinks_in_the_file_and_both_config_directories() {
+        let home = Home::new();
+        let file = home.folder().join(wallpaper::FILE_NAME);
+        let outside = home.path().join("unrelated.rgba");
+        std::fs::write(&outside, wallpaper::encode(1, 1, [0; 16], &[0; 4]).unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, &file).unwrap();
+        assert!(wallpaper_info(home.path(), sys::uid()).is_err());
+        assert!(wallpaper_data(home.path(), sys::uid(), &"00".repeat(16)).is_err());
+        std::fs::remove_file(&file).unwrap();
+        for directory in [home.folder(), home.path().join(".config")] {
+            let moved = home.path().join("moved");
+            std::fs::rename(&directory, &moved).unwrap();
+            std::os::unix::fs::symlink(&moved, &directory).unwrap();
+            assert!(wallpaper_info(home.path(), sys::uid()).is_err());
+            std::fs::remove_file(&directory).unwrap();
+            std::fs::rename(&moved, &directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn wallpaper_rejects_special_files_wrong_owners_and_hard_links() {
+        let home = Home::new();
+        let file = home.folder().join(wallpaper::FILE_NAME);
+        crate::sys::tests::mkfifo(&file);
+        assert!(wallpaper_info(home.path(), sys::uid()).is_err());
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        assert!(wallpaper_info(home.path(), sys::uid()).is_err());
+        std::fs::remove_dir(&file).unwrap();
+        save_wallpaper(&home, [0; 16]);
+        assert!(wallpaper_info(home.path(), sys::uid() + 1).is_err());
+        std::fs::hard_link(&file, home.path().join("second.rgba")).unwrap();
+        assert!(wallpaper_info(home.path(), sys::uid()).is_err());
+    }
+
+    #[test]
+    fn wallpaper_rejects_malformed_and_oversized_files_before_returning_pixels() {
+        let home = Home::new();
+        let file = home.folder().join(wallpaper::FILE_NAME);
+        let bytes = save_wallpaper(&home, [0; 16]);
+        for bad in [
+            bytes[..31].to_vec(),
+            bytes[..bytes.len() - 1].to_vec(),
+            [bytes.clone(), vec![0]].concat(),
+            vec![0; bytes.len()],
+        ] {
+            std::fs::write(&file, bad).unwrap();
+            assert!(wallpaper_info(home.path(), sys::uid()).is_err());
+            assert!(wallpaper_data(home.path(), sys::uid(), &"00".repeat(16)).is_err());
+        }
+        File::create(&file)
+            .unwrap()
+            .set_len(wallpaper::MAX_FILE_BYTES as u64 + 1)
+            .unwrap();
+        assert!(wallpaper_info(home.path(), sys::uid()).is_err());
+        assert!(wallpaper_data(home.path(), sys::uid(), &"00".repeat(16)).is_err());
+    }
+
+    #[test]
+    fn the_largest_wallpaper_fits_the_separate_data_reply_bound() {
+        let home = Home::new();
+        let bytes = wallpaper::encode(2048, 2048, [0; 16], &vec![0; wallpaper::MAX_PIXELS as usize * 4]).unwrap();
+        std::fs::write(home.folder().join(wallpaper::FILE_NAME), bytes).unwrap();
+        let reply = wallpaper_data(home.path(), sys::uid(), &"00".repeat(16)).unwrap();
+        assert_eq!(reply["data"].as_str().unwrap().len(), wallpaper::MAX_BASE64_BYTES);
+        assert!(reply.to_string().len() + 1 < wallpaper::MAX_DATA_REPLY_BYTES);
     }
 
     #[test]
