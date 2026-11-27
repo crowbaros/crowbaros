@@ -211,17 +211,36 @@ pub fn is_opencode_config(config: &HarnessConfig) -> bool {
 /// OpenCode's data directory (`$XDG_DATA_HOME/opencode`, or
 /// `$HOME/.local/share/opencode`), respecting `env` overrides over Lever's own.
 pub fn data_dir(env: &[(String, String)]) -> Option<PathBuf> {
-    let var = |key: &str| {
-        env.iter()
-            .rev()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.clone())
-            .or_else(|| std::env::var(key).ok())
-            .filter(|v| !v.is_empty())
-    };
+    let var = |key: &str| env_var(env, key);
     var("XDG_DATA_HOME")
         .map(|x| PathBuf::from(x).join("opencode"))
         .or_else(|| var("HOME").map(|h| PathBuf::from(h).join(".local/share/opencode")))
+}
+
+/// A variable from the harness's environment, over Lever's own.
+fn env_var(env: &[(String, String)], key: &str) -> Option<String> {
+    env.iter()
+        .rev()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.clone())
+        .or_else(|| std::env::var(key).ok())
+        .filter(|v| !v.is_empty())
+}
+
+/// OpenCode's database, as OpenCode finds it: `OPENCODE_DB` when set, or
+/// `opencode.db`, taken from its data directory unless absolute. `None` for
+/// one kept in memory, which has no file to watch.
+pub fn database_path(env: &[(String, String)]) -> Option<PathBuf> {
+    let name = env_var(env, "OPENCODE_DB").unwrap_or_else(|| "opencode.db".to_string());
+    if name == ":memory:" {
+        return None;
+    }
+    let path = PathBuf::from(&name);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        Some(data_dir(env)?.join(path))
+    }
 }
 
 /// OpenCode's [`SessionDiscoverer`]: watches OpenCode's own store directory
@@ -245,12 +264,8 @@ pub struct OpenCodeSessionDiscoverer {
     failures: Mutex<HashMap<String, Failures>>,
 }
 
-const OPENCODE_STORE_FILES: [&str; 4] = [
-    "opencode.db",
-    "opencode.db-wal",
-    "opencode.db-journal",
-    "opencode.db-shm",
-];
+/// The files beside an SQLite database that its writes also change.
+const SQLITE_SIDECARS: [&str; 3] = ["-wal", "-journal", "-shm"];
 /// How long one `opencode session` command may run before it is ended.
 const CLI_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a pass starts exports for; what is left goes to the next pass.
@@ -271,9 +286,12 @@ impl OpenCodeSessionDiscoverer {
 
     fn with_cli_timeout(config: HarnessConfig, cli_timeout: Duration) -> Self {
         let mut watch_specs = watch_specs_from_paths(&config.watch_paths);
-        if let Some(dir) = data_dir(&config.env) {
-            let filenames = OPENCODE_STORE_FILES.iter().map(|s| (*s).to_string()).collect();
-            watch_specs.push(WatchSpec::files(dir, filenames));
+        if let Some(db) = database_path(&config.env)
+            && let (Some(dir), Some(name)) = (db.parent(), db.file_name().and_then(|n| n.to_str()))
+        {
+            let mut filenames = vec![name.to_string()];
+            filenames.extend(SQLITE_SIDECARS.iter().map(|side| format!("{name}{side}")));
+            watch_specs.push(WatchSpec::files(dir.to_path_buf(), filenames));
         }
         let acp = AcpSessionDiscoverer::new(config.clone(), watch_specs.clone());
         Self {
@@ -698,6 +716,48 @@ mod tests {
             .cloned()
             .collect();
         assert_eq!(order, ["*", "ls", "rm *"]);
+    }
+
+    #[test]
+    fn the_database_watched_is_the_one_opencode_uses() {
+        let env = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect()
+        };
+        let data = [("XDG_DATA_HOME", "/data"), ("OPENCODE_DB", "")];
+        assert_eq!(
+            database_path(&env(&data)),
+            Some(PathBuf::from("/data/opencode/opencode.db"))
+        );
+        let named = [("XDG_DATA_HOME", "/data"), ("OPENCODE_DB", "profile.db")];
+        assert_eq!(
+            database_path(&env(&named)),
+            Some(PathBuf::from("/data/opencode/profile.db"))
+        );
+        let absolute = [("XDG_DATA_HOME", "/data"), ("OPENCODE_DB", "/elsewhere/work.db")];
+        assert_eq!(
+            database_path(&env(&absolute)),
+            Some(PathBuf::from("/elsewhere/work.db"))
+        );
+        assert_eq!(database_path(&env(&[("OPENCODE_DB", ":memory:")])), None);
+
+        let config = HarnessConfig {
+            id: "opencode".into(),
+            name: "OpenCode".into(),
+            program: "opencode".into(),
+            args: vec!["acp".into()],
+            env: env(&named),
+            watch_paths: Vec::new(),
+        };
+        let specs = OpenCodeSessionDiscoverer::new(config).watch_specs();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].dir, PathBuf::from("/data/opencode"));
+        assert_eq!(
+            specs[0].filenames,
+            ["profile.db", "profile.db-wal", "profile.db-journal", "profile.db-shm"]
+        );
     }
 
     #[test]

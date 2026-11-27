@@ -286,9 +286,11 @@ ACP today:
   - **Watching the harness's store.** Lever watches the harness's store
     directories with Linux `inotify` (watching the nearest existing ancestor
     until a not-yet-created store directory appears, then promoting the watch).
-    For OpenCode, Lever watches `$XDG_DATA_HOME/opencode` (or
-    `~/.local/share/opencode`) for `opencode.db` and its SQLite sidecar files
-    (`opencode.db-wal`, `opencode.db-journal`, `opencode.db-shm`). Additional
+    For OpenCode, Lever watches the database OpenCode uses and its SQLite
+    sidecar files (`-wal`, `-journal`, `-shm`): `OPENCODE_DB` when it is set,
+    taken from OpenCode's data directory unless absolute, or `opencode.db`
+    there; the data directory is `$XDG_DATA_HOME/opencode`, or
+    `~/.local/share/opencode`. Additional
     watch directories can be passed with `--harness-watch <dir>` for any ACP
     harness.
   - **Listing without keeping the harness running.** After a short debounce

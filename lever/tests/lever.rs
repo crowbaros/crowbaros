@@ -10861,8 +10861,10 @@ fn a_session_that_could_not_be_written_waits_through_a_failed_listing() {
     assert_eq!(lever.wait().code(), Some(0));
 }
 
-#[test]
-fn an_opencode_session_that_cannot_be_written_is_not_exported_again_and_again() {
+/// Runs Lever's OpenCode path against the stub with `export` as the
+/// session's export and `refuse` creating a trigger in Lever's database,
+/// and returns how often the session was exported in 6.5 s.
+fn exports_while_lever_cannot_write(export: &str, refuse: &str) -> usize {
     let dir = TempDir::new();
     // The stub stands in for OpenCode: its store is OpenCode's, it writes to
     // it as it starts, and it answers `session export` as OpenCode does.
@@ -10872,11 +10874,7 @@ fn an_opencode_session_that_cannot_be_written_is_not_exported_again_and_again() 
     let wal = store_dir.join("opencode.db-wal");
     let exports = dir.0.join("exports");
     std::fs::create_dir_all(&exports).unwrap();
-    std::fs::write(
-        exports.join("export-ses_hand.json"),
-        r#"{"info":{"id":"ses_hand","title":"By hand"},"messages":[{}]}"#,
-    )
-    .unwrap();
+    std::fs::write(exports.join("export-ses_hand.json"), export).unwrap();
     let script = write_script(
         &dir.0,
         &json!({
@@ -10912,7 +10910,7 @@ fn an_opencode_session_that_cannot_be_written_is_not_exported_again_and_again() 
     assert_eq!(lever.wait().code(), Some(0));
     rusqlite::Connection::open(dir.0.join("state").join("lever.sqlite"))
         .unwrap()
-        .execute_batch("CREATE TRIGGER refused BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .execute_batch(refuse)
         .unwrap();
     std::fs::write(
         &sessions_file,
@@ -10929,10 +10927,28 @@ fn an_opencode_session_that_cannot_be_written_is_not_exported_again_and_again() 
     let mut lever = RunningLever::start_with_extra(&dir.0, my_uid(), my_uid(), &extra);
     std::thread::sleep(Duration::from_millis(6500));
     let exported = count_lines(&exports.join("exports.log"));
-    assert!((1..=10).contains(&exported), "exported {exported} times in 6.5 s");
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
+    exported
+}
+
+#[test]
+fn an_opencode_session_that_cannot_be_written_is_not_exported_again_and_again() {
+    let exported = exports_while_lever_cannot_write(
+        r#"{"info":{"id":"ses_hand","title":"By hand"},"messages":[{}]}"#,
+        "CREATE TRIGGER refused BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+    );
+    assert!((1..=8).contains(&exported), "exported {exported} times in 6.5 s");
+}
+
+#[test]
+fn an_empty_opencode_session_whose_mark_cannot_be_written_is_not_exported_again_and_again() {
+    let exported = exports_while_lever_cannot_write(
+        r#"{"info":{"id":"ses_hand"},"messages":[]}"#,
+        "CREATE TRIGGER refused BEFORE INSERT ON quiet_sessions BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+    );
+    assert!((1..=8).contains(&exported), "exported {exported} times in 6.5 s");
 }
 
 #[test]

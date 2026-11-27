@@ -313,8 +313,6 @@ pub struct Service {
     export_retry_pending: bool,
     /// Whether a session a pass found could not be written, and waits to be.
     write_retry_pending: bool,
-    /// Whether the last pass applied recorded a session Lever did not know.
-    discovery_settled: bool,
     /// True if another pass was asked for while a live `session/list` RPC
     /// was already in flight on `self.harness`.
     live_list_rescan_wanted: bool,
@@ -456,7 +454,6 @@ impl Service {
             listing_retry: DISCOVERY_READ_RETRY,
             export_retry_pending: false,
             write_retry_pending: false,
-            discovery_settled: false,
             loading_history: HashMap::new(),
             dispatched_history: HashSet::new(),
             pending_resumes: Vec::new(),
@@ -614,20 +611,35 @@ impl Service {
         // What it found is written first: a pass made progress only when it
         // recorded something it had not, as no session it settled is
         // classified again; one that settled nothing is a follow-up like any.
-        let effects = self.apply_discovered_sessions(found.sessions, log);
-        if quiet_failed {
-            self.discovery_write_failed();
+        let applied = self.apply_discovered_sessions(found.sessions, log);
+        let write_failed = applied.write_failed || quiet_failed;
+        if !applied.read_failed {
+            self.discovery_writes_done(write_failed);
         }
-        let settled = self.discovery_settled || (!found.quiet.is_empty() && !quiet_failed);
+        let settled = !applied.read_failed && (applied.settled || (!found.quiet.is_empty() && !quiet_failed));
+        // What is left for the next pass is classified again only once its
+        // writes can be: until then, the write's own retry paces it.
+        let more = found.more && !write_failed && !applied.read_failed;
         self.discovery_pass_finished(
-            rescan || found.more,
+            rescan || more,
             PassEnd::Listed {
                 fingerprint,
                 changed_after: found.changed_after,
-                progressed: settled || found.more,
+                progressed: settled || more,
             },
         );
-        effects
+        applied.effects
+    }
+
+    /// A pass's writes have all been tried: one that failed is tried again
+    /// later each time, and once they all succeed the wait starts again.
+    fn discovery_writes_done(&mut self, failed: bool) {
+        if failed {
+            self.discovery_write_failed();
+        } else {
+            self.write_retry_pending = false;
+            self.listing_retry = DISCOVERY_READ_RETRY;
+        }
     }
 
     /// What a pass found could not be written: it is listed again, later
@@ -725,7 +737,7 @@ impl Service {
         self.discovery_read_retry = (self.discovery_read_retry * 2).min(DISCOVERY_READ_RETRY_MAX);
     }
 
-    fn apply_discovered_sessions(&mut self, sessions: Vec<ExternalSession>, log: &mut Log) -> Effects {
+    fn apply_discovered_sessions(&mut self, sessions: Vec<ExternalSession>, log: &mut Log) -> Applied {
         // Without what Lever knows of, a deleted thread could come back.
         let read = self
             .store
@@ -739,7 +751,10 @@ impl Service {
             Err(err) => {
                 // What was listed is not lost: it is listed again.
                 self.discovery_read_failed(&err, log);
-                return Effects::default();
+                return Applied {
+                    read_failed: true,
+                    ..Applied::default()
+                };
             }
         };
         let live_own: HashSet<String> = self
@@ -755,7 +770,6 @@ impl Service {
         // Whether a session Lever did not know of is now a thread or known
         // as a subagent.
         let mut settled = false;
-        self.discovery_settled = false;
 
         for session in sessions {
             // One found empty or archived, unchanged since, is no thread.
@@ -853,16 +867,14 @@ impl Service {
                 }
             }
         }
-        self.discovery_settled = settled;
-        if create_failed {
-            self.discovery_write_failed();
-        } else {
-            self.write_retry_pending = false;
-            self.listing_retry = DISCOVERY_READ_RETRY;
-        }
-        Effects {
-            broadcasts,
-            replies: Vec::new(),
+        Applied {
+            effects: Effects {
+                broadcasts,
+                replies: Vec::new(),
+            },
+            settled,
+            write_failed: create_failed,
+            read_failed: false,
         }
     }
 
@@ -4618,6 +4630,10 @@ impl Service {
                 let fingerprint = discovery::listing_fingerprint(&sessions);
                 // Nothing in it waits to be classified any more.
                 self.export_retry_pending = false;
+                let applied = self.apply_discovered_sessions(sessions, log);
+                if !applied.read_failed {
+                    self.discovery_writes_done(applied.write_failed);
+                }
                 self.discovery_pass_finished(
                     rescan,
                     PassEnd::Listed {
@@ -4630,7 +4646,7 @@ impl Service {
                         progressed: false,
                     },
                 );
-                self.apply_discovered_sessions(sessions, log)
+                applied.effects
             }
             AcpEvent::Exited => Effects::default(),
         }
@@ -5723,6 +5739,19 @@ impl Service {
 
 /// Says in the log that the database did not take a write. The database's
 /// error names what it could not do, and nothing a thread said.
+/// What applying a pass's sessions did.
+#[derive(Default)]
+struct Applied {
+    effects: Effects,
+    /// Whether a session Lever did not know of is now a thread or known as a
+    /// subagent.
+    settled: bool,
+    /// Whether a session could not be written.
+    write_failed: bool,
+    /// Whether what Lever knows could not be read, so nothing was applied.
+    read_failed: bool,
+}
+
 fn store_failed(log: &mut Log, err: &str) {
     let _ = log.write(Event::Error, &format!("storage: {err}"));
 }
