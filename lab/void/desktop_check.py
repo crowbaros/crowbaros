@@ -2903,8 +2903,8 @@ print(json.dumps(sorted(seen)))
                 for out in (r.get('history_tool_outputs') or [])
             )
             self.check(
-                'opening a hand-started thread imports its turn and acts into Lever and sending from the '
-                'drawer continues the same session',
+                'opening a hand-started thread imports its turn and acts into Lever, keeps the mode it was '
+                'listed with, and sending from the drawer continues the same session',
                 'hand-session-check' in hand_turns[0].get('message', '')
                 and 'HAND_SESSION_CMD_OK' in hand_turns[0].get('answer', '')
                 and len(hand_turns[0].get('acts') or []) >= 1
@@ -2912,11 +2912,14 @@ print(json.dumps(sorted(seen)))
                 and followup_saw_terminal_act
                 and 'ses_' not in json.dumps(hand_turns)
                 and 'HAND_SESSION_CMD_OK' in hand_resume_out
-                and 'Continued from drawer' in hand_resume_out,
+                and 'Continued from drawer' in hand_resume_out
+                and hand_continued['state'].get('mode') == hand_entry.get('mode'),
                 json.dumps({
                     'turns': [{k: t.get(k) for k in ('turn', 'message', 'answer', 'state')} for t in hand_turns],
                     'acts0': len(hand_turns[0].get('acts') or []),
                     'followup_saw_terminal_act': followup_saw_terminal_act,
+                    'listed_mode': hand_entry.get('mode'),
+                    'opened_mode': hand_continued['state'].get('mode'),
                 }),
             )
             self.key('meta_l', 'spc')

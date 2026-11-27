@@ -94,9 +94,6 @@ struct StubExternalSession {
     is_subagent: bool,
     #[serde(default)]
     parent_session_id: Option<String>,
-    /// The mode the session was left in, a harness value such as `plan`.
-    #[serde(default)]
-    mode: Option<String>,
     #[serde(default)]
     history: Vec<Step>,
 }
@@ -2343,9 +2340,6 @@ fn run(options: Options) -> Result<(), String> {
                         let external = read_external_sessions(&script)
                             .into_iter()
                             .find(|s| s.session_id == sid);
-                        if let Some(mode) = external.as_ref().and_then(|s| s.mode.clone()) {
-                            session_modes.lock().unwrap().entry(sid.clone()).or_insert(mode);
-                        }
                         let external_history = external.map(|s| s.history).filter(|h| !h.is_empty());
                         let (writer, replay) = (
                             writer.clone(),

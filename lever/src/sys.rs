@@ -307,16 +307,18 @@ impl WorkerChild {
         }
         self.done = true;
         let group = -(self.child.id() as libc::pid_t);
-        let status = wait_until(&mut self.child, Instant::now() + grace).or_else(|| {
-            // SAFETY: signalling the child's own process group.
-            unsafe { libc::kill(group, libc::SIGTERM) };
-            wait_until(&mut self.child, Instant::now() + grace)
-        });
-        let status = status.or_else(|| {
-            // SAFETY: signalling the child's own process group.
-            unsafe { libc::kill(group, libc::SIGKILL) };
-            self.child.wait().ok()
-        });
+        if let Some(status) = wait_until(&mut self.child, Instant::now() + grace) {
+            worker_children().retain(|&pid| pid != self.child.id());
+            return Some(status);
+        }
+        // SAFETY: signalling the child's own process group.
+        unsafe { libc::kill(group, libc::SIGTERM) };
+        let status = wait_until(&mut self.child, Instant::now() + grace);
+        // Whatever of its group is left, the child gone or not, is ended
+        // with it: one that ignores `SIGTERM` does not outlive the timeout.
+        // SAFETY: signalling the child's own process group.
+        unsafe { libc::kill(group, libc::SIGKILL) };
+        let status = status.or_else(|| self.child.wait().ok());
         worker_children().retain(|&pid| pid != self.child.id());
         status
     }
@@ -608,6 +610,27 @@ mod tests {
             "what it started still runs"
         );
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn what_a_timed_out_command_started_is_ended_though_it_ignores_sigterm() {
+        let marker = std::env::temp_dir().join(format!("lever-group-term-{}", random_hex(4)));
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            &format!("(trap '' TERM; exec sleep 30) & echo $! > {}; wait", marker.display()),
+        ]);
+        assert!(run_bounded(cmd, Duration::from_millis(300), 1024).is_err());
+        let grandchild: u32 = std::fs::read_to_string(&marker).unwrap().trim().parse().unwrap();
+        let _ = std::fs::remove_file(&marker);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !matches!(process_state(grandchild), None | Some('Z' | 'X')) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            matches!(process_state(grandchild), None | Some('Z' | 'X')),
+            "it outlived the timeout"
+        );
     }
 
     #[test]

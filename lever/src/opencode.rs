@@ -14,16 +14,17 @@
 
 use crate::acp::{self, HarnessConfig};
 use crate::discovery::{
-    AcpSessionDiscoverer, ExternalSession, SessionDiscoverer, spec_has_data, watch_specs_from_paths,
+    AcpSessionDiscoverer, Classified, ExternalSession, KnownSessions, SessionDiscoverer, spec_has_data,
+    watch_specs_from_paths,
 };
 use crate::sys;
 use crate::watcher::WatchSpec;
 use serde_json::{Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// What a rule does.
 const ASK: &str = "ask";
@@ -232,16 +233,17 @@ pub fn data_dir(env: &[(String, String)]) -> Option<PathBuf> {
 ///
 /// A session becomes a thread only on positive evidence that it is a
 /// top-level session with a message: its export has messages and no parent. A
-/// session whose export fails is left for a later pass, and only an export
-/// that names a parent marks it a subagent for good.
+/// session whose export fails is left for a later pass, tried again after a
+/// wait that grows each time, and only an export that names a parent marks it
+/// a subagent for good.
 pub struct OpenCodeSessionDiscoverer {
     config: HarnessConfig,
     acp: AcpSessionDiscoverer,
     watch_specs: Vec<WatchSpec>,
     cli_timeout: Duration,
-    /// Sessions an export showed empty or archived, by the `updated` stamp the
-    /// list gave then: they are not exported again until that stamp changes.
-    not_threads: Mutex<HashMap<String, String>>,
+    /// Sessions whose export failed: how often in a row, and when it may be
+    /// tried again.
+    failures: Mutex<HashMap<String, (u32, Instant)>>,
 }
 
 const OPENCODE_STORE_FILES: [&str; 4] = [
@@ -252,7 +254,13 @@ const OPENCODE_STORE_FILES: [&str; 4] = [
 ];
 /// How long one `opencode session` command may run before it is ended.
 const CLI_TIMEOUT: Duration = Duration::from_secs(15);
-/// The most a `session list` or `session export` may print.
+/// How long a pass starts exports for; what is left goes to the next pass.
+const CLASSIFY_BUDGET: Duration = Duration::from_secs(2);
+/// How long a session whose export failed waits before it is tried again,
+/// doubling each time it fails, up to [`EXPORT_RETRY_MAX`].
+const EXPORT_RETRY: Duration = Duration::from_secs(5);
+const EXPORT_RETRY_MAX: Duration = Duration::from_secs(300);
+/// The most a `session export` may print.
 const CLI_MAX_STDOUT: usize = 64 * 1024 * 1024;
 
 impl OpenCodeSessionDiscoverer {
@@ -272,7 +280,7 @@ impl OpenCodeSessionDiscoverer {
             acp,
             watch_specs,
             cli_timeout,
-            not_threads: Mutex::new(HashMap::new()),
+            failures: Mutex::new(HashMap::new()),
         }
     }
 
@@ -295,10 +303,26 @@ impl OpenCodeSessionDiscoverer {
         parse_cli_session_export(&self.run_cli(&["export", "--standalone", session_id])?)
     }
 
-    fn not_threads(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
-        self.not_threads
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    fn failures(&self) -> std::sync::MutexGuard<'_, HashMap<String, (u32, Instant)>> {
+        self.failures.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Whether a session's export failed too lately to try it again.
+    fn backing_off(&self, sid: &str) -> bool {
+        self.failures()
+            .get(sid)
+            .is_some_and(|(_, retry)| Instant::now() < *retry)
+    }
+
+    /// A session's export failed: it waits longer each time before the next.
+    fn failed(&self, sid: &str) {
+        let mut failures = self.failures();
+        let entry = failures.entry(sid.to_string()).or_insert((0, Instant::now()));
+        entry.0 = entry.0.saturating_add(1);
+        let wait = EXPORT_RETRY
+            .saturating_mul(1 << entry.0.min(6).saturating_sub(1))
+            .min(EXPORT_RETRY_MAX);
+        entry.1 = Instant::now() + wait;
     }
 }
 
@@ -319,48 +343,48 @@ impl SessionDiscoverer for OpenCodeSessionDiscoverer {
         true
     }
 
-    fn classify_sessions(
-        &self,
-        sessions: Vec<ExternalSession>,
-        known_sessions: &HashSet<String>,
-        known_subagents: &HashSet<String>,
-    ) -> Result<Vec<ExternalSession>, String> {
-        let mut kept = Vec::new();
-        for mut session in sessions {
+    fn classify_sessions(&self, sessions: Vec<ExternalSession>, known: &KnownSessions) -> Classified {
+        let started = Instant::now();
+        let mut found = Classified::default();
+        let (mut unseen, seen): (Vec<_>, Vec<_>) = sessions.into_iter().partition(|s| known.unseen(s));
+        found.sessions = seen;
+        // The newest first, so a session started just now is not held back
+        // behind older ones Lever has yet to look at.
+        unseen.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| b.stamp.cmp(&a.stamp)));
+        for mut session in unseen {
             let sid = session.harness_session_id.clone();
-            if session.is_subagent || known_sessions.contains(&sid) || known_subagents.contains(&sid) {
-                kept.push(session);
+            if self.backing_off(&sid) {
                 continue;
             }
-            // An empty or archived session is looked at again only once the
-            // harness has changed it.
-            if session.stamp.is_some() && self.not_threads().get(&sid) == session.stamp.as_ref() {
+            if started.elapsed() >= CLASSIFY_BUDGET {
+                found.more = true;
                 continue;
             }
+            found.ran_after = true;
             // Only the session's own export says it has a message and no
             // parent: a title and a later `updated` come from a rename too.
-            match self.run_cli_export(&sid) {
-                Some(summary) if summary.has_parent => {
-                    session.is_subagent = true;
-                    kept.push(session);
-                }
-                Some(summary) if summary.archived || !summary.has_messages => {
-                    if let Some(stamp) = session.stamp.clone() {
-                        self.not_threads().insert(sid, stamp);
-                    }
-                }
-                Some(summary) => {
-                    session.created = summary.created_secs.or(session.created);
-                    if session.title.is_none() {
-                        session.title = summary.title;
-                    }
-                    kept.push(session);
-                }
+            let Some(summary) = self.run_cli_export(&sid) else {
                 // Unknown: left for a later pass, never published.
-                None => {}
+                self.failed(&sid);
+                continue;
+            };
+            self.failures().remove(&sid);
+            if summary.has_parent {
+                session.is_subagent = true;
+                found.sessions.push(session);
+            } else if summary.archived || !summary.has_messages {
+                if let Some(stamp) = session.stamp.clone() {
+                    found.quiet.push((sid, stamp));
+                }
+            } else {
+                session.created = summary.created_secs.or(session.created);
+                if session.title.is_none() {
+                    session.title = summary.title;
+                }
+                found.sessions.push(session);
             }
         }
-        Ok(kept)
+        found
     }
 }
 
@@ -804,15 +828,22 @@ mod tests {
         ];
         let first = "2026-01-01T00:00:00.100Z";
         let sessions = |stamp: &str| ids.iter().map(|id| fake.session(id, stamp)).collect::<Vec<_>>();
-        let known: HashSet<String> = ["ses_known".to_string()].into();
+        let mut known = KnownSessions {
+            owned: ["ses_known".to_string()].into(),
+            ..KnownSessions::default()
+        };
 
-        let kept = discoverer
-            .classify_sessions(sessions(first), &known, &HashSet::new())
-            .unwrap();
-        let kept_ids = by_id(&kept);
+        let found = discoverer.classify_sessions(sessions(first), &known);
+        assert!(found.ran_after);
+        let kept_ids = by_id(&found.sessions);
         assert_eq!(kept_ids.get("ses_root"), Some(&false));
+        let root = found
+            .sessions
+            .iter()
+            .find(|s| s.harness_session_id == "ses_root")
+            .unwrap();
         assert_eq!(
-            kept[0].title.as_deref(),
+            root.title.as_deref(),
             Some("Fix bug"),
             "the export's title fills a missing one"
         );
@@ -825,22 +856,22 @@ mod tests {
         assert!(!kept_ids.contains_key("ses_empty"));
         assert!(!kept_ids.contains_key("ses_renamed"), "a rename is not a message");
         assert!(!kept_ids.contains_key("ses_archived"));
-        // Its export failed: neither a thread nor a subagent, so it is tried again.
+        // Its export failed: neither a thread nor a subagent.
         assert!(!kept_ids.contains_key("ses_unknown"));
         assert!(!fake.calls().iter().any(|c| c.ends_with("ses_known")));
+        let mut quiet: Vec<_> = found.quiet.iter().map(|(sid, _)| sid.as_str()).collect();
+        quiet.sort_unstable();
+        assert_eq!(quiet, ["ses_archived", "ses_empty", "ses_renamed"]);
 
-        let exports_before = fake.calls().len();
-        let again = discoverer
-            .classify_sessions(sessions(first), &known, &HashSet::new())
-            .unwrap();
-        let new_calls = fake.calls()[exports_before..].to_vec();
-        assert!(
-            !new_calls
-                .iter()
-                .any(|c| c.ends_with("ses_empty") || c.ends_with("ses_archived"))
-        );
-        assert!(new_calls.iter().any(|c| c.ends_with("ses_unknown")));
-        assert!(!by_id(&again).contains_key("ses_unknown"));
+        // Lever keeps what was quiet; a failed export waits before it is
+        // tried again.
+        known.quiet = found.quiet.into_iter().collect();
+        known.owned.extend(["ses_root".to_string()]);
+        known.ignored.extend(["ses_child".to_string()]);
+        let calls_before = fake.calls().len();
+        let again = discoverer.classify_sessions(sessions(first), &known);
+        assert!(fake.calls()[calls_before..].is_empty(), "{:?}", fake.calls());
+        assert!(!again.ran_after, "nothing was exported");
 
         // Its first message comes within the same second: a new stamp all the
         // same, so it is looked at again.
@@ -848,27 +879,20 @@ mod tests {
             "export-ses_empty.json",
             r#"{"info":{"id":"ses_empty"},"messages":[{}]}"#,
         );
-        let kept = discoverer
-            .classify_sessions(sessions("2026-01-01T00:00:00.500Z"), &known, &HashSet::new())
-            .unwrap();
-        assert_eq!(by_id(&kept).get("ses_empty"), Some(&false));
+        let found = discoverer.classify_sessions(sessions("2026-01-01T00:00:00.500Z"), &known);
+        assert_eq!(by_id(&found.sessions).get("ses_empty"), Some(&false));
     }
 
     #[test]
-    fn a_classification_command_that_hangs_is_ended_and_tried_again() {
+    fn a_classification_command_that_hangs_is_ended_and_tried_again_later() {
         let fake = FakeOpenCode::new();
         fake.write("export-ses_slow.json", r#"{"info":{"id":"ses_slow"},"messages":[{}]}"#);
         fake.write("hang-ses_slow", "");
         let discoverer = fake.discoverer(Duration::from_millis(300));
-        let started = std::time::Instant::now();
-        let kept = discoverer
-            .classify_sessions(
-                vec![fake.session("ses_slow", "2026-01-01T00:00:01Z")],
-                &HashSet::new(),
-                &HashSet::new(),
-            )
-            .unwrap();
-        assert!(kept.is_empty());
+        let session = || vec![fake.session("ses_slow", "2026-01-01T00:00:01Z")];
+        let started = Instant::now();
+        let found = discoverer.classify_sessions(session(), &KnownSessions::default());
+        assert!(found.sessions.is_empty());
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "took {:?}",
@@ -876,13 +900,35 @@ mod tests {
         );
 
         std::fs::remove_file(fake.dir.join("hang-ses_slow")).unwrap();
-        let kept = discoverer
-            .classify_sessions(
-                vec![fake.session("ses_slow", "2026-01-01T00:00:01Z")],
-                &HashSet::new(),
-                &HashSet::new(),
-            )
-            .unwrap();
-        assert_eq!(by_id(&kept).get("ses_slow"), Some(&false));
+        // Not straight away: it waits before it is tried again.
+        let found = discoverer.classify_sessions(session(), &KnownSessions::default());
+        assert!(found.sessions.is_empty() && !found.ran_after);
+        discoverer.failures().get_mut("ses_slow").unwrap().1 = Instant::now();
+        let found = discoverer.classify_sessions(session(), &KnownSessions::default());
+        assert_eq!(by_id(&found.sessions).get("ses_slow"), Some(&false));
+    }
+
+    #[test]
+    fn the_newest_session_is_classified_first_and_the_rest_wait_for_the_next_pass() {
+        let fake = FakeOpenCode::new();
+        for id in ["ses_old", "ses_new"] {
+            fake.write(
+                &format!("export-{id}.json"),
+                &format!(r#"{{"info":{{"id":"{id}"}},"messages":[{{}}]}}"#),
+            );
+        }
+        // The old one's export is held past the pass's budget.
+        fake.write("hang-ses_old", "");
+        let discoverer = fake.discoverer(Duration::from_millis(2500));
+        let sessions = vec![
+            fake.session("ses_old", "2026-01-01T00:00:01Z"),
+            fake.session("ses_new", "2026-01-02T00:00:01Z"),
+            fake.session("ses_older", "2025-01-01T00:00:01Z"),
+        ];
+        let found = discoverer.classify_sessions(sessions, &KnownSessions::default());
+        assert_eq!(by_id(&found.sessions).get("ses_new"), Some(&false));
+        assert_eq!(fake.calls().first().map(String::as_str), Some("export ses_new"));
+        assert!(found.more, "the session after the budget waits for the next pass");
+        assert!(!fake.calls().iter().any(|c| c.ends_with("ses_older")));
     }
 }

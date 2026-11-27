@@ -4,7 +4,9 @@
 
 use crate::acp::{self, AcpEvent, AcpHarness, EffortOption, HarnessCommand, HarnessConfig, ModelCatalog, TurnOutcome};
 use crate::channel::LEVER_VERSION;
-use crate::discovery::{self, DiscoveryRunner, DiscoverySchedule, ExternalSession, SessionHistory};
+use crate::discovery::{
+    self, DiscoveryRunner, DiscoverySchedule, ExternalSession, KnownSessions, PassEnd, SessionHistory,
+};
 use crate::fulcrum;
 use crate::log::{Event, Log};
 use crate::store::{
@@ -533,7 +535,7 @@ impl Service {
         self.live_list_in_flight = false;
         self.live_list_rescan_wanted = false;
         self.live_list_unanswered = true;
-        self.discovery_pass_finished(true, None);
+        self.discovery_pass_finished(true, PassEnd::Failed);
     }
 
     /// A live `session/list` the harness will not answer, as it stopped or
@@ -544,16 +546,15 @@ impl Service {
         let lost = std::mem::take(&mut self.live_list_in_flight);
         let rescan = std::mem::take(&mut self.live_list_rescan_wanted);
         if lost || rescan {
-            self.discovery_pass_finished(true, None);
+            self.discovery_pass_finished(true, PassEnd::Failed);
         }
     }
 
     /// A discovery pass ended, or was lost; one more runs after a quiet
-    /// period if another was asked for while it ran. `listing` is the
-    /// fingerprint of what the pass listed, when it listed.
-    fn discovery_pass_finished(&mut self, rescan: bool, listing: Option<u64>) {
+    /// period if another was asked for while it ran.
+    fn discovery_pass_finished(&mut self, rescan: bool, end: PassEnd) {
         let now = Instant::now();
-        self.discovery_schedule.pass_finished(now, listing);
+        self.discovery_schedule.pass_finished(now, end);
         if rescan {
             self.discovery_schedule.request(now + self.discovery_debounce);
         }
@@ -565,18 +566,30 @@ impl Service {
         // What the pass's listing wrote to the store was written before it
         // ended: it is read while the pass still counts as running.
         self.on_store_changed();
-        let Some((outcome, listing, rescan)) = self.discovery.as_mut().and_then(DiscoveryRunner::take_result) else {
+        let Some((outcome, rescan)) = self.discovery.as_mut().and_then(DiscoveryRunner::take_result) else {
             return Effects::default();
         };
-        self.discovery_pass_finished(rescan, listing);
-        let sessions = match outcome {
-            Ok(sessions) => sessions,
+        let (found, fingerprint) = match outcome {
+            Ok(done) => done,
             Err(_) => {
+                self.discovery_pass_finished(rescan, PassEnd::Failed);
                 let _ = log.write(Event::Error, "could not list external harness sessions");
                 return Effects::default();
             }
         };
-        self.apply_discovered_sessions(sessions, log)
+        self.discovery_pass_finished(
+            rescan || found.more,
+            PassEnd::Listed {
+                fingerprint,
+                ran_after: found.ran_after,
+            },
+        );
+        for (sid, stamp) in &found.quiet {
+            if let Err(err) = self.store.remember_quiet_session(sid, stamp) {
+                store_failed(log, &err);
+            }
+        }
+        self.apply_discovered_sessions(found.sessions, log)
     }
 
     fn trigger_discovery(&mut self) {
@@ -606,13 +619,13 @@ impl Service {
             }
             return;
         }
-        let (owned, ignored) = self.known_sessions_for_discovery();
+        let known = self.known_sessions_for_discovery();
         if let Some(runner) = self.discovery.as_mut() {
-            runner.request_scan(owned, ignored);
+            runner.request_scan(known);
         }
     }
 
-    fn known_sessions_for_discovery(&self) -> (HashSet<String>, HashSet<String>) {
+    fn known_sessions_for_discovery(&self) -> KnownSessions {
         let (mut owned, mut ignored) = self.store.known_harness_sessions().unwrap_or_default();
         if let Some(harness) = self.harness.as_ref() {
             for sid in harness.own_session_ids() {
@@ -622,7 +635,11 @@ impl Service {
         for cid in &self.harness_children {
             ignored.insert(cid.clone());
         }
-        (owned, ignored)
+        KnownSessions {
+            owned,
+            ignored,
+            quiet: self.store.quiet_sessions().unwrap_or_default(),
+        }
     }
 
     fn apply_discovered_sessions(&mut self, sessions: Vec<ExternalSession>, log: &mut Log) -> Effects {
@@ -631,6 +648,9 @@ impl Service {
             Ok(known) => known,
             Err(err) => {
                 store_failed(log, &err);
+                // What was listed is not lost: it is listed again.
+                self.discovery_schedule
+                    .request(Instant::now() + self.discovery_debounce);
                 return Effects::default();
             }
         };
@@ -1690,14 +1710,10 @@ impl Service {
             .ok()
             .flatten()
             .and_then(|meta| meta.effort);
-        let default_mode = self.default_mode();
-        if let Err(err) = self.store.import_thread_history(
-            thread_id,
-            &history,
-            fallback_title.as_deref(),
-            &default_mode,
-            unix_now(),
-        ) {
+        if let Err(err) = self
+            .store
+            .import_thread_history(thread_id, &history, fallback_title.as_deref(), unix_now())
+        {
             store_failed(log, &err);
             // Not imported, so not yet the thread's: the next open loads it again.
             if let Some(h) = self.harness.as_mut() {
@@ -2060,10 +2076,6 @@ impl Service {
         }]
     }
 
-    /// Keeps what the harness says of a thread's session: the effort levels
-    /// of its Model, and the effort it is at. That effort is the thread's,
-    /// unless the turn that waits has one of its own the Model offers, which
-    /// it sets before its prompt.
     /// Keeps the effort levels a thread's session offers for its Model, and
     /// returns the session's effort selector.
     fn note_session_efforts(&mut self, thread_id: &str) -> Option<Option<crate::acp::EffortSelector>> {
@@ -2079,6 +2091,10 @@ impl Service {
         Some(selector)
     }
 
+    /// Keeps what the harness says of a thread's session: the effort levels
+    /// of its Model, and the effort it is at. That effort is the thread's,
+    /// unless the turn that waits has one of its own the Model offers, which
+    /// it sets before its prompt.
     fn mirror_effort(&mut self, thread_id: &str, log: &mut Log) -> Vec<Broadcast> {
         let Some(selector) = self.note_session_efforts(thread_id) else {
             return Vec::new();
@@ -4458,7 +4474,7 @@ impl Service {
                 let sessions = match result {
                     Ok(sessions) => sessions,
                     Err(_) => {
-                        self.discovery_pass_finished(rescan, None);
+                        self.discovery_pass_finished(rescan, PassEnd::Failed);
                         let _ = log.write(Event::Error, "could not list external harness sessions");
                         return Effects::default();
                     }
@@ -4468,23 +4484,26 @@ impl Service {
                     .as_ref()
                     .is_some_and(DiscoveryRunner::needs_classification);
                 if needs_classify {
-                    let (owned, ignored) = self.known_sessions_for_discovery();
-                    let has_unseen = sessions.iter().any(|s| {
-                        !s.is_subagent
-                            && !owned.contains(&s.harness_session_id)
-                            && !ignored.contains(&s.harness_session_id)
-                    });
+                    let known = self.known_sessions_for_discovery();
+                    let has_unseen = sessions.iter().any(|s| known.unseen(s));
                     if has_unseen && let Some(runner) = self.discovery.as_mut() {
                         // The pass goes on in the classification; a rescan
                         // asked for meanwhile follows it.
-                        runner.request_classify(sessions, owned, ignored);
+                        runner.request_classify(sessions, known);
                         if rescan {
                             runner.want_rescan();
                         }
                         return Effects::default();
                     }
                 }
-                self.discovery_pass_finished(rescan, Some(discovery::listing_fingerprint(&sessions)));
+                let fingerprint = discovery::listing_fingerprint(&sessions);
+                self.discovery_pass_finished(
+                    rescan,
+                    PassEnd::Listed {
+                        fingerprint,
+                        ran_after: false,
+                    },
+                );
                 self.apply_discovered_sessions(sessions, log)
             }
             AcpEvent::Exited => Effects::default(),

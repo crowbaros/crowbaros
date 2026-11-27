@@ -8,7 +8,7 @@
 use crate::discovery::SessionHistory;
 use crate::sys;
 use rusqlite::{Connection, OptionalExtension, params};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -284,6 +284,10 @@ impl Store {
                  harness_session_id TEXT PRIMARY KEY,\n\
                  reason TEXT NOT NULL,\n\
                  created_at INTEGER NOT NULL\n\
+             );\n\
+             CREATE TABLE IF NOT EXISTS quiet_sessions (\n\
+                 harness_session_id TEXT PRIMARY KEY,\n\
+                 stamp TEXT NOT NULL\n\
              );\n\
              CREATE TABLE IF NOT EXISTS turns (\n\
                  id INTEGER PRIMARY KEY AUTOINCREMENT,\n\
@@ -666,6 +670,30 @@ impl Store {
 
     /// Remembers a harness session ID that must never be listed as a top-level
     /// thread (a subagent session or a deleted session whose copy may remain).
+    /// Sessions a harness's own export found empty or archived, by the
+    /// `updated` stamp they had then: not looked at again until it changes.
+    pub fn quiet_sessions(&self) -> Result<HashMap<String, String>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT harness_session_id, stamp FROM quiet_sessions")
+            .map_err(|e| format!("could not read quiet sessions: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|e| format!("could not read quiet sessions: {e}"))?;
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| format!("could not read quiet sessions: {e}"))
+    }
+
+    pub fn remember_quiet_session(&self, harness_session_id: &str, stamp: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO quiet_sessions (harness_session_id, stamp) VALUES (?1, ?2)",
+                params![harness_session_id, stamp],
+            )
+            .map_err(|e| format!("could not record a quiet session: {e}"))?;
+        Ok(())
+    }
+
     pub fn remember_ignored_session(&self, harness_session_id: &str, reason: &str, now: i64) -> Result<(), String> {
         if harness_session_id.is_empty() {
             return Ok(());
@@ -676,6 +704,16 @@ impl Store {
                 params![harness_session_id, reason, now],
             )
             .map_err(|e| format!("could not record ignored session: {e}"))?;
+        self.forget_quiet_session(harness_session_id)
+    }
+
+    fn forget_quiet_session(&self, harness_session_id: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "DELETE FROM quiet_sessions WHERE harness_session_id = ?1",
+                params![harness_session_id],
+            )
+            .map_err(|e| format!("could not forget a quiet session: {e}"))?;
         Ok(())
     }
 
@@ -716,7 +754,7 @@ impl Store {
                 params![id, title, cwd, harness_name, harness_session_id, mode, created, updated],
             )
             .map_err(|e| format!("could not create discovered thread: {e}"))?;
-        Ok(())
+        self.forget_quiet_session(harness_session_id)
     }
 
     /// Updates the title or timestamp of an unopened discovered thread when
@@ -739,15 +777,15 @@ impl Store {
     /// Atomically writes an imported [`SessionHistory`] into a discovered
     /// thread's record and clears `needs_history`. All turns, acts, notes, and
     /// subagents are committed together or rolled back on failure.
-    /// The thread keeps a Model, effort, or mode the person chose before it
-    /// was opened, and otherwise takes the session's own: a thread still in
-    /// `default_mode`, the one it was found with, takes the session's mode.
+    /// The thread keeps a Model or effort the person chose before it was
+    /// opened, and otherwise takes the session's own. It keeps its mode: a
+    /// harness reports its own default for a loaded session, and the mode is
+    /// the person's, chosen for each message.
     pub fn import_thread_history(
         &self,
         thread_id: &str,
         history: &SessionHistory,
         fallback_title: Option<&str>,
-        default_mode: &str,
         now: i64,
     ) -> Result<(), String> {
         self.all_or_none("import thread history", || {
@@ -876,7 +914,6 @@ impl Store {
                          title = COALESCE(?1, title), \
                          model = COALESCE(model, ?2), \
                          effort = COALESCE(effort, ?3), \
-                         mode = CASE WHEN ?6 IS NOT NULL AND mode = ?7 THEN ?6 ELSE mode END, \
                          updated_at = MAX(updated_at, ?4) \
                      WHERE id = ?5",
                     params![
@@ -885,8 +922,6 @@ impl Store {
                         history.effort.as_deref(),
                         now.min(turn_time.max(created_at)),
                         thread_id,
-                        history.mode.as_deref(),
-                        default_mode,
                     ],
                 )
                 .map_err(|e| format!("could not finalize imported thread: {e}"))?;
@@ -2687,9 +2722,7 @@ mod tests {
             effort: Some("high".to_string()),
             mode: None,
         };
-        store
-            .import_thread_history("t-ext1", &history, None, "ask-first", 105)
-            .unwrap();
+        store.import_thread_history("t-ext1", &history, None, 105).unwrap();
 
         let meta = store.thread_meta("t-ext1").unwrap().unwrap();
         assert!(!meta.needs_history);
@@ -2713,31 +2746,11 @@ mod tests {
             mode: Some("plan".into()),
             ..history.clone()
         };
-        store
-            .import_thread_history("t-ext2", &planned, None, "ask-first", 105)
-            .unwrap();
+        store.import_thread_history("t-ext2", &planned, None, 105).unwrap();
         let meta = store.thread_meta("t-ext2").unwrap().unwrap();
         assert_eq!(meta.model.as_deref(), Some("stub/chosen"));
         assert_eq!(meta.effort.as_deref(), Some("high"));
-        assert_eq!(meta.mode, "plan", "the session's own mode, as the person chose none");
-        // A mode the person chose before opening it is theirs.
-        store
-            .create_discovered_thread(
-                "t-ext3",
-                "Thread",
-                "/tmp",
-                Some("OpenCode"),
-                "ses-ext-3",
-                "ask-first",
-                90,
-                96,
-            )
-            .unwrap();
-        store.set_thread_mode("t-ext3", "full-access", 100).unwrap();
-        store
-            .import_thread_history("t-ext3", &planned, None, "ask-first", 105)
-            .unwrap();
-        assert_eq!(store.thread_meta("t-ext3").unwrap().unwrap().mode, "full-access");
+        assert_eq!(meta.mode, "ask-first", "the mode it was found with");
 
         let rec = store.get_thread("t-ext1").unwrap().unwrap();
         assert_eq!(rec.title, "Terminal chat");
@@ -2751,6 +2764,24 @@ mod tests {
 
         let (_, ignored_after) = store.known_harness_sessions().unwrap();
         assert!(ignored_after.contains("ses-sub-2"));
+
+        // A session found empty is remembered with its stamp, until it is a
+        // thread or ignored.
+        store
+            .remember_quiet_session("ses-quiet", "2026-01-01T00:00:00.100Z")
+            .unwrap();
+        store
+            .remember_quiet_session("ses-quiet-2", "2026-01-01T00:00:00.100Z")
+            .unwrap();
+        assert_eq!(
+            store.quiet_sessions().unwrap().get("ses-quiet").map(String::as_str),
+            Some("2026-01-01T00:00:00.100Z")
+        );
+        store
+            .create_discovered_thread("t-quiet", "Thread", "/tmp", None, "ses-quiet", "ask-first", 90, 96)
+            .unwrap();
+        store.remember_ignored_session("ses-quiet-2", "subagent", 97).unwrap();
+        assert!(store.quiet_sessions().unwrap().is_empty());
 
         // A session a new one replaces is never taken for one started by hand.
         store.set_harness_session_id("t-ext1", "ses-ext-1b").unwrap();

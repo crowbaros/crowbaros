@@ -10396,7 +10396,7 @@ fn a_session_lever_opened_to_read_the_models_is_never_a_thread() {
 }
 
 #[test]
-fn an_opened_hand_started_thread_keeps_its_sessions_mode_and_the_persons_chosen_effort() {
+fn an_opened_hand_started_thread_keeps_its_mode_and_the_persons_chosen_effort() {
     let dir = TempDir::new();
     let store_dir = dir.0.join("harness-store");
     let sessions_file = store_dir.join("sessions.json");
@@ -10406,7 +10406,6 @@ fn an_opened_hand_started_thread_keeps_its_sessions_mode_and_the_persons_chosen_
             "session_id": id,
             "cwd": "/tmp",
             "title": title,
-            "mode": "plan",
             "history": [{ "kind": "user_text", "text": "plan it" }, { "kind": "text", "text": "A plan." }]
         })
     };
@@ -10451,18 +10450,20 @@ fn an_opened_hand_started_thread_keeps_its_sessions_mode_and_the_persons_chosen_
     let mut peer = handshake(&lever.person);
     peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
 
-    // Opened, it is in the session's own mode, and a message does not change it.
+    // Opened, it keeps the mode it was listed with, though the harness
+    // reports its own default for the loaded session.
+    let listed_mode = listed["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["thread"] == planned)
+        .unwrap()["mode"]
+        .clone();
     let record = resume(&mut peer, &planned);
-    assert_eq!(record["mode"], "plan", "{record}");
+    assert_eq!(record["mode"], listed_mode, "{record}");
     let (_, turn) = send(&mut peer, Some(&planned), "go on");
     let events = turn_events(&mut peer, &planned, turn);
     assert_eq!(events.last().unwrap()["event"], "done", "{events:?}");
-    let rpc = std::fs::read_to_string(&rpc_log).unwrap();
-    assert!(
-        !rpc.lines()
-            .any(|l| l.contains("session/set_config_option") && l.contains("\"mode\"")),
-        "the first message changed the session's mode"
-    );
 
     // An effort chosen before it is opened outlives the import.
     write_frame(

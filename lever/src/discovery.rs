@@ -23,7 +23,7 @@ use agent_client_protocol_schema::v1::{
     ListSessionsRequest, ListSessionsResponse, Request, RequestId,
 };
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
@@ -119,27 +119,57 @@ pub trait SessionDiscoverer: Send + Sync {
     }
 
     /// Classifies raw `session/list` results, from [`Self::list_sessions`] or
-    /// an already-running ACP harness.
-    ///
-    /// `known_sessions` holds harness session IDs Lever already owns (including
-    /// threads and active probes); `known_subagents` holds IDs already known to
-    /// be subagents or ignored. Adapters may use these to avoid redundant work.
-    fn classify_sessions(
-        &self,
-        sessions: Vec<ExternalSession>,
-        _known_sessions: &HashSet<String>,
-        _known_subagents: &HashSet<String>,
-    ) -> Result<Vec<ExternalSession>, String> {
-        Ok(sessions)
+    /// an already-running ACP harness, given what Lever already knows.
+    fn classify_sessions(&self, sessions: Vec<ExternalSession>, _known: &KnownSessions) -> Classified {
+        Classified {
+            sessions,
+            ..Classified::default()
+        }
     }
 }
 
+/// What Lever already knows of a harness's sessions.
+#[derive(Debug, Clone, Default)]
+pub struct KnownSessions {
+    /// Sessions of Lever's threads, and those its harness holds now.
+    pub owned: HashSet<String>,
+    /// Sessions that are never threads: subagents, deleted, probes, replaced.
+    pub ignored: HashSet<String>,
+    /// Sessions found empty or archived, by the `updated` stamp they had.
+    pub quiet: HashMap<String, String>,
+}
+
+impl KnownSessions {
+    /// Whether a listed session needs classifying.
+    pub fn unseen(&self, session: &ExternalSession) -> bool {
+        let sid = &session.harness_session_id;
+        !session.is_subagent
+            && !self.owned.contains(sid)
+            && !self.ignored.contains(sid)
+            && !(session.stamp.is_some() && self.quiet.get(sid) == session.stamp.as_ref())
+    }
+}
+
+/// What classifying a listing found.
+#[derive(Debug, Default)]
+pub struct Classified {
+    /// The sessions to apply: threads, subagents, and those already known.
+    pub sessions: Vec<ExternalSession>,
+    /// Whether it ran commands of the harness's own, which write to its
+    /// store, after the listing was taken.
+    pub ran_after: bool,
+    /// Whether sessions were left for the next pass.
+    pub more: bool,
+    /// Sessions newly found empty or archived, with their stamps.
+    pub quiet: Vec<(String, String)>,
+}
+
 /// What a job found, and a fingerprint of the listing it classified.
-type JobResult = Result<(Vec<ExternalSession>, u64), String>;
+type JobResult = Result<(Classified, u64), String>;
 type PendingScan = Arc<Mutex<Option<JobResult>>>;
-/// A finished job: what it found, the fingerprint of its listing when it
-/// listed, and whether another pass was asked for while it ran.
-pub type FinishedJob = (Result<Vec<ExternalSession>, String>, Option<u64>, bool);
+/// A finished job: what it found and the fingerprint of its listing, or
+/// why it failed, and whether another pass was asked for while it ran.
+pub type FinishedJob = (Result<(Classified, u64), String>, bool);
 
 /// Non-blocking runner for a [`SessionDiscoverer`] that integrates with
 /// Lever's `poll(2)` loop over a self-pipe.
@@ -190,29 +220,22 @@ impl DiscoveryRunner {
 
     /// Starts a background scan if none is running; otherwise marks that one
     /// more scan should run after the current one completes.
-    pub fn request_scan(&mut self, known_sessions: HashSet<String>, known_subagents: HashSet<String>) {
+    pub fn request_scan(&mut self, known: KnownSessions) {
         let discoverer = Arc::clone(&self.discoverer);
         self.start_job("lever-discover", move || {
             let listed = discoverer.list_sessions()?;
             let fingerprint = listing_fingerprint(&listed);
-            let kept = discoverer.classify_sessions(listed, &known_sessions, &known_subagents)?;
-            Ok((kept, fingerprint))
+            Ok((discoverer.classify_sessions(listed, &known), fingerprint))
         });
     }
 
     /// Classifies raw `session/list` results from an already-running harness on
     /// the background thread so `poll(2)` never blocks.
-    pub fn request_classify(
-        &mut self,
-        sessions: Vec<ExternalSession>,
-        known_sessions: HashSet<String>,
-        known_subagents: HashSet<String>,
-    ) {
+    pub fn request_classify(&mut self, sessions: Vec<ExternalSession>, known: KnownSessions) {
         let discoverer = Arc::clone(&self.discoverer);
         self.start_job("lever-classify", move || {
             let fingerprint = listing_fingerprint(&sessions);
-            let kept = discoverer.classify_sessions(sessions, &known_sessions, &known_subagents)?;
-            Ok((kept, fingerprint))
+            Ok((discoverer.classify_sessions(sessions, &known), fingerprint))
         });
     }
 
@@ -267,10 +290,7 @@ impl DiscoveryRunner {
         let outcome = self.result.lock().ok().and_then(|mut g| g.take())?;
         self.in_flight = false;
         let rescan = std::mem::take(&mut self.rescan_wanted);
-        Some(match outcome {
-            Ok((kept, fingerprint)) => (Ok(kept), Some(fingerprint), rescan),
-            Err(err) => (Err(err), None, rescan),
-        })
+        Some((outcome, rescan))
     }
 }
 
@@ -293,7 +313,10 @@ pub const DISCOVERY_MAX_WAIT: Duration = Duration::from_secs(2);
 pub struct DiscoverySchedule {
     debounce: Duration,
     max_wait: Duration,
-    due: Option<Instant>,
+    /// When the store's changes bring a pass.
+    debounce_due: Option<Instant>,
+    /// When a pass was asked for, whatever the store does.
+    requested_due: Option<Instant>,
     dirty_since: Option<Instant>,
     missed: bool,
     followup_next: bool,
@@ -301,12 +324,24 @@ pub struct DiscoverySchedule {
     last_listing: Option<u64>,
 }
 
+/// How a pass ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PassEnd {
+    /// It listed: the listing's fingerprint ([`listing_fingerprint`]), and
+    /// whether it ran commands of the harness's own after taking it, as
+    /// classifying a session does.
+    Listed { fingerprint: u64, ran_after: bool },
+    /// It failed, or was lost.
+    Failed,
+}
+
 impl DiscoverySchedule {
     pub fn new(debounce: Duration, max_wait: Duration) -> Self {
         Self {
             debounce,
             max_wait,
-            due: None,
+            debounce_due: None,
+            requested_due: None,
             dirty_since: None,
             missed: false,
             followup_next: false,
@@ -321,35 +356,54 @@ impl DiscoverySchedule {
             self.missed = true;
             return;
         }
+        // The person's change: the next pass is not a follow-up.
+        self.followup_next = false;
         let since = *self.dirty_since.get_or_insert(now);
-        self.due = Some((now + self.debounce).min(since + self.max_wait));
+        self.debounce_due = Some((now + self.debounce).min(since + self.max_wait));
     }
 
     /// Asks for a pass at `at` at the latest, whatever the store does.
     pub fn request(&mut self, at: Instant) {
-        self.due = Some(self.due.map_or(at, |due| due.min(at)));
+        self.requested_due = Some(self.requested_due.map_or(at, |due| due.min(at)));
+    }
+
+    fn due(&self) -> Option<Instant> {
+        match (self.debounce_due, self.requested_due) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     /// Whether a pass is due now, and if so, takes it.
     pub fn take_due(&mut self, now: Instant) -> bool {
-        if !self.due.is_some_and(|due| now >= due) {
+        if !self.due().is_some_and(|due| now >= due) {
             return false;
         }
-        self.due = None;
+        self.debounce_due = None;
+        self.requested_due = None;
         self.dirty_since = None;
         self.followup_now = std::mem::take(&mut self.followup_next);
         true
     }
 
-    /// The pass that was taken has ended. `listing` is a fingerprint of what
-    /// it listed ([`listing_fingerprint`]), or `None` when it listed nothing
-    /// or was lost.
-    pub fn pass_finished(&mut self, now: Instant, listing: Option<u64>) {
-        let changed = listing.is_none() || listing != self.last_listing;
-        if listing.is_some() {
-            self.last_listing = listing;
-        }
-        if std::mem::take(&mut self.missed) && (!self.followup_now || changed) {
+    /// The pass that was taken has ended.
+    ///
+    /// A change seen while it ran brings a follow-up. A follow-up brings
+    /// another only when its listing changed, or when it ran the harness's
+    /// commands after listing, so a change seen then may be the person's
+    /// after the listing was taken; such commands run only for sessions not
+    /// yet classified, so this ends. A failed pass brings no follow-up of a
+    /// follow-up.
+    pub fn pass_finished(&mut self, now: Instant, end: PassEnd) {
+        let again = match end {
+            PassEnd::Listed { fingerprint, ran_after } => {
+                let changed = self.last_listing != Some(fingerprint);
+                self.last_listing = Some(fingerprint);
+                !self.followup_now || changed || ran_after
+            }
+            PassEnd::Failed => !self.followup_now,
+        };
+        if std::mem::take(&mut self.missed) && again {
             self.followup_next = true;
             self.request(now + self.debounce);
         }
@@ -357,7 +411,7 @@ impl DiscoverySchedule {
 
     /// How long until the next pass is due.
     pub fn wait(&self, now: Instant) -> Option<Duration> {
-        self.due.map(|due| due.saturating_duration_since(now))
+        self.due().map(|due| due.saturating_duration_since(now))
     }
 }
 
@@ -763,6 +817,13 @@ mod tests {
         assert_eq!(parse_rfc3339_unix("2026-01-01T00:00:00+-1:00"), None);
     }
 
+    fn listed(fingerprint: u64) -> PassEnd {
+        PassEnd::Listed {
+            fingerprint,
+            ran_after: false,
+        }
+    }
+
     fn schedule() -> (DiscoverySchedule, Instant) {
         let ms = Duration::from_millis;
         (DiscoverySchedule::new(ms(400), ms(2000)), Instant::now())
@@ -777,14 +838,14 @@ mod tests {
         assert!(s.take_due(t0 + ms(400)));
         // The listing writes to the store while it runs and as it closes.
         s.store_changed(t0 + ms(450), true);
-        s.pass_finished(t0 + ms(600), Some(1));
+        s.pass_finished(t0 + ms(600), listed(1));
         assert!(
             s.take_due(t0 + ms(1000)),
             "one follow-up, in case a change was the person's"
         );
         // The follow-up lists the same: its writes were its own.
         s.store_changed(t0 + ms(1050), true);
-        s.pass_finished(t0 + ms(1200), Some(1));
+        s.pass_finished(t0 + ms(1200), listed(1));
         assert_eq!(s.wait(t0 + ms(1200)), None);
         for step in 0..100 {
             assert!(!s.take_due(t0 + ms(1200 + step * 100)));
@@ -798,10 +859,10 @@ mod tests {
         s.store_changed(t0, false);
         assert!(s.take_due(t0 + ms(400)));
         s.store_changed(t0 + ms(450), true);
-        s.pass_finished(t0 + ms(500), Some(1));
+        s.pass_finished(t0 + ms(500), listed(1));
         assert!(s.take_due(t0 + ms(900)));
         s.store_changed(t0 + ms(950), true);
-        s.pass_finished(t0 + ms(1000), Some(1));
+        s.pass_finished(t0 + ms(1000), listed(1));
         // Just after the follow-up ended, the person's session writes.
         s.store_changed(t0 + ms(1001), false);
         assert!(s.take_due(t0 + ms(1401)));
@@ -814,15 +875,79 @@ mod tests {
         s.store_changed(t0, false);
         assert!(s.take_due(t0 + ms(400)));
         s.store_changed(t0 + ms(450), true);
-        s.pass_finished(t0 + ms(500), Some(1));
+        s.pass_finished(t0 + ms(500), listed(1));
         assert!(s.take_due(t0 + ms(900)));
         // A session was started by hand while the follow-up ran.
         s.store_changed(t0 + ms(950), true);
-        s.pass_finished(t0 + ms(1000), Some(2));
+        s.pass_finished(t0 + ms(1000), listed(2));
         assert!(s.take_due(t0 + ms(1400)));
         s.store_changed(t0 + ms(1450), true);
-        s.pass_finished(t0 + ms(1500), Some(2));
+        s.pass_finished(t0 + ms(1500), listed(2));
         assert_eq!(s.wait(t0 + ms(1500)), None);
+    }
+
+    #[test]
+    fn a_follow_up_that_classified_after_listing_brings_a_fresh_listing() {
+        let ms = Duration::from_millis;
+        let (mut s, t0) = schedule();
+        s.store_changed(t0, false);
+        assert!(s.take_due(t0 + ms(400)));
+        s.store_changed(t0 + ms(450), true);
+        s.pass_finished(t0 + ms(500), listed(1));
+        assert!(s.take_due(t0 + ms(900)));
+        // A session's export ran after the listing, while the person wrote.
+        s.store_changed(t0 + ms(2000), true);
+        s.pass_finished(
+            t0 + ms(3000),
+            PassEnd::Listed {
+                fingerprint: 1,
+                ran_after: true,
+            },
+        );
+        assert!(s.take_due(t0 + ms(3400)), "a fresh listing, after the person's change");
+        s.store_changed(t0 + ms(3450), true);
+        s.pass_finished(t0 + ms(3500), listed(1));
+        assert_eq!(s.wait(t0 + ms(3500)), None);
+    }
+
+    #[test]
+    fn a_failing_listing_is_tried_once_more_and_no_further() {
+        let ms = Duration::from_millis;
+        let (mut s, t0) = schedule();
+        s.store_changed(t0, false);
+        assert!(s.take_due(t0 + ms(400)));
+        s.store_changed(t0 + ms(450), true);
+        s.pass_finished(t0 + ms(500), PassEnd::Failed);
+        assert!(s.take_due(t0 + ms(900)));
+        s.store_changed(t0 + ms(950), true);
+        s.pass_finished(t0 + ms(1000), PassEnd::Failed);
+        assert_eq!(s.wait(t0 + ms(1000)), None);
+    }
+
+    #[test]
+    fn the_persons_change_before_a_follow_up_makes_it_a_pass_of_its_own() {
+        let ms = Duration::from_millis;
+        let (mut s, t0) = schedule();
+        s.store_changed(t0, false);
+        assert!(s.take_due(t0 + ms(400)));
+        s.store_changed(t0 + ms(450), true);
+        s.pass_finished(t0 + ms(500), listed(1));
+        // The person writes before the follow-up starts.
+        s.store_changed(t0 + ms(600), false);
+        assert!(s.take_due(t0 + ms(1000)));
+        // It listed before their session was in; their write follows.
+        s.store_changed(t0 + ms(1050), true);
+        s.pass_finished(t0 + ms(1100), listed(1));
+        assert!(s.take_due(t0 + ms(1500)));
+    }
+
+    #[test]
+    fn a_pass_asked_for_is_not_put_off_by_the_store() {
+        let ms = Duration::from_millis;
+        let (mut s, t0) = schedule();
+        s.request(t0 + ms(100));
+        s.store_changed(t0 + ms(50), false);
+        assert!(s.take_due(t0 + ms(100)));
     }
 
     #[test]
