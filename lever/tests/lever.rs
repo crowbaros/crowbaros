@@ -8677,3 +8677,55 @@ fn what_the_harness_begins_under_a_held_stop_when_its_thread_cannot_be_read_stop
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_message_waits_while_a_subagent_of_its_thread_asks() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "Go",
+                    "steps": [
+                        { "kind": "subagent_start", "id": "ses_asks", "title": "Asks", "prompt": "Ask" },
+                        { "kind": "text", "text": "Handed off." }
+                    ],
+                    "after": [
+                        { "kind": "subagent_ask", "subagent": "ses_asks", "id": "call_ask", "tool_kind": "read",
+                          "title": "Read /tmp/asked", "raw_input": { "path": "/tmp/asked" }, "output": "asked" },
+                        { "kind": "subagent_end", "subagent": "ses_asks", "status": "completed" }
+                    ]
+                },
+                { "match": "Next", "steps": [{ "kind": "text", "text": "Next." }] }
+            ]
+        }),
+    );
+    let extra = stub_extra(&script, &["--wake-quiet-ms", "300"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    let asked = read_until(&mut peer, |v| v["event"] == "request" && v["state"] == "waiting");
+
+    // The message waits on the subagent's request.
+    let held = ask_lever(
+        &mut peer,
+        json!({ "op": "send", "thread": thread, "text": "Next", "cwd": "/tmp" }),
+    );
+    assert_eq!(held["code"], "subagent-asks", "{held}");
+
+    // Answered, the subagent finishes, and the message goes.
+    let answered = ask_lever(
+        &mut peer,
+        json!({ "op": "answer", "thread": thread, "request": asked["request"], "answer": "once" }),
+    );
+    assert_eq!(answered["reply"], "ok", "{answered}");
+    read_until(&mut peer, |v| v["event"] == "subagent" && v["state"] == "done");
+    let (_, next) = send(&mut peer, Some(&thread), "Next");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == next);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

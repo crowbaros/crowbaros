@@ -1661,6 +1661,19 @@ impl Service {
                         if busy {
                             return error_outcome("working", "This thread is already working on a turn.");
                         }
+                        // OpenCode 2.4.1 withdraws a subagent's request when
+                        // a new prompt comes, without answering it for the
+                        // subagent, which then waits on it for good.
+                        if self
+                            .waiting
+                            .values()
+                            .any(|w| w.thread_id == tid && w.record.subagent.is_some())
+                        {
+                            return error_outcome(
+                                "subagent-asks",
+                                "A subagent of this thread waits for your answer. Answer or stop its request first.",
+                            );
+                        }
                         mode_changed = requested_mode.is_some_and(|m| m != meta.mode);
                         effort_changed = requested_effort.is_some_and(|e| meta.effort.as_deref() != Some(e));
                         let model = requested_model

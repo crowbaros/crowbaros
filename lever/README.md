@@ -622,9 +622,13 @@ Reply:
 A subagent that still works does not hold a message back, and a turn the
 harness began itself is taken over by it, as [the harness](#the-harness)
 says. `working` is for a turn of the person's that works, or a change Lever
-asked of the session that the harness has yet to answer.
+asked of the session that the harness has yet to answer. `subagent-asks` is
+for a subagent of the thread whose request waits for the person: OpenCode
+2.4.1 withdraws such a request when a new prompt comes, without answering it
+for the subagent, which then waits on it for good. Answer it, or stop it,
+first.
 
-Errors: `no-harness`, `no-model`, `no-thread`, `working`, `invalid-mode`, `invalid-effort`,
+Errors: `no-harness`, `no-model`, `no-thread`, `working`, `subagent-asks`, `invalid-mode`, `invalid-effort`,
 `invalid-request`, and `storage-error` when Lever's database does not take the turn, or has yet to
 take how the thread's last turn ended.
 
