@@ -492,3 +492,8 @@ in these docs, such as #41, are its own, not CrowbarOS's.
 Code adapted from an MIT-licensed project keeps its attribution, in a
 `LICENSE-*.txt` file beside Fulcrum's own [`LICENSE`](LICENSE). Code under GPL-3.0 is read
 for ideas, and none of it is copied.
+
+The shell control channel also accepts `set_theme` with `focused`, `unfocused`,
+and `background` colors, each an opaque `#rrggbb` string. All three validate
+before repainting. Ordinary apps and the unlock authority cannot use it; the
+locked background and frame geometry stay unchanged ([ADR 0038](../docs/adr/0038-the-shell-applies-the-desktops-theme.md)).

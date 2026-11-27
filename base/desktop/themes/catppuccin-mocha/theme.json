@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "catppuccin-mocha",
+  "name": "Catppuccin Mocha",
+  "author": "Catppuccin",
+  "appearance": "dark",
+  "colors": {
+    "canvas": "#1e1e2e",
+    "surface": "#313244",
+    "surface_elevated": "#45475a",
+    "text": "#cdd6f4",
+    "muted": "#a6adc8",
+    "line": "#585b70",
+    "accent": "#89b4fa",
+    "on_accent": "#11111b",
+    "focus": "#b4befe",
+    "danger": "#f38ba8",
+    "warning": "#f9e2af",
+    "success": "#a6e3a1",
+    "ansi": [
+      "#45475a",
+      "#f38ba8",
+      "#a6e3a1",
+      "#f9e2af",
+      "#89b4fa",
+      "#f5c2e7",
+      "#94e2d5",
+      "#bac2de",
+      "#585b70",
+      "#f38ba8",
+      "#a6e3a1",
+      "#f9e2af",
+      "#89b4fa",
+      "#f5c2e7",
+      "#94e2d5",
+      "#a6adc8"
+    ]
+  },
+  "backgrounds": [
+    "nightwatch.png",
+    "signal-feather.png"
+  ]
+}

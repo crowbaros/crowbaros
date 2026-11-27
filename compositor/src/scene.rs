@@ -14,7 +14,7 @@ use crate::{
     image::Image,
     modes::Mode,
     surface::{MAX_SUBSURFACE_DEPTH, SurfaceId},
-    windows::{BACKGROUND, Window},
+    windows::Window,
 };
 
 /// The width of the frame the compositor draws around every window, in
@@ -131,7 +131,7 @@ impl State {
         }
         Some(Scene {
             size: output.logical_size(),
-            background: BACKGROUND,
+            background: self.theme_colors[2],
             elements,
         })
     }
@@ -166,7 +166,11 @@ impl State {
         let to_output = |(x, y): (i32, i32)| (x - origin.0, y - origin.1);
         let has_keyboard =
             focused.is_some_and(|focus| focus == window.surface || self.toplevel_of(focus) == Some(window.surface));
-        let colour = if has_keyboard { FRAME_FOCUSED } else { FRAME_UNFOCUSED };
+        let colour = if has_keyboard {
+            self.theme_colors[0]
+        } else {
+            self.theme_colors[1]
+        };
         let rect = self.window_rect(window);
         let (x, y) = to_output((rect.x, rect.y));
         let rect = Rect::new(x, y, rect.width, rect.height);

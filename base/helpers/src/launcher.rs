@@ -539,9 +539,57 @@ fn set_dbus_bool_property(
     }
 }
 
+fn theme_store(person: &Account) -> crowbar_theme::ThemeStore {
+    crowbar_theme::ThemeStore::new(
+        person.dir.join(".config/crowbaros"),
+        PathBuf::from("/usr/share/crowbaros/themes"),
+    )
+}
+
 fn dispatch(request: serde_json::Map<String, Value>, person: &Account, run: &mut Run) -> Result<Value, String> {
     let op = request.get("op").and_then(Value::as_str);
     match op {
+        Some("themes") if request.len() == 1 => {
+            let store = theme_store(person);
+            let mut active = store.load_active();
+            active.background_path = None;
+            let themes: Vec<_> = store
+                .list_themes()
+                .into_iter()
+                .take(128)
+                .map(|mut theme| {
+                    theme.root_dir = None;
+                    theme
+                })
+                .collect();
+            Ok(json!({"ok": true, "active": active, "themes": themes}))
+        }
+        Some("apply_theme") if request.len() == 2 || request.len() == 3 => {
+            if request
+                .keys()
+                .any(|k| !["op", "id", "background"].contains(&k.as_str()))
+            {
+                return Err("Unknown theme field".into());
+            }
+            let id = request
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or("Theme ID must be a string")?;
+            crowbar_theme::validate_slug(id)?;
+            let background = request
+                .get("background")
+                .map(|b| b.as_str().ok_or("Background must be a filename"))
+                .transpose()?;
+            if let Some(bg) = background {
+                crowbar_theme::validate_filename(bg)?;
+            }
+            crowbar_theme::images::apply(&theme_store(person), id, background)?;
+            Ok(json!({"ok": true}))
+        }
+        Some("cycle_background") if request.len() == 1 => {
+            crowbar_theme::images::cycle(&theme_store(person))?;
+            Ok(json!({"ok": true}))
+        }
         Some("appearance") if request.len() == 1 => {
             Ok(json!({"ok": true, "preferences": appearance(&person.dir, person.uid)?}))
         }
@@ -1019,6 +1067,36 @@ mod tests {
             bytes
         );
         assert!(ran.is_empty());
+    }
+
+    #[test]
+    fn theme_requests_are_shell_only_and_never_accept_paths() {
+        let home = Home::new();
+        let person = person(home.path());
+        for request in [
+            json!({"op":"themes"}),
+            json!({"op":"apply_theme","id":"nord"}),
+            json!({"op":"cycle_background"}),
+        ] {
+            let line = format!("{request}\n");
+            assert_eq!(ask(line.as_bytes(), SHELL_UID + 1, &person).0["ok"], false);
+        }
+        for request in [
+            json!({"op":"themes","path":"/etc/shadow"}),
+            json!({"op":"apply_theme","id":"../escape"}),
+            json!({"op":"apply_theme","id":"nord","background":"../escape.png"}),
+            json!({"op":"apply_theme","id":"nord","path":"/etc/shadow"}),
+            json!({"op":"cycle_background","id":"nord"}),
+        ] {
+            let line = format!("{request}\n");
+            let (reply, ran) = ask(line.as_bytes(), SHELL_UID, &person);
+            assert_eq!(reply["ok"], false);
+            assert!(ran.is_empty());
+        }
+        let (catalog, _) = ask(b"{\"op\":\"themes\"}\n", SHELL_UID, &person);
+        assert_eq!(catalog["ok"], true);
+        assert_eq!(catalog["themes"].as_array().unwrap().len(), 7);
+        assert!(catalog["active"]["background_path"].is_null());
     }
 
     #[test]

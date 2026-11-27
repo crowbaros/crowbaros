@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "tokyo-night",
+  "name": "Tokyo Night",
+  "author": "Tokyo Night",
+  "appearance": "dark",
+  "colors": {
+    "canvas": "#1a1b26",
+    "surface": "#24283b",
+    "surface_elevated": "#2f3549",
+    "text": "#c0caf5",
+    "muted": "#9aa5ce",
+    "line": "#414868",
+    "accent": "#7aa2f7",
+    "on_accent": "#15161e",
+    "focus": "#7dcfff",
+    "danger": "#f7768e",
+    "warning": "#e0af68",
+    "success": "#9ece6a",
+    "ansi": [
+      "#15161e",
+      "#f7768e",
+      "#9ece6a",
+      "#e0af68",
+      "#7aa2f7",
+      "#bb9af7",
+      "#7dcfff",
+      "#a9b1d6",
+      "#414868",
+      "#f7768e",
+      "#9ece6a",
+      "#e0af68",
+      "#7aa2f7",
+      "#bb9af7",
+      "#7dcfff",
+      "#c0caf5"
+    ]
+  },
+  "backgrounds": [
+    "nightwatch.png",
+    "signal-feather.png"
+  ]
+}

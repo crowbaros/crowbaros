@@ -337,6 +337,8 @@ def run_checks(ev, built):
             given = ev.run(f"{AS_APP} WAYLAND_DISPLAY={SHELL_SOCKET} timeout 3 crowbar-probe globals 2>&1 "
                            "&& echo ANSWERED; echo asked", check=False)
             control = ev.run(f"{AS_APP} {ASK_CONTROL} 2>&1", check=False)
+            theme_request = guest.ask_fulcrum(CONTROL_SOCKET, '{"op":"set_theme","focused":"#112233","unfocused":"#445566","background":"#778899"}')
+            app_theme = ev.run(f"{AS_APP} {theme_request} 2>&1", check=False)
         finally:
             ev.run(f"chmod 2750 {SHELL_DIR}; chmod 660 {SHELL_SOCKET} {CONTROL_SOCKET}")
         refused = ev.compositor_log().count("refused a peer with the wrong user ID") - before
@@ -344,6 +346,7 @@ def run_checks(ev, built):
                  "ANSWERED" not in given and "asked" in given)
         ev.check("given the shell's control channel on purpose, an app is refused on its user ID",
                  "snapshot" not in control)
+        ev.check("an ordinary app cannot set the compositor theme", '"reply":"ok"' not in app_theme)
         ev.check("the compositor logs both refusals", refused >= 2, f"it logged {refused}")
         # And the other way: a peer that is not the person, given the apps'
         # socket. Root can enter every directory; the shell's account is let in.

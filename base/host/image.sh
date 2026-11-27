@@ -122,10 +122,19 @@ install -m 644 "$REPO_ROOT/apps/studio-settings/packaging/com.crowbaros.StudioSe
 install -m 644 "$REPO_ROOT/apps/editor/packaging/com.crowbaros.Editor.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/monitor/packaging/com.crowbaros.Monitor.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/viewer/packaging/com.crowbaros.Viewer.desktop" "$R/usr/share/applications/"
+install -m 644 "$REPO_ROOT/apps/theme-studio/packaging/com.crowbaros.ThemeStudio.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/calc/packaging/com.crowbaros.Calc.desktop" "$R/usr/share/applications/"
 install -m 644 "$REPO_ROOT/apps/files/packaging/com.crowbaros.Files.desktop" "$R/usr/share/applications/"
 install -m 644 "$DESKTOP/com.crowbaros.AgentSignIn.desktop" "$R/usr/share/applications/"
 install -D -m 644 "$REPO_ROOT/apps/files/packaging/com.crowbaros.Files.svg" "$R/usr/share/icons/hicolor/scalable/apps/com.crowbaros.Files.svg"
+# Every built-in is a discoverable bundle; backgrounds share the installed artwork.
+install -d "$R/usr/share/crowbaros/themes"
+cp -a "$DESKTOP/themes/." "$R/usr/share/crowbaros/themes/"
+for theme in "$R"/usr/share/crowbaros/themes/*; do
+    install -d "$theme/backgrounds"
+    install -m 644 "$REPO_ROOT/apps/shell/assets/wallpaper.png" "$theme/backgrounds/signal-feather.png"
+    install -m 644 "$REPO_ROOT/apps/shell/assets/nightwatch.png" "$REPO_ROOT/apps/shell/assets/quiet-signal.png" "$theme/backgrounds/"
+done
 # The shell's fonts for foot and the apps, and the cursor theme the desktop's
 # services name, as the default for anything that names none.
 install -m 644 "$REPO_ROOT/apps/shell/fonts/IBMPlexMono-Regular.ttf" "$REPO_ROOT"/apps/shell/fonts/Manrope-*.ttf "$R/usr/share/fonts/crowbaros/"

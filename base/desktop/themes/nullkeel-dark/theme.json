@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "nullkeel-dark",
+  "name": "Nullkeel Dark",
+  "author": "CrowbarOS",
+  "appearance": "dark",
+  "colors": {
+    "canvas": "#080d12",
+    "surface": "#17212b",
+    "surface_elevated": "#1f2d3a",
+    "text": "#d8e5ec",
+    "muted": "#a8bac7",
+    "line": "#364957",
+    "accent": "#49d7e8",
+    "on_accent": "#080d12",
+    "focus": "#49d7e8",
+    "danger": "#f07178",
+    "warning": "#f2c97d",
+    "success": "#7fd4a6",
+    "ansi": [
+      "#0f1720",
+      "#e06c75",
+      "#6bc99a",
+      "#e8c170",
+      "#5fa8e8",
+      "#b88ce8",
+      "#49d7e8",
+      "#c4d5df",
+      "#4b6070",
+      "#f28b92",
+      "#8be0b5",
+      "#f5d790",
+      "#82c0f5",
+      "#d0aef5",
+      "#7ce6f2",
+      "#eaf2f7"
+    ]
+  },
+  "backgrounds": [
+    "signal-feather.png",
+    "nightwatch.png",
+    "quiet-signal.png"
+  ]
+}

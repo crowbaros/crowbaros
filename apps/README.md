@@ -12,6 +12,7 @@ assets, and pinned dependencies carry forward to Void.
 | [files/](files/README.md) | Default file manager: Columns, List, and Grid views, inspector preview, quick preview, Trash, and safe file operations |
 | [editor/](editor/README.md) | Text, Markdown, and configuration editor |
 | [viewer/](viewer/README.md) | Image and PDF viewer with zoom, image rotation, page navigation, and text search |
+| [theme-studio/](theme-studio/README.md) | Image-derived palettes, installed themes, and multi-background bundles |
 | [studio-settings/](studio-settings/README.md) | Appearance preview, Save/Undo, and restored preferences on CrowbarOS's desktop |
 | [gpui-probe/](gpui-probe/README.md) | Optional GPUI rendering/input reference |
 

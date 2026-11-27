@@ -395,3 +395,34 @@ fn a_new_window_takes_the_keyboard() {
     assert!(snapshot.contains(&format!(r#""active":"{third}""#)), "{snapshot}");
     assert!(!snapshot.contains(r#""attention":true"#), "{snapshot}");
 }
+
+#[test]
+fn shell_theme_updates_frames_and_background_atomically() {
+    let compositor = Compositor::start();
+    let mut control = Control::connect(&compositor);
+    let mut app = compositor.app();
+    app.open_toplevel("one", "test.one", (100, 60), 0xffff0000).unwrap();
+    app.open_toplevel("two", "test.two", (100, 60), 0xff0000ff).unwrap();
+    let request = r##"{"op":"set_theme","focused":"#112233","unfocused":"#445566","background":"#778899"}"##;
+    assert_eq!(control.ask(request), r#"{"reply":"ok"}"#);
+    compositor.wait_until_still();
+    let (x, y) = crowbar_compositor::NEW_WINDOW_OFFSET;
+    let screen = compositor.screen(0);
+    assert_eq!(screen.pixel(x - 1, y), Some(0xff445566));
+    assert_eq!(screen.pixel(x + 31, y + 32), Some(0xff112233));
+    assert_eq!(screen.pixel(0, 0), Some(0xff778899));
+    for invalid in [
+        r##"{"op":"set_theme","focused":"#ffffff","unfocused":"bad","background":"#000000"}"##,
+        r##"{"op":"set_theme","focused":"#ffffff","unfocused":"#000000"}"##,
+        r##"{"op":"set_theme","focused":"#ffffff","unfocused":"#000000","background":"#00000000"}"##,
+    ] {
+        assert!(control.ask(invalid).contains("error"));
+    }
+    compositor.wait_until_still();
+    assert_eq!(compositor.screen(0).pixel(0, 0), Some(0xff778899));
+    assert_eq!(compositor.screen(0).pixel(x + 31, y + 32), Some(0xff112233));
+    let path = compositor.dir.join("theme-authority");
+    let socket = path.clone();
+    compositor.with(move |state| state.listen_for_unlock_authority(&socket, own_uid()).unwrap());
+    assert!(Control::at(&path).ask(request).contains("error"));
+}

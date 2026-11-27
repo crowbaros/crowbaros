@@ -61,7 +61,7 @@ sides hold.
   `cargo test --locked` in `lever/`. `CI passed` needs it.
 - CI boots Base. Its `Base boots` job runs `base/void_base.py check` on
   GitHub's runner, with KVM, for any change to `base/`, `compositor/`,
-  `lever/`, `apps/shell/`, `apps/files/`, `apps/editor/`, `apps/monitor/`, `apps/viewer/`, `apps/calc/`, or `apps/studio-settings/`. Its logs are the run's
+  `lever/`, `apps/shell/`, `apps/files/`, `apps/editor/`, `apps/monitor/`, `apps/viewer/`, `apps/calc/`, `apps/theme-studio/`, or `apps/studio-settings/`. Its logs are the run's
   `base-boot-logs` artifact. Run the check yourself when you want to see a boot
   before you push; you need not report it. GitHub does not support a VM inside
   its runners, so if the job stops working, run the check yourself, show its

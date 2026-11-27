@@ -305,6 +305,65 @@ class Check:
         except (OSError, RuntimeError, ValueError) as error:
             self.log(f'Could not capture final display: {error}')
 
+    def theme_studio_check(self, appearance):
+        """Theme bundles, bounded backgrounds, native switching, and the app."""
+        person, home = self.person()
+        prefix = f'chpst -u {person} env HOME={home} crowbaros-theme-studio '
+        directory = self.python('import tempfile; print(tempfile.mkdtemp(prefix="theme-studio-check-"))', person).strip()
+        self.python(f'''
+import shutil
+from pathlib import Path
+root=Path({home!r})/'.config'; backup=Path({directory!r})/'backup'; backup.mkdir()
+for name in ['crowbaros','foot','gtk-3.0','gtk-4.0']:
+    if (root/name).exists(): shutil.copytree(root/name,backup/name)
+''', person)
+        try:
+            self.capture(f'themes-{appearance}-before')
+            reply = self.run(guest.ask_fulcrum('/run/crowbar-trusted/unlock/compositor', '{"op":"set_theme","focused":"#112233","unfocused":"#445566","background":"#778899"}'))
+            self.check('the unlock authority cannot change the desktop theme', '"reply":"error"' in reply)
+            themes = json.loads(self.run(prefix + '--list-themes'))
+            self.check('Theme Studio discovers seven built-in bundles', len(themes) == 7 and all(len(t['backgrounds']) >= 2 for t in themes))
+            for theme in ['nord', 'nullkeel-light', 'nullkeel-dark']:
+                offset = len(self.shell_log())
+                self.run(prefix + '--apply-theme ' + theme)
+                self.wait('shell applies ' + theme, lambda: ('SHELL theme=' + theme) in self.shell_log()[offset:])
+                current = json.loads(self.run(f'cat {home}/.config/crowbaros/current-theme.json'))
+                self.check('applying ' + theme + ' updates saved active colors', current['theme_id'] == theme)
+            self.run(f'chpst -u {person} env HOME={home} foot --check-config')
+            self.check('generated foot configuration passes foot --check-config', True)
+            first='/usr/share/crowbaros-shell/wallpaper.png'
+            second='/usr/share/crowbaros-shell/nightwatch.png'
+            self.run(prefix + f'--extract {first} "Lab Palette" {appearance} {second}')
+            self.run(prefix + '--apply-theme lab-palette')
+            first_state=json.loads(self.run(f'cat {home}/.config/crowbaros/current-theme.json'))
+            self.run(prefix + '--cycle-background')
+            next_state=json.loads(self.run(f'cat {home}/.config/crowbaros/current-theme.json'))
+            self.check('an extracted two-background theme cycles and keeps its palette', first_state['colors'] == next_state['colors'] and first_state['background'] != next_state['background'])
+            self.wait('the shell receives extracted palette colors',lambda:'SHELL theme=lab-palette' in self.shell_log())
+            time.sleep(2)
+            self.click(1208,12)
+            self.wait('Quick Theme Switcher opens',lambda:'SHELL theme-switcher open=true' in self.shell_log())
+            self.capture(f'themes-{appearance}-switcher')
+            self.key('esc')
+            self.as_app('crowbaros-theme-studio',f'/tmp/theme-studio-{appearance}.log')
+            self.wait('Theme Studio opens as an ordinary app',lambda:self.snapshot()['active'].get('class')=='com.crowbaros.ThemeStudio')
+            time.sleep(1)
+            self.capture(f'themes-{appearance}-studio')
+            self.key('ctrl','q')
+            self.wait('Theme Studio closes',lambda:not any(c['class']=='com.crowbaros.ThemeStudio' for c in self.snapshot()['clients']))
+            self.capture(f'themes-{appearance}-after')
+        finally:
+            self.python(f'''
+import shutil
+from pathlib import Path
+root=Path({home!r})/'.config'; backup=Path({directory!r})/'backup'
+for name in ['crowbaros','foot','gtk-3.0','gtk-4.0']:
+    if (root/name).exists(): shutil.rmtree(root/name)
+    if (backup/name).exists(): shutil.copytree(backup/name,root/name)
+shutil.rmtree({directory!r})
+''',person)
+            time.sleep(2)
+
     def calculator_check(self, theme):
         """Real keyboard expressions and inter-client copying, in both themes."""
         self.capture(f'calc-{theme}-before')
@@ -755,6 +814,7 @@ print(base64.b64encode(result.stdout).decode('ascii'))
         self.monitor_check('dark')
         self.viewer_check('dark')
         self.calculator_check('dark')
+        self.theme_studio_check('dark')
         self.check('fresh guest has no saved preferences', self.preferences() is None)
         self.click(680, 935)  # Terminal dock entry (Applications · Files · Chromium · Terminal · Settings).
         terminal = self.wait('terminal launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
@@ -1006,6 +1066,7 @@ for name, original in {original_files!r}.items():
         self.monitor_check('light')
         self.viewer_check('light')
         self.calculator_check('light')
+        self.theme_studio_check('light')
         log_offset = len(self.app_log())
         self.click(720, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])

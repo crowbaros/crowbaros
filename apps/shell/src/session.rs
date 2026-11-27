@@ -68,6 +68,7 @@ pub enum MediaKey {
 #[derive(Clone, Debug)]
 pub enum Event {
     Wallpaper(Option<crate::wallpaper::Wallpaper>),
+    Themes(crate::themes::Catalog),
     Toggle,
     /// The person made the summon gesture.
     Summon(Summon),
@@ -116,6 +117,7 @@ pub fn channel() -> (Sender, Receiver) {
 /// What the shell asks of the compositor it runs under: the windows and
 /// workspaces, and the two focus requests.
 pub trait Adapter: Send + Sync {
+    fn set_theme(&self, _colors: &crowbar_theme::ThemeColors) -> Result<()> { Ok(()) }
     fn snapshot(&self) -> Result<Snapshot>;
     fn focus_workspace(&self, id: i32) -> Result<()>;
     fn focus_window(&self, address: &str) -> Result<()>;
@@ -595,6 +597,11 @@ impl Channel {
 }
 
 impl Adapter for Compositor {
+    fn set_theme(&self, colors: &crowbar_theme::ThemeColors) -> Result<()> {
+        self.request(serde_json::json!({"op":"set_theme", "focused":crowbar_theme::hex(colors.focus),
+            "unfocused":crowbar_theme::hex(colors.line), "background":crowbar_theme::hex(colors.canvas)})).map(drop)
+    }
+
     fn snapshot(&self) -> Result<Snapshot> {
         snapshot_from(self.request(serde_json::json!({"op": "snapshot"}))?)
     }
@@ -748,6 +755,9 @@ pub fn connect() {
     let _ = connection();
 }
 
+pub fn set_theme(colors: &crowbar_theme::ThemeColors) -> Result<()> {
+    connection()?.set_theme(colors)
+}
 pub fn snapshot() -> Result<Snapshot> {
     connection()?.snapshot()
 }

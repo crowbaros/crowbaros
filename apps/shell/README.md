@@ -271,3 +271,9 @@ Native source is MIT. Manrope and IBM Plex Mono retain their OFL notices.
 The adapted GPUI input example and layer-shell backport retain Apache-2.0 terms.
 Brand origins remain in [assets/README.md](assets/README.md). No source, font,
 license, asset, or Cargo lockfile was removed with the RPM recipe.
+
+The top-bar palette button opens the Quick Theme Switcher: installed themes
+with swatches, the active theme’s backgrounds, Next background, and Create
+theme… . Escape or a click outside dismisses it; Tab and Enter operate its
+controls. Theme metadata and bounded wallpaper pixels come from Base’s
+launcher as the person, without granting the shell access to their home.
