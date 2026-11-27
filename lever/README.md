@@ -40,7 +40,7 @@ crowbar-lever \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
   [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
-  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>]
+  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>]
 ```
 
 On Base:
@@ -117,12 +117,38 @@ ACP today:
   updates are an `act`, a session's new title is `thread-updated`,
   `config_option_update` refreshes the harness's Models and the thread's
   current Model and effort, and `available_commands_update` is the thread's
-  `commands`. Other ACP v1 updates that Lever does not yet show as their own
-  kinds (`agent_thought_chunk`, `current_mode_update`, `usage_update`, `plan`,
-  `notice`, compaction, and subagent updates) are dropped on purpose so
+  `commands`. Subagent updates (both ACP v1 `subagent_update`/`session_message`/child
+  `session/update` and OpenCode's `opencode/session/child_update` stream, enabled
+  through client capabilities) become Lever `subagent`, `subagent-text`, and
+  `subagent-act` events kept with the thread in SQLite, with Lever's own `sub-...`
+  IDs and never listed as separate threads. Other ACP v1 updates that Lever does
+  not yet show as their own kinds (`agent_thought_chunk`, `current_mode_update`,
+  `usage_update`, `plan`, `notice`, and compaction) are dropped on purpose so
   threads are not flooded with per-token or boilerplate notes. Any genuinely
   unrecognized or future update is kept as JSON in the record and shown
   plainly as a `note`.
+- **A turn the harness begins.** When a subagent goes idle, OpenCode reports
+  it to the parent session and the parent's Model answers there, with no
+  prompt from Lever. What a thread's own session says after its turn ended,
+  when its subagents ran in this harness, is a turn of its own, with
+  `"origin":"harness"` and no message. ACP gives such a turn no end, so Lever
+  ends it as `done` once the harness has said nothing for `--wake-quiet-ms`
+  (default `10000`), while none of its acts works, no request of the thread
+  waits, and no subagent of the thread works. When the harness goes on after
+  that, the turn works again while it is the thread's newest. A message the
+  person sends takes it over: Lever ends it as `done` and begins the person's
+  turn, and OpenCode takes the message into the work it is doing.
+- **Stop and OpenCode's background work.** OpenCode's `session/cancel` stops
+  only a prompt in flight. A subagent that outlives its turn, and a turn the
+  harness began, go on when told to stop, so Lever stops the harness after
+  `--stop-timeout-ms`, as for any Stop the harness does not carry out. A
+  stopped subagent reports to the parent session too, so a Stop that leaves
+  nothing of the thread working holds until the person's next message: a
+  turn the harness begins meanwhile is stopped as it begins, with any
+  subagent it starts, and asks the person nothing. When the record cannot
+  take that turn, the harness is stopped. A Stop of one turn leaves
+  an older turn's subagent working, with any subagent it launches, and the
+  harness running for them.
 - **Models and their providers.** The Models are the values of the session
   configuration option of category `model`. A Model's provider is the group
   the harness lists it under. A harness that lists its Models with no groups,
@@ -496,9 +522,12 @@ Reply:
 ```
 
 - `state`: the newest turn's state (`"working"`, `"done"`, `"stopped"`,
-  `"failed"`, `"interrupted"`, or `"idle"`).
-- `working`: `true` while a turn on this thread is running.
-- `waiting`: `true` while a request of this thread waits for the person.
+  `"failed"`, `"interrupted"`, or `"idle"`), or `"working"` while any subagent
+  of this thread is still working.
+- `working`: `true` while a turn or subagent on this thread is running.
+- `waiting`: `true` while a request of this thread (or one of its subagents)
+  waits for the person.
+- `subagents`: how many subagents this thread has.
 - `mode`: the thread's mode.
 - `model`: optional Model ID last applied to this thread, omitted when unset.
 - `effort`: optional effort of this thread, omitted when it has none.
@@ -590,7 +619,23 @@ Reply:
 {"reply":"sent","thread":"t-01a2b3c4d5e6","turn":1}
 ```
 
-Errors: `no-harness`, `no-model`, `no-thread`, `working`, `invalid-mode`, `invalid-effort`,
+A subagent that still works does not hold a message back, and a turn the
+harness began itself is taken over by it, as [the harness](#the-harness)
+says. `working` is for a turn of the person's that works, or a change Lever
+asked of the session that the harness has yet to answer. `subagent-asks` is
+for a subagent of the thread whose request waits for the person: OpenCode
+2.4.1 withdraws such a request when a new prompt comes, without answering it
+for the subagent, which then waits on it for good. Answer it, or stop the
+thread, first. A message taken while none asked, whose prompt waits on its
+mode, effort, or Model, holds its prompt in the same way if a subagent asks
+meanwhile, and sends it once the request ends. If the harness goes on by
+itself while such a prompt waits and a subagent's request does, as when
+another subagent reports, the turn ends `failed`, unsent, with a message that
+says to send it again, and what the harness says is a turn of its own. If the
+harness had already begun answering in that turn, the message took that
+answer over: the turn keeps it, and its prompt goes once the request ends.
+
+Errors: `no-harness`, `no-model`, `no-thread`, `working`, `subagent-asks`, `invalid-mode`, `invalid-effort`,
 `invalid-request`, and `storage-error` when Lever's database does not take the turn, or has yet to
 take how the thread's last turn ended.
 
@@ -612,7 +657,7 @@ Request:
 Reply:
 
 ```json
-{"reply":"resumed","thread":"t-01a2b3c4d5e6","title":"List the files","cwd":"/home/crowbar","started":1764000000,"updated":1764000005,"working":false,"mode":"ask-first","turns":[{"turn":1,"message":"List the files","answer":"Here are the files.","state":"done","started":1764000000,"ended":1764000005,"mode":"ask-first","acts":[{"act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","state":"done","detail":"Cargo.toml"}],"requests":[{"request":"r-01a2b3c4d5e6","act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","detail":"ls","answers":[{"answer":"once","name":"Allow once"},{"answer":"always","name":"Always allow"},{"answer":"no","name":"Reject"}],"state":"answered","answer":"once"}],"notes":[{"note":"note-01a2b3c4d5e6","text":"Cache warm"}]}]}
+{"reply":"resumed","thread":"t-01a2b3c4d5e6","title":"List the files","cwd":"/home/crowbar","started":1764000000,"updated":1764000005,"working":false,"mode":"ask-first","turns":[{"turn":1,"message":"List the files","answer":"Here are the files.","state":"done","started":1764000000,"ended":1764000005,"mode":"ask-first","acts":[{"act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","state":"done","detail":"Cargo.toml"}],"requests":[{"request":"r-01a2b3c4d5e6","act":"act-01a2b3c4d5e6","kind":"command","title":"Run ls","detail":"ls","answers":[{"answer":"once","name":"Allow once"},{"answer":"always","name":"Always allow"},{"answer":"no","name":"Reject"}],"state":"answered","answer":"once"}],"notes":[{"note":"note-01a2b3c4d5e6","text":"Cache warm"}],"subagents":[{"subagent":"sub-01a2b3c4d5e6","title":"Inspect files","state":"done","started":1764000001,"ended":1764000004,"messages":[{"role":"prompt","text":"Check the repository layout"},{"role":"answer","text":"Found Cargo.toml"}],"acts":[{"act":"act-02b3c4d5e6f7","kind":"read","title":"Cargo.toml","state":"done"}]}]}]}
 ```
 
 When a turn ended with `"state":"failed"`, the turn object also carries
@@ -622,8 +667,13 @@ the reply also carries `"model":"..."`, and when it has an effort,
 `"effort":"..."`. Each turn carries when it began (`"started"`) and, once it
 has ended, when (`"ended"`), in seconds. The reply carries the thread's
 `"mode"`, and each turn the mode it began in (`"mode"`, absent for turns
-recorded before modes) and its requests (`"requests":[...]`, each as the
-[`request` event](#events) has it, without `event`, `thread`, and `turn`).
+recorded before modes), its requests (`"requests":[...]`, each as the
+[`request` event](#events) has it, without `event`, `thread`, and `turn`), and
+its subagents (`"subagents":[...]`, each with Lever's `subagent` ID, `title`,
+`state`, `started`, optional `ended` and `error`, `messages` with `role` and
+`text`, and `acts`). A turn the harness began itself carries
+`"origin":"harness"` and an empty `"message"`. A thread's `"working"` is `true`
+while any of its turns or subagents still works.
 
 Errors: `no-thread`, `invalid-request`.
 
@@ -677,7 +727,10 @@ one the request offers), `invalid-request`.
 #### `set-mode`
 
 Sets a thread's mode, which applies from its next turn. Either socket may set
-it.
+it. A thread whose session is open in the harness may have work going on
+there, a subagent's or a turn the harness began, so the session is set to the
+mode first, and the reply comes once the harness takes it. Until then the
+thread takes no message and no other mode (`working`).
 
 Request:
 
@@ -694,7 +747,10 @@ Reply:
 A `thread-updated` event with the mode follows. Errors: `no-thread`, `working`
 (a turn of the thread is working), `invalid-mode` (not `ask-first`,
 `full-access`, or `plan`, or one the harness is known not to offer),
-`invalid-request`, `storage-error`.
+`harness-error` (the harness did not take the mode, or stopped first; the
+thread keeps the mode it had), `invalid-request`, `storage-error` (the record
+did not take the mode: the session goes back to the thread's, and a harness
+that does not take that back is stopped).
 
 #### `set-default-mode`
 
@@ -767,6 +823,9 @@ Pushed to every connection subscribed to `thread`:
   {"event":"message","thread":"t-01a2b3c4d5e6","turn":1,"text":"List the files"}
   ```
 
+  A turn the harness began itself, or one Lever ended when it went quiet and
+  that works again, comes with `"text":""` and `"origin":"harness"`.
+
 - **`text`** — a streamed piece of the answer (also taken if it arrives after a
   turn ended):
 
@@ -794,6 +853,7 @@ Pushed to every connection subscribed to `thread`:
 
 - **`request`** — a request that waits for the person, and each change to
   it. `kind` is the kind of the act it asks about, `act` that act's ID,
+  `subagent` the subagent's `sub-...` ID when a subagent asked it,
   `title` what the harness calls it, and `detail` the exact command, or the
   change as lines that begin `-` and `+`. `path` is the file, for an edit. `answers` are those the harness offers, as `once`, `always`, `no`,
   and `never`, each with the harness's `name` for it. `state` is `waiting`,
@@ -801,6 +861,31 @@ Pushed to every connection subscribed to `thread`:
 
   ```json
   {"event":"request","thread":"t-01a2b3c4d5e6","turn":1,"request":"r-01a2b3c4d5e6","act":"act-01a2b3c4d5e6","kind":"command","title":"echo hi","detail":"echo hi","answers":[{"answer":"once","name":"Allow once"},{"answer":"always","name":"Always allow"},{"answer":"no","name":"Reject"}],"state":"waiting"}
+  ```
+
+- **`subagent`** — a subagent of the thread started, changed title, or changed
+  state (`working`, `done`, `stopped`, `failed`, or `interrupted`, with
+  optional `ended` and `error`). While any subagent is `working`, the thread
+  stays `working`, the harness is not stopped as idle, and the thread is not
+  deleted. It still takes the person's messages and changes of
+  Model, mode, and effort, though not a message while a subagent's request
+  waits (`subagent-asks`, under `send`):
+
+  ```json
+  {"event":"subagent","thread":"t-01a2b3c4d5e6","turn":1,"subagent":"sub-01a2b3c4d5e6","title":"Check workspace","state":"working","started":1764000001}
+  ```
+
+- **`subagent-text`** — a piece of a subagent's `prompt` or `answer`:
+
+  ```json
+  {"event":"subagent-text","thread":"t-01a2b3c4d5e6","turn":1,"subagent":"sub-01a2b3c4d5e6","role":"answer","text":"Found two files."}
+  ```
+
+- **`subagent-act`** — an act carried out by a subagent (same fields as `act`,
+  with `subagent`):
+
+  ```json
+  {"event":"subagent-act","thread":"t-01a2b3c4d5e6","turn":1,"subagent":"sub-01a2b3c4d5e6","act":"act-01a2b3c4d5e6","kind":"read","title":"Read README.md","state":"done"}
   ```
 
 - **`thread-updated`** — the thread's title, mode, Model, or effort changed.
@@ -878,18 +963,19 @@ Lever stores its state in `--state` (mode `0700`, owned by the person):
 
 - `lever.sqlite` (mode `0600`, SQLite WAL mode with `synchronous = NORMAL`,
   plus `0600` sidecar `-wal`/`-shm` files): Lever's database holding `threads`
-  (each with its Model, effort, and mode), `turns`, `acts`, `requests`, and
+  (each with its Model, effort, and mode), `turns`, `acts`, `requests`,
   `notes` (with `raw_json` keeping the JSON of each update shown as a note),
-  and the starting mode. A request that waits
-  when Lever starts is withdrawn, as the turn that asked it is interrupted. A write the database does not take is logged as an
-  `error` that names what could not be done and nothing a thread said. How a
-  turn ended is tried again until the database takes it, so a thread is not
-  left `working` in the record after its turn is over, and `list` and `resume`
-  say how the turn ended in the meantime.
+  `subagents`, `subagent_messages`, and `subagent_acts`, and the starting mode.
+  A request that waits when Lever starts is withdrawn, as any turn or subagent
+  that was still working is interrupted. A write the database does not take is
+  logged as an `error` that names what could not be done and nothing a thread
+  said. How a turn or subagent ended is tried again until the database takes it,
+  so a thread is not left `working` in the record after its work is over, and
+  `list` and `resume` say how it ended in the meantime.
 - `lever.log` (mode `0600`, rotated at 4 MiB to `lever.log.1`): UTC-timestamped
   lines for `start`, `restart`, `listening`, `connection`, `harness`, `stop`,
   and `error`. Nothing a peer sent, a thread said, or a harness answered is
   ever written to `lever.log`.
 - `running` (mode `0600`): holds Lever's PID while running and is removed on a
   clean stop. If present at the next start, Lever logs a `restart` entry naming
-  the previous PID and marks any still-working turns `interrupted`.
+  the previous PID and marks any still-working turns and subagents `interrupted`.

@@ -3294,6 +3294,9 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                         | agent::AgentEvent::Act { .. }
                         | agent::AgentEvent::Note { .. }
                         | agent::AgentEvent::Request { .. }
+                        | agent::AgentEvent::Subagent { .. }
+                        | agent::AgentEvent::SubagentText { .. }
+                        | agent::AgentEvent::SubagentAct { .. }
                         | agent::AgentEvent::Text { .. }
                         | agent::AgentEvent::Done { .. }
                         | agent::AgentEvent::Stopped { .. }
@@ -3309,6 +3312,9 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                         | agent::AgentEvent::Stopped { .. }
                         | agent::AgentEvent::Failed { .. }
                         | agent::AgentEvent::Interrupted { .. }
+                ) || matches!(
+                    &agent_event,
+                    agent::AgentEvent::Subagent { subagent, .. } if !subagent.state.is_working()
                 );
                 let prev_mark = model.read(cx).agent_state.mark;
                 let (changed, needs_status_refresh) = model.update(cx, |m, _| {

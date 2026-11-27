@@ -16,7 +16,9 @@ mod sys;
 use acp::HarnessConfig;
 use channel::{Channel, LEVER_VERSION, Peer};
 use log::{Event, Log};
-use service::{Broadcast, DEFAULT_IDLE_TIMEOUT, DEFAULT_STOP_TIMEOUT, Effects, PeerReply, Service, unix_now};
+use service::{
+    Broadcast, DEFAULT_IDLE_TIMEOUT, DEFAULT_STOP_TIMEOUT, DEFAULT_WAKE_QUIET, Effects, PeerReply, Service, unix_now,
+};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::fd::AsRawFd;
@@ -41,7 +43,7 @@ const USAGE: &str = "usage: crowbar-lever \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
   [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
-  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>]";
+  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>]";
 
 struct Options {
     state: PathBuf,
@@ -53,6 +55,7 @@ struct Options {
     harness: Option<HarnessConfig>,
     idle_timeout: Duration,
     stop_timeout: Duration,
+    wake_quiet: Duration,
 }
 
 fn parse_options(args: &[String]) -> Option<Options> {
@@ -68,6 +71,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
     let mut harness_env = Vec::new();
     let mut idle_timeout = None;
     let mut stop_timeout = None;
+    let mut wake_quiet = None;
 
     let mut iter = args.iter();
     while let Some(flag) = iter.next() {
@@ -97,6 +101,9 @@ fn parse_options(args: &[String]) -> Option<Options> {
             }
             "--idle-timeout-ms" if idle_timeout.is_none() => {
                 idle_timeout = Some(Duration::from_millis(value.parse::<u64>().ok()?));
+            }
+            "--wake-quiet-ms" if wake_quiet.is_none() => {
+                wake_quiet = Some(Duration::from_millis(value.parse::<u64>().ok()?));
             }
             _ => return None,
         }
@@ -133,6 +140,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
         harness,
         idle_timeout: idle_timeout.unwrap_or(DEFAULT_IDLE_TIMEOUT),
         stop_timeout: stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT),
+        wake_quiet: wake_quiet.unwrap_or(DEFAULT_WAKE_QUIET),
     })
 }
 
@@ -241,6 +249,7 @@ fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &[bool
                 "request"
                     | "message"
                     | "thread-updated"
+                    | "subagent"
                     | "done"
                     | "stopped"
                     | "failed"
@@ -252,10 +261,16 @@ fn deliver_broadcasts(broadcasts: &[Broadcast], peers: &mut [Peer], keep: &[bool
     });
     let snapshot = if list_changed && peers.iter().any(|p| p.is_subscribed(service::THREAD_LIST_SUBSCRIPTION)) {
         service.thread_list_event().map(|mut snapshot| {
-            snapshot["finished"] = serde_json::json!(broadcasts.iter().any(|b| matches!(
-                b.message["event"].as_str(),
-                Some("done" | "stopped" | "failed" | "interrupted")
-            )));
+            snapshot["finished"] = serde_json::json!(broadcasts.iter().any(|b| {
+                matches!(
+                    b.message["event"].as_str(),
+                    Some("done" | "stopped" | "failed" | "interrupted")
+                ) || (b.message["event"].as_str() == Some("subagent")
+                    && matches!(
+                        b.message["state"].as_str(),
+                        Some("done" | "stopped" | "failed" | "interrupted")
+                    ))
+            }));
             snapshot
         })
     } else {
@@ -339,6 +354,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         options.fulcrum_socket,
         options.idle_timeout,
         options.stop_timeout,
+        options.wake_quiet,
     );
 
     if let Some(parent) = options.person_socket.parent() {

@@ -37,6 +37,8 @@ pub(crate) enum ThreadAction {
     Context(u64),
     /// Open or fold the acts of a turn.
     Acts(u64),
+    /// Open or fold a subagent in its turn.
+    Subagent(String),
 }
 
 pub(crate) struct AgentSurface {
@@ -48,6 +50,8 @@ pub(crate) struct AgentSurface {
     expanded_context: HashSet<u64>,
     /// The turns whose acts the person opened, once they had folded.
     opened_turns: HashSet<u64>,
+    /// Subagents the person opened in the thread to read their messages and acts.
+    expanded_subagents: HashSet<String>,
     pub(crate) model: Entity<Model>,
     pub(crate) input: Entity<Composer>,
     pub(crate) scroll: ScrollHandle,
@@ -267,6 +271,7 @@ impl AgentSurface {
             whole_acts: Default::default(),
             expanded_context: Default::default(),
             opened_turns: Default::default(),
+            expanded_subagents: Default::default(),
             model,
             input,
             scroll: ScrollHandle::new(),
@@ -305,6 +310,7 @@ impl AgentSurface {
                 | ThreadAction::ActWhole(_)
                 | ThreadAction::Context(_)
                 | ThreadAction::Acts(_)
+                | ThreadAction::Subagent(_)
                 | ThreadAction::SignIn
                 | ThreadAction::ChooseFreeModels(_)
                 | ThreadAction::RefreshModels
@@ -349,6 +355,7 @@ impl AgentSurface {
                 self.whole_acts.clear();
                 self.expanded_context.clear();
                 self.opened_turns.clear();
+                self.expanded_subagents.clear();
                 self.asked_commands = None;
                 self.provider = None;
                 self.effort_after = None;
@@ -396,6 +403,11 @@ impl AgentSurface {
             ThreadAction::Acts(turn) => {
                 if !self.opened_turns.remove(&turn) {
                     self.opened_turns.insert(turn);
+                }
+            }
+            ThreadAction::Subagent(id) => {
+                if !self.expanded_subagents.remove(&id) {
+                    self.expanded_subagents.insert(id);
                 }
             }
             ThreadAction::ChooseFreeModels(enabled) => {
@@ -474,6 +486,7 @@ impl AgentSurface {
             ThreadAction::ActWhole(id) => format!("act-whole:{id}"),
             ThreadAction::Context(turn) => format!("context:{turn}"),
             ThreadAction::Acts(turn) => format!("acts:{turn}"),
+            ThreadAction::Subagent(id) => format!("subagent:{id}"),
         };
         div()
             .id(id)
@@ -520,6 +533,7 @@ impl AgentSurface {
             ThreadAction::Acts(turn) => format!("acts:{turn}"),
             ThreadAction::Act(id) => format!("act:{id}"),
             ThreadAction::ActWhole(id) => format!("act-whole:{id}"),
+            ThreadAction::Subagent(id) => format!("subagent:{id}"),
             _ => String::new(),
         };
         div()
@@ -924,6 +938,7 @@ impl AgentSurface {
         &self,
         turn_state: &agent::TurnState,
         req: &agent::Request,
+        subagent_title: Option<&str>,
         hinted: bool,
         p: Palette,
         cx: &mut Context<Self>,
@@ -944,6 +959,11 @@ impl AgentSurface {
             "fetch" => "Fetch",
             "read" => "Read a file",
             _ => "Act",
+        };
+        let header = match (req.subagent.as_deref(), subagent_title.filter(|s| !s.trim().is_empty())) {
+            (Some(_), Some(sub)) => format!("Subagent · {sub} · {kind}"),
+            (Some(_), None) => format!("Subagent · {kind}"),
+            (None, _) => format!("Request · {kind}"),
         };
         let mut card = div()
             .w_full()
@@ -969,7 +989,8 @@ impl AgentSurface {
                             .text_size(px(10.5))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(p.muted))
-                            .child(format!("Request · {kind}")),
+                            .text_ellipsis()
+                            .child(header),
                     )
                     .child(
                         div()
@@ -1168,6 +1189,201 @@ impl AgentSurface {
             }
         }
         row
+    }
+
+    /// One subagent of a turn: a line the person clicks to open its prompt,
+    /// acts, and messages. Requests it makes stay in the thread so they are
+    /// always visible and answerable.
+    fn subagent_section(
+        &self,
+        turn: &agent::Turn,
+        sub: &agent::Subagent,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let open = self.expanded_subagents.contains(&sub.id);
+        let control = format!("subagent:{}", sub.id);
+        let action = ThreadAction::Subagent(sub.id.clone());
+        let has_waiting = turn.requests.iter().any(|r| {
+            r.subagent.as_deref() == Some(sub.id.as_str())
+                && matches!(
+                    agent::request_view(&turn.state, r),
+                    agent::RequestView::Waiting | agent::RequestView::Sending(_)
+                )
+        });
+        let (status, status_color) = if has_waiting {
+            ("Waiting", p.focus)
+        } else {
+            match &sub.state {
+                agent::SubagentState::Working => ("Working…", p.focus),
+                agent::SubagentState::Failed(_) => ("Failed", p.text),
+                other => (other.label(), p.muted),
+            }
+        };
+        let act_count = match sub.acts.len() {
+            0 => None,
+            1 => Some("1 act".to_string()),
+            n => Some(format!("{n} acts")),
+        };
+        let mut section = div().w_full().flex().flex_col().gap(px(6.)).child(
+            div()
+                .id(SharedString::from(control.clone()))
+                .relative()
+                .w_full()
+                .px(px(10.))
+                .py(px(7.))
+                .rounded(px(6.))
+                .bg(rgb(p.surface))
+                .border_1()
+                .border_color(rgb(if has_waiting || sub.state.is_working() {
+                    p.accent
+                } else {
+                    p.line
+                }))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .cursor_pointer()
+                .hover(move |s| s.border_color(rgb(p.focus)))
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(8.))
+                        .font_family("IBM Plex Mono")
+                        .text_size(px(10.))
+                        .text_color(rgb(p.muted))
+                        .child(if open { "▾" } else { "▸" }),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(px(10.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(p.muted))
+                        .child("Subagent"),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(11.5))
+                        .font_weight(if open {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .text_color(rgb(p.text))
+                        .text_ellipsis()
+                        .child(sub.title.clone()),
+                )
+                .when_some(act_count, |row, count| {
+                    row.child(
+                        div()
+                            .flex_none()
+                            .text_size(px(10.))
+                            .text_color(rgb(p.muted))
+                            .child(count),
+                    )
+                })
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(px(10.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(status_color))
+                        .child(status),
+                )
+                .child(tracked(&self.frame, control, true))
+                .on_click(cx.listener(move |this, _, w, cx| {
+                    this.action(action.clone(), w, cx);
+                    w.focus(&this.input.focus_handle(cx));
+                })),
+        );
+        if open {
+            let mut inner = div()
+                .w_full()
+                .pl(px(12.))
+                .py(px(2.))
+                .border_l_2()
+                .border_color(rgb(p.line))
+                .flex()
+                .flex_col()
+                .gap(px(8.));
+            let sub_turn_state = sub.state.as_turn_state();
+            for msg in sub.messages.iter().filter(|m| m.role == "prompt") {
+                if !msg.text.trim().is_empty() {
+                    inner = inner.child(
+                        div()
+                            .w_full()
+                            .px(px(8.))
+                            .py(px(6.))
+                            .rounded(px(6.))
+                            .bg(rgb(p.surface))
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.))
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(p.muted))
+                                    .child("Prompt"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .line_height(px(16.5))
+                                    .text_color(rgb(p.muted))
+                                    .child(msg.text.clone()),
+                            ),
+                    );
+                }
+            }
+            if !sub.acts.is_empty() {
+                let mut acts_col = div().w_full().flex().flex_col().gap(px(3.));
+                for act in &sub.acts {
+                    acts_col = acts_col.child(self.act_row(&sub_turn_state, act, p, cx));
+                }
+                inner = inner.child(acts_col);
+            }
+            for (idx, msg) in sub.messages.iter().filter(|m| m.role != "prompt").enumerate() {
+                if !msg.text.trim().is_empty() {
+                    inner = inner.child(answer_blocks(&format!("sub-{}-{idx}", sub.id), &msg.text, p));
+                }
+            }
+            if let agent::SubagentState::Failed(err) = &sub.state {
+                inner = inner.child(
+                    div()
+                        .px(px(10.))
+                        .py(px(8.))
+                        .rounded(px(6.))
+                        .bg(rgb(p.surface))
+                        .border_1()
+                        .border_color(rgb(p.line))
+                        .text_size(px(11.5))
+                        .line_height(px(16.5))
+                        .text_color(rgb(p.text))
+                        .child(err.clone()),
+                );
+            }
+            if sub.messages.is_empty()
+                && sub.acts.is_empty()
+                && !matches!(sub.state, agent::SubagentState::Failed(_))
+            {
+                inner = inner.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child(if sub.state.is_working() {
+                            "Working…"
+                        } else {
+                            "No messages recorded."
+                        }),
+                );
+            }
+            section = section.child(inner);
+        }
+        section
     }
 
     /// The list above the message box: the commands, or the choices of one.
@@ -1554,6 +1770,10 @@ fn styled(id: String, line: &markdown::Line, p: Palette, weight: FontWeight) -> 
 
 /// An answer, laid out as the Markdown it is.
 fn answer(turn: u64, text: &str, p: Palette) -> Div {
+    answer_blocks(&format!("md-{turn}"), text, p)
+}
+
+fn answer_blocks(prefix: &str, text: &str, p: Palette) -> Div {
     let mut out = div()
         .w_full()
         .flex()
@@ -1563,7 +1783,7 @@ fn answer(turn: u64, text: &str, p: Palette) -> Div {
         .line_height(px(19.5))
         .text_color(rgb(p.text));
     for (block_ix, block) in markdown::blocks(text).into_iter().enumerate() {
-        let id = format!("md-{turn}-{block_ix}");
+        let id = format!("{prefix}-{block_ix}");
         out = out.child(match block {
             markdown::Block::Paragraph(line) => div().w_full().child(styled(id, &line, p, FontWeight::NORMAL)),
             markdown::Block::Heading { level, line } => {
@@ -2017,6 +2237,11 @@ impl Render for AgentSurface {
                             _ => "Ready",
                         }
                     };
+                    let status_line = match thread.subagents {
+                        0 => status.to_string(),
+                        1 => format!("{status}  ·  1 subagent"),
+                        n => format!("{status}  ·  {n} subagents"),
+                    };
                     group = group.child(
                         self.button(
                             SharedString::from(format!("thread-{}", thread.thread)),
@@ -2040,7 +2265,7 @@ impl Render for AgentSurface {
                                 } else {
                                     p.muted
                                 }))
-                                .child(status),
+                                .child(status_line),
                         ),
                     );
                 }
@@ -2059,23 +2284,35 @@ impl Render for AgentSurface {
             for (turn_index, turn) in state.turns.iter().enumerate() {
                 let working = matches!(turn.state, agent::TurnState::Working);
                 let mut turn_col = div().flex().flex_col().gap(px(8.));
-                // The person's message, set to the right.
-                turn_col = turn_col.child(
-                    div().w_full().flex().justify_end().child(
+                if turn.from_harness {
+                    // A turn the harness began itself has no message: a quiet
+                    // line says why it goes on.
+                    turn_col = turn_col.child(
                         div()
-                            .max_w(relative(0.88))
-                            .px(px(12.))
-                            .py(px(8.))
-                            .rounded(px(10.))
-                            .bg(rgb(p.surface))
-                            .border_1()
-                            .border_color(rgb(p.line))
-                            .text_size(px(13.))
-                            .line_height(px(19.))
-                            .text_color(rgb(p.text))
-                            .child(turn.message.clone()),
-                    ),
-                );
+                            .w_full()
+                            .text_size(px(11.5))
+                            .text_color(rgb(p.muted))
+                            .child("The Agent went on after a subagent reported"),
+                    );
+                } else {
+                    // The person's message, set to the right.
+                    turn_col = turn_col.child(
+                        div().w_full().flex().justify_end().child(
+                            div()
+                                .max_w(relative(0.88))
+                                .px(px(12.))
+                                .py(px(8.))
+                                .rounded(px(10.))
+                                .bg(rgb(p.surface))
+                                .border_1()
+                                .border_color(rgb(p.line))
+                                .text_size(px(13.))
+                                .line_height(px(19.))
+                                .text_color(rgb(p.text))
+                                .child(turn.message.clone()),
+                        ),
+                    );
+                }
                 // The desktop context carried with the message.
                 match &turn.context {
                     Some(ctx) => {
@@ -2121,6 +2358,8 @@ impl Render for AgentSurface {
                         }
                         turn_col = turn_col.child(ctx_box);
                     }
+                    // A turn the harness began carries no message, and so no context.
+                    None if turn.from_harness => {}
                     None => {
                         turn_col = turn_col.child(
                             div()
@@ -2186,10 +2425,34 @@ impl Render for AgentSurface {
                     }
                     turn_col = turn_col.child(list);
                 }
-                // The requests the harness made in this turn.
+                // Subagents launched during this turn, each collapsible.
+                let subagent_working = turn.subagents.iter().any(|s| s.state.is_working());
+                if !working && subagent_working {
+                    turn_col = turn_col.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(p.focus))
+                            .child(div().size(px(6.)).rounded_full().bg(rgb(p.focus)))
+                            .child("Subagent working…"),
+                    );
+                }
+                for sub in &turn.subagents {
+                    turn_col = turn_col.child(self.subagent_section(turn, sub, p, cx));
+                }
+                // The requests the harness (or a subagent) made in this turn.
                 for req in &turn.requests {
                     let hinted = first_waiting.as_deref() == Some(req.id.as_str());
-                    turn_col = turn_col.child(self.request_card(&turn.state, req, hinted, p, cx));
+                    let sub_title = req.subagent.as_deref().and_then(|sid| {
+                        turn.subagents
+                            .iter()
+                            .find(|s| s.id == sid)
+                            .map(|s| s.title.as_str())
+                    });
+                    turn_col = turn_col.child(self.request_card(&turn.state, req, sub_title, hinted, p, cx));
                 }
                 // The notes recorded on this turn.
                 for note in &turn.notes {

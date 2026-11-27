@@ -119,6 +119,40 @@ class StubModelTests(unittest.TestCase):
         body2 = json.loads(raw2)
         self.assertEqual(body2["choices"][0]["message"]["content"], "Ran as (stub-1): crowbar\n1003")
 
+    def test_a_tool_call_held_until_a_file_goes_out_once_the_file_is_there(self):
+        gate = Path(self.tmp.name) / "gate"
+        self.script["rules"].insert(0, {
+            "match": "held-read",
+            "hold_until": str(gate),
+            "tool_call": {"name": "read", "arguments": {"path": "/tmp/x"}},
+            "after_tool": "Read: {tool_output}",
+        })
+        answered = threading.Event()
+        result = {}
+
+        def ask():
+            result["reply"] = self._post("/v1/chat/completions", {
+                "model": "stub-1",
+                "stream": False,
+                "messages": [{"role": "user", "content": "please held-read"}],
+                "tools": [{"type": "function", "function": {"name": "read"}}],
+            })
+            answered.set()
+
+        threading.Thread(target=ask, daemon=True).start()
+        # Another request is answered meanwhile.
+        status, _, raw = self._post("/v1/chat/completions", {
+            "model": "stub-1",
+            "stream": False,
+            "messages": [{"role": "user", "content": "say hello"}],
+        })
+        self.assertEqual((status, json.loads(raw)["choices"][0]["message"]["content"]), (200, "Hi from stub-1!"))
+        self.assertFalse(answered.wait(0.5), "the held call went out before its file was there")
+        gate.touch()
+        self.assertTrue(answered.wait(5), "the held call never went out")
+        body = json.loads(result["reply"][2])
+        self.assertEqual(body["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "read")
+
     def test_title_generation_request_with_no_tools_never_emits_tool_call(self):
         status, _, raw = self._post("/v1/chat/completions", {
             "model": "stub-1",
