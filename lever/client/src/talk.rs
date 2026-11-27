@@ -332,17 +332,25 @@ fn wait_to_go(lever: &mut Connection, thread: &str, queued: &str) -> Result<Opti
             Happening::Event(event) => event,
             Happening::Interrupt => {
                 let reply = lever.request(json!({ "op": "unqueue", "thread": thread, "queued": queued }))?;
-                if refused(&reply).is_none() {
-                    eprintln!("Taken back.");
-                    return Ok(None);
+                match refused(&reply).as_deref() {
+                    None => {
+                        eprintln!("Taken back.");
+                        return Ok(None);
+                    }
+                    // It went already: its turn is followed, and Ctrl-C stops it.
+                    Some("no-queued") => continue,
+                    // The thread is gone, or Lever cannot say: there is nothing to wait for here.
+                    Some(_) => return Ok(None),
                 }
-                // It went already: its turn is followed, and Ctrl-C stops it.
-                continue;
             }
             Happening::EndOfInput | Happening::Line(_) => continue,
         };
         if text(&event, "thread") != thread {
             continue;
+        }
+        if text(&event, "event") == "deleted" {
+            eprintln!("Not sent: the thread was deleted.");
+            return Ok(None);
         }
         if text(&event, "event") == "queued" && text(&event, "queued") == queued {
             match &*text(&event, "state") {

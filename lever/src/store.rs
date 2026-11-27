@@ -403,6 +403,10 @@ impl Store {
         .map_err(|e| format!("could not mark interrupted subagents: {e}"))?;
         conn.execute("UPDATE requests SET state = 'withdrawn' WHERE state = 'waiting'", [])
             .map_err(|e| format!("could not withdraw waiting requests: {e}"))?;
+        // A message steered into a turn that a crash interrupted, whose taking
+        // the harness never said, waits for the person, who may take it back.
+        conn.execute("UPDATE queued SET state = 'queued' WHERE state = 'steering'", [])
+            .map_err(|e| format!("could not keep steered messages: {e}"))?;
 
         tighten_permissions(path)?;
         Ok(Self {
@@ -992,21 +996,24 @@ impl Store {
     }
 
     /// Keeps a message that waits behind turn `turn_number` of a thread, and
-    /// gives it Lever's ID.
+    /// gives it Lever's ID. One in `state` `steering` is a message steered
+    /// into the turn whose place in the queue is kept until the harness says
+    /// whether it took it: it is not shown, and does not go.
     pub fn insert_queued(
         &self,
         thread_id: &str,
         turn_number: u64,
         text: &str,
         context: Option<&str>,
+        state: &str,
         now: i64,
     ) -> Result<QueuedRecord, String> {
         let id = format!("q-{}", sys::random_hex(6));
         self.conn
             .execute(
                 "INSERT INTO queued (id, thread_id, turn_number, text, context, state, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6)",
-                params![id, thread_id, turn_number as i64, text, context, now],
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id, thread_id, turn_number as i64, text, context, state, now],
             )
             .map_err(|e| format!("could not queue the message: {e}"))?;
         self.touch_thread(thread_id, now)?;
@@ -1014,7 +1021,7 @@ impl Store {
             id,
             text: text.to_string(),
             context: context.and_then(|c| serde_json::from_str(c).ok()),
-            state: "queued".to_string(),
+            state: state.to_string(),
         })
     }
 
@@ -1025,7 +1032,7 @@ impl Store {
             .conn
             .prepare(
                 "SELECT turn_number, id, text, context, state FROM queued \
-                 WHERE thread_id = ?1 AND (state = 'queued' OR ?2) ORDER BY seq ASC",
+                 WHERE thread_id = ?1 AND (state = 'queued' OR (?2 AND state = 'dropped')) ORDER BY seq ASC",
             )
             .map_err(|e| format!("could not prepare queued query: {e}"))?;
         let rows = stmt
@@ -1060,6 +1067,27 @@ impl Store {
             )
             .map_err(|e| format!("could not take the queued message out: {e}"))?;
         Ok(removed > 0)
+    }
+
+    /// Moves a queued message from one state to another, as from `queued` to
+    /// `going` while it begins its turn, and says whether it was in the first.
+    pub fn set_queued_state(&self, thread_id: &str, id: &str, from: &str, to: &str) -> Result<bool, String> {
+        let moved = self
+            .conn
+            .execute(
+                "UPDATE queued SET state = ?4 WHERE thread_id = ?1 AND id = ?2 AND state = ?3",
+                params![thread_id, id, from, to],
+            )
+            .map_err(|e| format!("could not change the queued message: {e}"))?;
+        Ok(moved > 0)
+    }
+
+    /// Takes a message that went as its own turn out of the record.
+    pub fn forget_queued(&self, id: &str) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM queued WHERE id = ?1", params![id])
+            .map_err(|e| format!("could not forget the queued message: {e}"))?;
+        Ok(())
     }
 
     /// Drops what waits behind a thread's turn (or, with none, all it has

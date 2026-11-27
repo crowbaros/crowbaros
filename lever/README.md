@@ -662,10 +662,11 @@ and a `queued` event follows:
 Messages that wait go one at a time, in the order sent, each as its own
 turn, with the desktop context it was sent with, in the thread's mode, Model,
 and effort as they are when it goes. One goes when the turn before it ends
-`done` or `failed`, and nothing of the thread works or asks. A Stop drops
-what waits behind the turn it stops, and one the harness had yet to say it
-took, and they stay in the record as `dropped`: nothing runs after the person
-said stop. What waits behind a turn that was interrupted, or stopped without
+`done` or `failed`, and nothing of the thread works, asks, or waits on the
+harness to say whether it took a message: one it had yet to answer keeps its
+place ahead of those sent after it. A Stop drops all that waits on the
+thread, and one the harness had yet to say it took, and they stay in the
+record as `dropped`: nothing runs after the person said stop. What waits behind a turn that was interrupted, or stopped without
 the person's Stop, waits for the person: their next message goes behind it,
 and all go. Messages that wait are in the record, and outlast Lever. The
 person takes one back with `unqueue`.

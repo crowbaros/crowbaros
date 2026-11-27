@@ -234,6 +234,9 @@ struct PendingSteer {
     /// The person stopped its turn before the harness answered: a message
     /// the harness did not take is dropped, not queued.
     stopped: bool,
+    /// Its place in the thread's queue, kept until the harness answers, so a
+    /// message it did not take waits ahead of those sent after it.
+    queued: QueuedRecord,
 }
 
 /// What a message asks of its thread besides its text.
@@ -312,7 +315,9 @@ pub struct Service {
     /// The desktop context each queued message carries, as the harness is
     /// told it, by its ID. One queued before Lever started is told it again
     /// from the record.
-    queued_prompts: HashMap<String, String>,
+    queued_prompts: HashMap<String, (String, String)>,
+    /// Threads whose next queued message Lever could not begin, logged once.
+    drain_stuck: HashSet<String>,
     /// The harness last started says it can take a message into a turn under
     /// way.
     steering: bool,
@@ -387,6 +392,7 @@ impl Service {
             next_steer: 0,
             drain_wanted: HashSet::new(),
             queued_prompts: HashMap::new(),
+            drain_stuck: HashSet::new(),
             steering: false,
             efforts: HashMap::new(),
             pending_efforts: Vec::new(),
@@ -1103,6 +1109,8 @@ impl Service {
     fn delete_record(&mut self, thread: &str, warning: Option<&str>) -> RequestOutcome {
         self.subagent_threads.remove(thread);
         self.held_stops.remove(thread);
+        self.drain_wanted.remove(thread);
+        self.queued_prompts.retain(|_, (t, _)| t != thread);
         if let Err(e) = self.store.delete_thread(thread) {
             return error_outcome("storage-error", &e);
         }
@@ -1766,7 +1774,9 @@ impl Service {
                     };
                     // A message for a thread with messages waiting waits
                     // behind them.
-                    if from_queue.is_none() && self.has_queued(tid) {
+                    let steer_pending =
+                        !self.working_turns.contains_key(tid) && self.pending_steers.iter().any(|p| p.thread_id == tid);
+                    if from_queue.is_none() && (self.has_queued(tid) || steer_pending) {
                         return self.queue_message(peer_id, is_person, tid, &meta, text, wanted, log);
                     }
                     if busy {
@@ -2037,6 +2047,18 @@ impl Service {
             return error_outcome("working", STEER_CHANGES_MESSAGE);
         }
         let (context, context_prompt) = self.desktop_context(is_person);
+        let context_json = context.as_ref().map(Value::to_string);
+        let queued =
+            match self
+                .store
+                .insert_queued(thread_id, turn, text, context_json.as_deref(), "steering", unix_now())
+            {
+                Ok(queued) => queued,
+                Err(err) => {
+                    store_failed(log, &err);
+                    return error_outcome("storage-error", &err);
+                }
+            };
         let steer = self.next_steer;
         self.next_steer += 1;
         if let Some(harness) = self.harness.as_mut() {
@@ -2051,6 +2073,7 @@ impl Service {
             context,
             context_prompt,
             stopped: false,
+            queued,
         });
         RequestOutcome {
             reply: None,
@@ -2116,17 +2139,28 @@ impl Service {
             peer_id,
             thread_id,
             turn,
-            text,
-            context,
             context_prompt,
             stopped,
+            mut queued,
             ..
         } = pending;
-        let mut effects = self.queue(peer_id, &thread_id, turn, &text, context, context_prompt, log);
-        if stopped {
-            effects.broadcasts.extend(self.drop_queued(&thread_id, Some(turn), log));
+        let to = if stopped { "dropped" } else { "queued" };
+        if let Err(err) = self.store.set_queued_state(&thread_id, &queued.id, "steering", to) {
+            store_failed(log, &err);
+            return Effects {
+                broadcasts: Vec::new(),
+                replies: peer_id
+                    .map(|peer_id| PeerReply {
+                        peer_id,
+                        message: error_json("storage-error", &err),
+                        subscribe: None,
+                    })
+                    .into_iter()
+                    .collect(),
+            };
         }
-        effects
+        queued.state = to.to_string();
+        self.announce_queued(peer_id, &thread_id, turn, &queued, context_prompt.filter(|_| !stopped))
     }
 
     /// Keeps a message behind `turn`, tells who watches the thread, and
@@ -2143,37 +2177,53 @@ impl Service {
         log: &mut Log,
     ) -> Effects {
         let context_json = context.as_ref().map(Value::to_string);
-        let queued = match self
-            .store
-            .insert_queued(thread_id, turn, text, context_json.as_deref(), unix_now())
-        {
-            Ok(queued) => queued,
-            Err(err) => {
-                store_failed(log, &err);
-                return Effects {
-                    broadcasts: Vec::new(),
-                    replies: peer_id
-                        .map(|peer_id| PeerReply {
-                            peer_id,
-                            message: error_json("storage-error", &err),
-                            subscribe: None,
-                        })
-                        .into_iter()
-                        .collect(),
-                };
-            }
-        };
+        let queued =
+            match self
+                .store
+                .insert_queued(thread_id, turn, text, context_json.as_deref(), "queued", unix_now())
+            {
+                Ok(queued) => queued,
+                Err(err) => {
+                    store_failed(log, &err);
+                    return Effects {
+                        broadcasts: Vec::new(),
+                        replies: peer_id
+                            .map(|peer_id| PeerReply {
+                                peer_id,
+                                message: error_json("storage-error", &err),
+                                subscribe: None,
+                            })
+                            .into_iter()
+                            .collect(),
+                    };
+                }
+            };
+        self.announce_queued(peer_id, thread_id, turn, &queued, context_prompt)
+    }
+
+    /// Tells who watches a thread of a message that now waits behind `turn`,
+    /// or was dropped there, and answers `peer_id` with `queued`.
+    fn announce_queued(
+        &mut self,
+        peer_id: Option<u64>,
+        thread_id: &str,
+        turn: u64,
+        queued: &QueuedRecord,
+        context_prompt: Option<String>,
+    ) -> Effects {
         if let Some(prompt) = context_prompt {
-            self.queued_prompts.insert(queued.id.clone(), prompt);
+            self.queued_prompts
+                .insert(queued.id.clone(), (thread_id.to_string(), prompt));
         }
-        // A thread that is free goes on with what waits now.
-        if !self.thread_busy(thread_id) {
+        // A thread with no turn working goes on with what waits as soon as
+        // nothing else holds it.
+        if queued.state == "queued" && !self.working_turns.contains_key(thread_id) {
             self.drain_wanted.insert(thread_id.to_string());
         }
         Effects {
             broadcasts: vec![Broadcast {
                 thread_id: thread_id.to_string(),
-                message: queued_event_json(thread_id, turn, &queued),
+                message: queued_event_json(thread_id, turn, queued),
             }],
             replies: peer_id
                 .map(|peer_id| PeerReply {
@@ -2249,37 +2299,52 @@ impl Service {
 
     /// Sends the next message that waits on each thread that may go on, as
     /// its own turn: one whose turn ended done or failed, or to which the
-    /// person sent another message, once nothing of the thread holds it.
+    /// person sent another message, once nothing of the thread holds it. One
+    /// Lever cannot begin now is tried again at the next pass.
     fn drain_queues(&mut self, log: &mut Log) -> Vec<Broadcast> {
         let mut broadcasts = Vec::new();
         let wanted: Vec<String> = self.drain_wanted.iter().cloned().collect();
         for thread_id in wanted {
             // A turn works: its end says whether what waits goes.
-            if self.thread_busy(&thread_id) || self.deleting(&thread_id) {
+            if self.working_turns.contains_key(&thread_id) {
                 self.drain_wanted.remove(&thread_id);
                 continue;
             }
-            // OpenCode 2.4.1 strands a subagent's request on a new prompt:
-            // what waits goes once the request ends.
-            if self
-                .waiting
-                .values()
-                .any(|w| w.thread_id == thread_id && w.record.subagent.is_some())
+            // A change of the session, a delete, a message the harness has yet
+            // to say it took, and a subagent's request each hold what waits
+            // until they end: OpenCode 2.4.1 strands a subagent's request on
+            // a new prompt.
+            if self.session_change_pending(&thread_id)
+                || self.pending_steers.iter().any(|p| p.thread_id == thread_id)
+                || self
+                    .waiting
+                    .values()
+                    .any(|w| w.thread_id == thread_id && w.record.subagent.is_some())
             {
                 continue;
             }
-            self.drain_wanted.remove(&thread_id);
             let next = match self.store.queued_of(&thread_id, false) {
                 Ok(waiting) => waiting.into_iter().next(),
                 Err(err) => {
                     store_failed(log, &err);
-                    None
+                    continue;
                 }
             };
             let Some((behind, queued)) = next else {
+                self.drain_wanted.remove(&thread_id);
                 continue;
             };
-            let prompt = self.queued_prompts.remove(&queued.id).or_else(|| {
+            // Marked as going first, so a record that takes no more writes
+            // after the turn begins never sends it twice.
+            match self.store.set_queued_state(&thread_id, &queued.id, "queued", "going") {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(err) => {
+                    store_failed(log, &err);
+                    continue;
+                }
+            }
+            let prompt = self.queued_prompts.get(&queued.id).map(|(_, p)| p.clone()).or_else(|| {
                 queued
                     .context
                     .clone()
@@ -2289,11 +2354,19 @@ impl Service {
             let value = json!({ "op": "send", "thread": thread_id, "text": queued.text });
             let outcome = self.send_message(0, true, &value, Some((queued.context.clone(), prompt)), log);
             if outcome.reply.as_ref().is_none_or(|r| r["reply"] != "sent") {
-                // It still waits, until the person sends again or takes it back.
-                let _ = log.write(Event::Error, "a queued message could not begin its turn");
+                // It waits still, and is tried again at the next pass.
+                if let Err(err) = self.store.set_queued_state(&thread_id, &queued.id, "going", "queued") {
+                    store_failed(log, &err);
+                }
+                if self.drain_stuck.insert(thread_id.clone()) {
+                    let _ = log.write(Event::Error, "a queued message could not begin its turn yet");
+                }
                 continue;
             }
-            if let Err(err) = self.store.remove_queued(&thread_id, &queued.id) {
+            self.drain_wanted.remove(&thread_id);
+            self.drain_stuck.remove(&thread_id);
+            self.queued_prompts.remove(&queued.id);
+            if let Err(err) = self.store.forget_queued(&queued.id) {
                 store_failed(log, &err);
             }
             let mut sent = queued.clone();
@@ -2318,6 +2391,9 @@ impl Service {
         if taken.is_err() {
             // One the harness did not take waits behind the turn.
             return self.queue_untaken(pending, log);
+        }
+        if let Err(err) = self.store.forget_queued(&pending.queued.id) {
+            store_failed(log, &err);
         }
         let thread_id = pending.thread_id;
         // The message still goes to who is watching. The turn's end says
@@ -2391,12 +2467,12 @@ impl Service {
             log,
         );
 
-        // Stop drops what waits behind the turn it stops, and what the harness
-        // has yet to say it took into it: nothing runs after the person said
-        // stop.
-        broadcasts.extend(self.drop_queued(thread_id, requested_turn, log));
+        // Stop drops what waits on the thread, behind the turn it stops or
+        // the ones before it, and what the harness has yet to say it took:
+        // nothing runs after the person said stop.
+        broadcasts.extend(self.drop_queued(thread_id, None, log));
         for pending in &mut self.pending_steers {
-            if pending.thread_id == thread_id && requested_turn.is_none_or(|t| pending.turn == t) {
+            if pending.thread_id == thread_id {
                 pending.stopped = true;
             }
         }

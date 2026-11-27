@@ -16,7 +16,7 @@ These are the facts as found on November 26, 2026:
 
 - **A message sent while a turn works is steered into it where the harness can, and otherwise waits.** It waits when the harness declines it, when the harness cannot steer, when the harness ends before it says, when a subagent of the thread asks, and when the turn's prompt has yet to go. A message for a thread with messages waiting waits behind them.
 - **What waits goes one message at a time, each as its own turn**, in the order sent, when the turn before it ends done or failed. It goes with the desktop context it was sent with, in the thread's mode, Model, and effort as they are when it goes.
-- **A Stop drops what waits behind the turn it stops.** Nothing runs after the person said stop. What a Stop dropped stays in the record as not sent.
+- **A Stop drops all that waits on the thread.** Nothing runs after the person said stop. What a Stop dropped stays in the record as not sent.
 - **What waits is in Lever's record and outlasts a restart.** Behind a turn that was interrupted, it waits for the person, and is not sent on its own: their next message goes behind it, and all go.
 - **The person can take back a message that waits**, from the drawer and from `crowbar-agent`.
 - **Waiting is Lever's, not the harness's.** A message that waits is sent as an ordinary message, a new turn, through the same adapter contract. It is not presented as steering, and Lever still steers only a harness that says it can.

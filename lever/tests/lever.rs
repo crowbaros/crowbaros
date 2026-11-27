@@ -9453,9 +9453,76 @@ fn what_waits_behind_a_turn_that_fails_goes_next() {
     let mut peer = handshake(&lever.person);
     let (thread, turn) = send(&mut peer, None, "fail please");
     read_until(&mut peer, |f| f["event"] == "text");
-    assert_eq!(send_while_working(&mut peer, &thread, "Change of plan")["reply"], "queued");
+    assert_eq!(
+        send_while_working(&mut peer, &thread, "Change of plan")["reply"],
+        "queued"
+    );
     assert_eq!(turn_events(&mut peer, &thread, turn).last().unwrap()["event"], "failed");
     assert_eq!(text_of(&turn_events(&mut peer, &thread, turn + 1)), "Changed.");
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn stop_drops_all_that_waits_on_the_thread_though_it_waited_behind_an_older_turn() {
+    let dir = TempDir::new();
+    let script = write_script(&dir.0, &queueing_script(json!({})));
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "slow work");
+    read_until(&mut peer, |f| f["event"] == "text");
+    // Both wait behind turn 1; the first goes as turn 2 and works on.
+    assert_eq!(send_while_working(&mut peer, &thread, "stall now")["reply"], "queued");
+    let behind = send_while_working(&mut peer, &thread, "Then this");
+    assert_eq!(behind["turn"], turn, "{behind}");
+    read_until(&mut peer, |f| f["event"] == "message" && f["turn"] == turn + 1);
+    read_until(&mut peer, |f| f["event"] == "text" && f["turn"] == turn + 1);
+
+    write_frame(&mut peer, &json!({ "op": "stop", "thread": thread, "turn": turn + 1 })).unwrap();
+    let dropped = read_until(&mut peer, |f| f["event"] == "queued" && f["state"] != "queued");
+    assert_eq!(
+        (&dropped["queued"], &dropped["state"]),
+        (&behind["queued"], &json!("dropped"))
+    );
+    read_until(&mut peer, |f| f["event"] == "stopped");
+    std::thread::sleep(Duration::from_millis(300));
+    let record = resume(&mut peer, &thread);
+    assert_eq!(
+        record["turns"].as_array().unwrap().len(),
+        2,
+        "nothing runs after Stop: {record}"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_message_the_harness_had_yet_to_answer_keeps_its_place_ahead_of_one_sent_after() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &queueing_script(json!({ "steering": true, "steer_delay_ms": 1200 })),
+    );
+    let mut lever = RunningLever::start_with_stub(&dir.0, my_uid(), &script, None, None);
+    let mut peer = handshake(&lever.person);
+    let mut other = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "slow work");
+    read_until(&mut peer, |f| f["event"] == "text");
+    // Steered as the turn nears its end; the harness answers after it ended.
+    write_frame(
+        &mut other,
+        &json!({ "op": "send", "thread": thread, "text": "Change of plan" }),
+    )
+    .unwrap();
+    assert_eq!(turn_events(&mut peer, &thread, turn).last().unwrap()["event"], "done");
+    // Sent while that answer is still to come: it waits behind it.
+    assert_eq!(send_while_working(&mut peer, &thread, "Then this")["reply"], "queued");
+    let first = read_until(&mut other, |f| f.get("reply").is_some());
+    assert_eq!(first["reply"], "queued", "{first}");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn + 1)), "Changed.");
+    assert_eq!(text_of(&turn_events(&mut peer, &thread, turn + 2)), "This too.");
+
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }

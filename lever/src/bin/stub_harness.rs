@@ -195,6 +195,10 @@ struct Script {
     /// A steering message with this in it is never taken.
     #[serde(default)]
     steer_refused_for: Option<String>,
+    /// Waits this long before it answers a steering message, and goes on with
+    /// its other work meanwhile, as the turn's end.
+    #[serde(default)]
+    steer_delay_ms: u64,
     /// If true, the stub ends at once when a steering message comes, with
     /// nothing answered.
     #[serde(default)]
@@ -2274,11 +2278,32 @@ fn run(options: Options) -> Result<(), String> {
             }
             let running = active_cancels.lock().unwrap().contains_key(&session);
             let refused = script.steer_refused || script.steer_refused_for.as_ref().is_some_and(|t| text.contains(t));
-            if running && !refused {
-                steers.lock().unwrap().entry(session).or_default().push_back(text);
-                writer.send_result(id, json!({ "outcome": "injected" }));
+            let answer = |running: bool| {
+                if running && !refused {
+                    json!({ "outcome": "injected" })
+                } else {
+                    json!({ "outcome": "promptRequired", "reason": "noRunningTurn" })
+                }
+            };
+            if script.steer_delay_ms > 0 {
+                // Answered later, by whether a prompt runs then.
+                let (writer, active_cancels, delay) = (writer.clone(), active_cancels.clone(), script.steer_delay_ms);
+                let outcome = answer(true);
+                workers.push(thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(delay));
+                    let running = active_cancels.lock().unwrap().contains_key(&session);
+                    let outcome = if running {
+                        outcome
+                    } else {
+                        json!({ "outcome": "promptRequired", "reason": "noRunningTurn" })
+                    };
+                    writer.send_result(id, outcome);
+                }));
             } else {
-                writer.send_result(id, json!({ "outcome": "promptRequired", "reason": "noRunningTurn" }));
+                if running && !refused {
+                    steers.lock().unwrap().entry(session).or_default().push_back(text);
+                }
+                writer.send_result(id, answer(running));
             }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_prompt {
             let prompt_req = match serde_json::from_value::<PromptRequest>(params) {
