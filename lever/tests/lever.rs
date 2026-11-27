@@ -8788,3 +8788,51 @@ fn a_prompt_that_waited_on_a_mode_waits_too_while_a_subagent_asks() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn a_prompt_whose_mode_comes_with_a_subagents_request_waits_on_it() {
+    let dir = TempDir::new();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "mode_reply_rides_with_ask": "ses_rides",
+            "turns": [
+                {
+                    "match": "Go",
+                    "steps": [
+                        { "kind": "subagent_start", "id": "ses_rides", "title": "Rides", "prompt": "Ride" },
+                        { "kind": "text", "text": "Handed off." }
+                    ]
+                },
+                { "match": "Next", "steps": [{ "kind": "text", "text": "Next." }] }
+            ]
+        }),
+    );
+    let stub_log = dir.0.join("stub.log");
+    let extra = stub_args(&script, &stub_log, &["--wake-quiet-ms", "300"]);
+    let uid = my_uid();
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut peer = handshake(&lever.person);
+    let (thread, turn) = send(&mut peer, None, "Go");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == turn);
+    let sent = ask_lever(
+        &mut peer,
+        json!({ "op": "send", "thread": thread, "text": "Next", "cwd": "/tmp", "mode": "full-access" }),
+    );
+    assert_eq!(sent["reply"], "sent", "{sent}");
+    let asked = read_until(&mut peer, |v| v["event"] == "request" && v["state"] == "waiting");
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(stub_prompts(&stub_log).len(), 1, "a prompt went while a subagent asked");
+
+    let answered = ask_lever(
+        &mut peer,
+        json!({ "op": "answer", "thread": thread, "request": asked["request"], "answer": "once" }),
+    );
+    assert_eq!(answered["reply"], "ok", "{answered}");
+    read_until(&mut peer, |v| v["event"] == "done" && v["turn"] == sent["turn"]);
+    assert_eq!(stub_prompts(&stub_log).len(), 2);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

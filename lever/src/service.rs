@@ -243,6 +243,8 @@ pub struct Service {
     held_stops: HashSet<String>,
     /// Why the harness is to be stopped once the event in hand is applied.
     kill_wanted: Option<&'static str>,
+    /// Lever is applying a batch of what the harness sent.
+    in_harness_batch: bool,
     /// The harness session IDs of the subagents heard of since the harness
     /// last started.
     harness_children: HashSet<String>,
@@ -314,6 +316,7 @@ impl Service {
             subagent_threads: HashSet::new(),
             held_stops: HashSet::new(),
             kill_wanted: None,
+            in_harness_batch: false,
             harness_children: HashSet::new(),
             working_subagents: HashMap::new(),
             waiting: HashMap::new(),
@@ -817,6 +820,7 @@ impl Service {
         };
         let mut effects = Effects::default();
         let pid = self.harness.as_ref().map(AcpHarness::pid);
+        self.in_harness_batch = true;
         for ev in events {
             match ev {
                 AcpEvent::Exited => {
@@ -834,8 +838,9 @@ impl Service {
                 break;
             }
         }
+        self.in_harness_batch = false;
         // A request the harness withdrew, or a subagent's end, can free a
-        // prompt that waited on it.
+        // prompt that waited on it, as can the end of the batch.
         self.send_held_prompts();
         if self.harness_env_stale && !self.has_active_work() {
             self.stop_harness("after free hosted Models setting changed", log);
@@ -2381,11 +2386,15 @@ impl Service {
         if harness.has_modes() && harness.session_current_mode(&session_id) != Some(active.mode.as_str()) {
             harness.set_session_mode(thread_id, Some(active.turn), &session_id, &active.mode);
             active.dispatch = TurnDispatch::WaitingForMode;
-        } else if self
-            .waiting
-            .values()
-            .any(|w| w.thread_id == thread_id && w.record.subagent.is_some())
+        } else if self.in_harness_batch
+            || self
+                .waiting
+                .values()
+                .any(|w| w.thread_id == thread_id && w.record.subagent.is_some())
         {
+            // Within a batch the harness sent, a subagent's request later in
+            // it is not yet known: the prompt goes after the batch, once none
+            // asks.
             active.dispatch = TurnDispatch::WaitingForSubagentAnswer;
         } else {
             self.pending_effort_threads.remove(thread_id);

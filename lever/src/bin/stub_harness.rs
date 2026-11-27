@@ -131,6 +131,10 @@ struct Script {
     /// `config_option_update` before the answer.
     #[serde(default)]
     mode_update_first: bool,
+    /// The answer to a mode change comes in one write with a request of this
+    /// subagent's (a child session ID), as when the subagent asks just then.
+    #[serde(default)]
+    mode_reply_rides_with_ask: Option<String>,
     /// If true, `session/set_config_option` for an effort is answered with
     /// the effort the session was at, and the new one comes in a
     /// `config_option_update` that follows, as OpenCode does while another
@@ -1978,9 +1982,44 @@ fn run(options: Options) -> Result<(), String> {
                         }
                         let delay = Duration::from_millis(script.set_config_delay_ms);
                         let writer = writer.clone();
+                        let rides = script.mode_reply_rides_with_ask.clone();
+                        let parent = sid.clone();
                         let respond = move || {
                             thread::sleep(delay);
-                            writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
+                            let Some(child) = rides else {
+                                writer.send_result(id, SetSessionConfigOptionResponse::new(opts));
+                                return;
+                            };
+                            let reply =
+                                JsonRpcMessage::wrap(Response::<SetSessionConfigOptionResponse, AcpError>::new(
+                                    id,
+                                    Ok(SetSessionConfigOptionResponse::new(opts)),
+                                ));
+                            writer.send_together(&[
+                                serde_json::to_value(reply).expect("serialize response"),
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "id": 9000,
+                                    "method": CLIENT_METHOD_NAMES.session_request_permission,
+                                    "params": {
+                                        "sessionId": parent,
+                                        "toolCall": {
+                                            "toolCallId": format!("{child}:call_rides"),
+                                            "title": "Rides: Read /tmp/rides",
+                                            "kind": "read",
+                                            "status": "pending",
+                                            "rawInput": { "path": "/tmp/rides" },
+                                            "_meta": { "opencode/child-session": {
+                                                "id": child, "parentID": parent, "depth": 1, "title": "Rides"
+                                            } }
+                                        },
+                                        "options": [
+                                            { "optionId": "once", "name": "Allow once", "kind": "allow_once" },
+                                            { "optionId": "reject", "name": "Reject", "kind": "reject_once" }
+                                        ]
+                                    }
+                                }),
+                            ]);
                         };
                         if delay.is_zero() {
                             respond();
