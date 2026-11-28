@@ -12329,3 +12329,187 @@ fn mcp_make_project_rejects_uncreatable_place_and_list_dirs_browses_home() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn reassigned_session_id_is_never_deleted_when_old_moved_thread_is_deleted() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    // Harness reuses the same session ID for every new session, simulating
+    // session ID reassignment after the first thread moved and detached.
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "delete_session": true,
+            "session_id": "ses-reused-live",
+            "turns": [
+                { "steps": [{ "kind": "text", "text": "ok in {cwd}" }] }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let rpc_log_path = dir.0.join("rpc.jsonl");
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log_path), None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    // Thread 1 starts on `ses-reused-live`, then moves to a project (retiring `ses-reused-live`).
+    write_frame(&mut client, &json!({ "op": "send", "text": "first thread" })).unwrap();
+    let t1 = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["thread"] == t1);
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": t1, "name": "old-proj" }),
+    )
+    .unwrap();
+    assert_eq!(
+        read_until(&mut client, |f| f.get("reply").is_some())["reply"],
+        "project-made"
+    );
+
+    // Thread 2 now receives the reassigned `ses-reused-live`.
+    write_frame(&mut client, &json!({ "op": "send", "text": "second thread" })).unwrap();
+    let t2 = read_until(&mut client, |f| f["reply"] == "sent")["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["thread"] == t2);
+
+    // Deleting thread 1 must NOT send `session/delete` for `ses-reused-live` (now owned by thread 2).
+    write_frame(&mut client, &json!({ "op": "delete", "thread": t1 })).unwrap();
+    let del = read_until(&mut client, |f| f["reply"] == "deleted");
+    assert_eq!(del["thread"], t1);
+
+    let rpc_log = std::fs::read_to_string(&rpc_log_path).unwrap();
+    let deleted_sids: Vec<String> = rpc_log
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|v| v["method"] == "session/delete")
+        .filter_map(|v| v["params"]["sessionId"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        !deleted_sids.contains(&"ses-reused-live".to_string()),
+        "must not delete session owned by thread 2: {deleted_sids:?}"
+    );
+
+    // Thread 2 continues working normally.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": t2, "text": "still alive" }),
+    )
+    .unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let _ = read_until(&mut client, |f| {
+        f["event"] == "done" && f["thread"] == t2 && f["turn"] == 2
+    });
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn chained_mcp_move_on_first_post_move_turn_preserves_handoff_and_post_turn_subagent() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "check-b",
+                    "steps": [{ "kind": "text", "text": "CWD={cwd}\nPROMPT={prompt}" }]
+                },
+                {
+                    "match": "move-to-b",
+                    "steps": [
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_chain_b",
+                            "tool": "make_project",
+                            "arguments": { "name": "proj-b" },
+                            "reply": "MOVED_B={mcp_result}"
+                        }
+                    ],
+                    "after": [
+                        { "kind": "subagent_start", "id": "ses_after_prompt", "title": "Post-turn helper" },
+                        {
+                            "kind": "subagent_ask",
+                            "subagent": "ses_after_prompt",
+                            "id": "call_after_ask",
+                            "tool_kind": "read",
+                            "title": "Read file",
+                            "raw_input": { "path": "/tmp/a" }
+                        },
+                        { "kind": "subagent_end", "subagent": "ses_after_prompt", "status": "completed" }
+                    ]
+                },
+                {
+                    "match": "seed-chain",
+                    "steps": [{ "kind": "text", "text": "CHAIN_SEED_TOKEN" }]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    // Turn 1 in `$HOME`, then control moves thread to `proj-a`.
+    write_frame(&mut client, &json!({ "op": "send", "text": "seed-chain" })).unwrap();
+    let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 1);
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": tid, "name": "proj-a" }),
+    )
+    .unwrap();
+    assert_eq!(
+        read_until(&mut client, |f| f.get("reply").is_some())["reply"],
+        "project-made"
+    );
+
+    // Turn 2 (first turn in `proj-a`, carrying `proj-a` handoff) immediately calls MCP `make_project`
+    // for `proj-b`, finishes, and starts a subagent right after `PromptResponse`.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "move-to-b" }),
+    )
+    .unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 2);
+
+    // Subagent started right after `PromptResponse` must still be routed and answerable.
+    let req = read_until(&mut client, |f| f["event"] == "request" && f["state"] == "waiting");
+    let req_id = req["request"].as_str().unwrap().to_string();
+    write_frame(
+        &mut client,
+        &json!({ "op": "answer", "thread": tid, "request": req_id, "answer": "once" }),
+    )
+    .unwrap();
+    let _ = read_until(&mut client, |f| f["event"] == "subagent" && f["state"] == "done");
+
+    // Turn 3 must run in `proj-b` AND still receive `<thread-history>` containing `CHAIN_SEED_TOKEN`.
+    let proj_b = home.join("Projects").join("proj-b");
+    write_frame(&mut client, &json!({ "op": "send", "thread": tid, "text": "check-b" })).unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let mut turn3 = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" {
+            turn3.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["turn"] == 3 {
+            break;
+        }
+    }
+    assert!(turn3.contains(&format!("CWD={}", proj_b.display())), "{turn3}");
+    assert!(turn3.contains("<thread-history>"), "{turn3}");
+    assert!(turn3.contains("CHAIN_SEED_TOKEN"), "{turn3}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}

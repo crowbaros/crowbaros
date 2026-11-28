@@ -3418,16 +3418,18 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                         let _ = w.update(cx, |_, _, cx| cx.notify());
                     }
                 }
-                if is_lifecycle && let Some(w) = model.read(cx).agent {
+                if let Some(w) = model.read(cx).agent {
                     let _ = w.update(cx, |view, window, cx| {
                         let s = &view.model.read(cx).agent_state;
                         if s.list_view || s.thread.is_none() {
                             view.close_project_form();
                         }
-                        if s.list_view {
+                        if is_lifecycle && s.list_view {
                             window.focus(&view.focus);
                         }
-                        cx.notify();
+                        if is_disconnected || is_error {
+                            view.on_agent_error(cx);
+                        }
                     });
                 }
                 if is_project_made && let Some(w) = model.read(cx).agent {
@@ -3438,11 +3440,6 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 if let Some(listing) = dirs_listing && let Some(w) = model.read(cx).agent {
                     let _ = w.update(cx, |view, _, cx| {
                         view.on_dirs_listed(listing, cx);
-                    });
-                }
-                if is_error && let Some(w) = model.read(cx).agent {
-                    let _ = w.update(cx, |view, _, cx| {
-                        view.on_agent_error(cx);
                     });
                 }
                 if is_disconnected {

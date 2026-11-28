@@ -926,8 +926,9 @@ impl AcpHarness {
             PendingRpc::LoadSession {
                 thread_id,
                 session_id: loading,
+                epoch,
                 ..
-            } if loading == session_id => Some(thread_id.clone()),
+            } if loading == session_id && *epoch == self.current_session_gen(thread_id) => Some(thread_id.clone()),
             _ => None,
         })
     }
@@ -935,9 +936,14 @@ impl AcpHarness {
     /// Whether a thread's session is being loaded, when what its subagents
     /// say is history the harness replays, which Lever already holds.
     fn thread_loading(&self, thread_id: &str) -> bool {
-        self.pending.values().any(
-            |pending| matches!(pending, PendingRpc::LoadSession { thread_id: loading, .. } if loading == thread_id),
-        )
+        let cur = self.current_session_gen(thread_id);
+        self.pending.values().any(|pending| {
+            matches!(
+                pending,
+                PendingRpc::LoadSession { thread_id: loading, epoch, .. }
+                    if loading == thread_id && *epoch == cur
+            )
+        })
     }
 
     /// Whether the harness has a mode selector Lever can set.

@@ -688,13 +688,18 @@ impl Store {
 
     /// Returns harness session IDs previously retired by `thread_id` (e.g.
     /// before moving to a project folder) so deleting the thread also asks the
-    /// harness to delete those transcripts.
+    /// harness to delete those transcripts. Excludes any session ID currently
+    /// owned by a live thread in `threads`.
     pub fn retired_sessions_for_thread(&self, thread_id: &str) -> Result<Vec<String>, String> {
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT harness_session_id FROM ignored_sessions \
                  WHERE thread_id = ?1 AND harness_session_id <> '' \
+                 AND harness_session_id NOT IN ( \
+                     SELECT harness_session_id FROM threads \
+                     WHERE harness_session_id IS NOT NULL AND harness_session_id <> '' \
+                 ) \
                  ORDER BY created_at ASC",
             )
             .map_err(|e| format!("could not prepare retired sessions query: {e}"))?;
@@ -703,6 +708,33 @@ impl Store {
             .map_err(|e| format!("could not query retired sessions: {e}"))?;
         rows.collect::<Result<_, _>>()
             .map_err(|e| format!("could not read retired sessions: {e}"))
+    }
+
+    /// Persists that `session_id` has been deleted on the harness for
+    /// `thread_id` so a partial failure on a later session never retries an
+    /// already-deleted session.
+    pub fn mark_session_deleted(&self, thread_id: &str, session_id: &str, now: i64) -> Result<(), String> {
+        if session_id.is_empty() {
+            return Ok(());
+        }
+        self.all_or_none("mark deleted session", || {
+            self.conn
+                .execute(
+                    "UPDATE threads SET harness_session_id = NULL WHERE id = ?1 AND harness_session_id = ?2",
+                    params![thread_id, session_id],
+                )
+                .map_err(|e| format!("could not clear deleted session id: {e}"))?;
+            self.conn
+                .execute(
+                    "INSERT INTO ignored_sessions (harness_session_id, reason, created_at, thread_id) \
+                     VALUES (?1, 'deleted', ?2, NULL) \
+                     ON CONFLICT(harness_session_id) DO UPDATE SET reason = 'deleted', thread_id = NULL",
+                    params![session_id, now],
+                )
+                .map_err(|e| format!("could not record deleted session: {e}"))?;
+            self.forget_quiet_session(session_id)?;
+            Ok(())
+        })
     }
 
     /// Clears the pending history-handoff flag once a fresh session has
@@ -1059,6 +1091,15 @@ impl Store {
             .execute(
                 "UPDATE threads SET harness_session_id = '' WHERE harness_session_id = ?1 AND id <> ?2",
                 params![session_id, thread_id],
+            )
+            .map_err(|e| format!("could not store harness session id: {e}"))?;
+        // A reassigned session ID is now live on `thread_id`, so invalidate
+        // any prior retirement/ignored entry for it so deleting an older thread
+        // never deletes this thread's live session.
+        self.conn
+            .execute(
+                "DELETE FROM ignored_sessions WHERE harness_session_id = ?1",
+                params![session_id],
             )
             .map_err(|e| format!("could not store harness session id: {e}"))?;
         // A session this one replaces is Lever's still, and never a thread
@@ -2911,6 +2952,70 @@ mod tests {
         assert!(ignored.contains("ses-ext-1b"));
         assert!(ignored.contains("ses-sub-2"));
         assert!(store.thread_meta("t-ext1").unwrap().is_none());
+
+        store.close().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retired_sessions_respect_deletion_and_reassignment() {
+        let dir = std::env::temp_dir().join(format!("lever-store-retired-{}", crate::sys::random_hex(8)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("lever.db"), 10).unwrap();
+
+        let new_thread = NewThread {
+            title: "Move me",
+            cwd: "/home/p",
+            harness_name: Some("stub"),
+            mode: "ask-first",
+        };
+        store.create_thread("t-move", &new_thread, 10).unwrap();
+        store.set_harness_session_id("t-move", "ses-old-1").unwrap();
+        store
+            .move_thread_to_project("t-move", "/home/p/proj-a", true, Some("ses-old-1"), 20)
+            .unwrap();
+        assert_eq!(
+            store.retired_sessions_for_thread("t-move").unwrap(),
+            vec!["ses-old-1".to_string()]
+        );
+
+        // Moving again retires the second session too.
+        store.set_harness_session_id("t-move", "ses-old-2").unwrap();
+        store
+            .move_thread_to_project("t-move", "/home/p/proj-b", true, Some("ses-old-2"), 30)
+            .unwrap();
+        assert_eq!(
+            store.retired_sessions_for_thread("t-move").unwrap(),
+            vec!["ses-old-1".to_string(), "ses-old-2".to_string()]
+        );
+
+        // Marking a retired session deleted clears its thread association so a
+        // retry after partial failure will not ask the harness to delete it again.
+        store.mark_session_deleted("t-move", "ses-old-1", 40).unwrap();
+        assert_eq!(
+            store.retired_sessions_for_thread("t-move").unwrap(),
+            vec!["ses-old-2".to_string()]
+        );
+
+        // Reassigning a retired session ID to another thread invalidates its
+        // retirement record so deleting `t-move` never deletes `t-other`'s live session.
+        let other_thread = NewThread {
+            title: "Other",
+            cwd: "/home/p",
+            harness_name: Some("stub"),
+            mode: "ask-first",
+        };
+        store.create_thread("t-other", &other_thread, 50).unwrap();
+        store.set_harness_session_id("t-other", "ses-old-2").unwrap();
+        assert!(store.retired_sessions_for_thread("t-move").unwrap().is_empty());
+
+        // Marking a live current session deleted clears threads.harness_session_id
+        // and keeps it ignored as deleted.
+        store.mark_session_deleted("t-other", "ses-old-2", 60).unwrap();
+        assert_eq!(store.thread_meta("t-other").unwrap().unwrap().harness_session_id, None);
+        let (owned, ignored) = store.known_harness_sessions().unwrap();
+        assert!(!owned.contains("ses-old-2"));
+        assert!(ignored.contains("ses-old-2"));
 
         store.close().unwrap();
         let _ = std::fs::remove_dir_all(&dir);

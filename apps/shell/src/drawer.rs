@@ -483,6 +483,11 @@ impl AgentSurface {
         self.project_error = None;
     }
 
+    fn project_form_open(&self, cx: &App) -> bool {
+        let s = &self.model.read(cx).agent_state;
+        self.making_project && s.thread.is_some() && !s.list_view
+    }
+
     pub(crate) fn on_project_made(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.making_project {
             self.close_project_form();
@@ -508,6 +513,9 @@ impl AgentSurface {
     pub(crate) fn on_agent_error(&mut self, cx: &mut Context<Self>) {
         if self.project_browse_loading {
             self.project_browse_loading = false;
+            if self.project_browse_dir.is_none() {
+                self.project_browse_open = false;
+            }
             cx.notify();
         }
     }
@@ -928,7 +936,7 @@ impl AgentSurface {
         if m.agent_state.needs_model_choice()
             || m.agent_state.list_view
             || self.confirm_delete
-            || self.making_project
+            || self.project_form_open(cx)
         {
             return None;
         }
@@ -1090,7 +1098,7 @@ impl AgentSurface {
         if state.needs_model_choice()
             || state.list_view
             || self.confirm_delete
-            || self.making_project
+            || self.project_form_open(cx)
         {
             return;
         }
@@ -1208,8 +1216,9 @@ impl AgentSurface {
     /// `place` among those it offers, as Alt and a digit ask.
     fn answer_waiting(&mut self, place: usize, cx: &mut Context<Self>) -> bool {
         let found = {
+            let form_open = self.project_form_open(cx);
             let state = &self.model.read(cx).agent_state;
-            if state.list_view || self.confirm_delete || self.making_project {
+            if state.list_view || self.confirm_delete || form_open {
                 return false;
             }
             state.turns.iter().find_map(|turn| {
@@ -3214,7 +3223,7 @@ impl Render for AgentSurface {
             .on_action(cx.listener(|this, _: &composer::Dismiss, w, cx| {
                 if this.confirm_delete {
                     this.action(ThreadAction::CancelDelete, w, cx);
-                } else if this.making_project {
+                } else if this.project_form_open(cx) {
                     this.action(ThreadAction::CancelMakeProject, w, cx);
                 } else if this.list(cx).is_some() {
                     // Escape closes the list and keeps what was typed.
@@ -3228,7 +3237,8 @@ impl Render for AgentSurface {
                 if needs_choice {
                     return;
                 }
-                if this.making_project {
+                let form_open = this.project_form_open(cx);
+                if form_open {
                     if key == "escape" {
                         cx.stop_propagation();
                         this.action(ThreadAction::CancelMakeProject, w, cx);
@@ -3263,7 +3273,7 @@ impl Render for AgentSurface {
                     && let Some(digit) = key.chars().next().and_then(|c| c.to_digit(10)).filter(|d| *d >= 1)
                 {
                     let list_view = this.model.read(cx).agent_state.list_view;
-                    if should_answer_with_alt_digit(event.is_held, list_view, this.confirm_delete || this.making_project)
+                    if should_answer_with_alt_digit(event.is_held, list_view, this.confirm_delete || form_open)
                         && this.answer_waiting(digit as usize - 1, cx)
                     {
                         cx.stop_propagation();

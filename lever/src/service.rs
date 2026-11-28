@@ -303,7 +303,7 @@ struct PendingDelete {
     peer_id: u64,
     thread: String,
     remaining: VecDeque<String>,
-    in_flight: bool,
+    in_flight: Option<String>,
 }
 
 /// A `send` to an unopened discovered thread, carried out once the thread's
@@ -1539,6 +1539,13 @@ impl Service {
             }
         }
         self.in_harness_batch = false;
+        // Flush deferred post-move session resets only once the whole read batch
+        // has been applied, so a `PromptFinished` followed in the same batch by
+        // a subagent update never detaches child routing prematurely.
+        let pending_resets: Vec<String> = self.pending_session_resets.iter().cloned().collect();
+        for tid in pending_resets {
+            self.maybe_reset_moved_session(&tid);
+        }
         // A request the harness withdrew, or a subagent's end, can free a
         // prompt that waited on it, as can the end of the batch.
         self.send_held_prompts();
@@ -1701,14 +1708,21 @@ impl Service {
                 "Stop this thread and wait for it to finish before deleting it.",
             );
         }
+        // Delete retired (pre-move) sessions first, then the thread's current
+        // session last, skipping any session ID currently owned by another live
+        // thread in the harness. Each succeeded delete is persisted in
+        // `finish_delete` so a partial failure never retries an already-deleted
+        // session.
         let mut sessions = VecDeque::new();
-        if let Some(session) = meta.harness_session_id.filter(|s| !s.is_empty()) {
-            sessions.push_back(session);
-        }
         match self.store.retired_sessions_for_thread(thread) {
             Ok(retired) => {
                 for sid in retired {
-                    if !sessions.contains(&sid) {
+                    let owned_by_other = self
+                        .harness
+                        .as_ref()
+                        .and_then(|h| h.thread_for_session(&sid))
+                        .is_some_and(|owner| owner != thread);
+                    if !owned_by_other && !sessions.contains(&sid) {
                         sessions.push_back(sid);
                     }
                 }
@@ -1716,6 +1730,16 @@ impl Service {
             Err(e) => {
                 store_failed(log, &e);
                 return error_outcome("storage-error", &e);
+            }
+        }
+        if let Some(session) = meta.harness_session_id.filter(|s| !s.is_empty()) {
+            let owned_by_other = self
+                .harness
+                .as_ref()
+                .and_then(|h| h.thread_for_session(&session))
+                .is_some_and(|owner| owner != thread);
+            if !owned_by_other && !sessions.contains(&session) {
+                sessions.push_back(session);
             }
         }
         if !sessions.is_empty() {
@@ -1728,9 +1752,9 @@ impl Service {
                 peer_id,
                 thread: thread.into(),
                 remaining: sessions,
-                in_flight: false,
+                in_flight: None,
             });
-            let effects = self.dispatch_deletes();
+            let effects = self.dispatch_deletes(log);
             // An unsupported deletion finishes synchronously; otherwise the peer waits.
             return RequestOutcome {
                 reply: effects.replies.into_iter().next().map(|r| r.message),
@@ -1765,13 +1789,25 @@ impl Service {
         }
     }
 
-    fn finish_delete(&mut self, thread: &str, result: Result<(), String>, warning: Option<&str>) -> Effects {
+    fn finish_delete(
+        &mut self,
+        thread: &str,
+        result: Result<(), String>,
+        warning: Option<&str>,
+        log: &mut Log,
+    ) -> Effects {
         let Some(i) = self.pending_deletes.iter().position(|p| p.thread == thread) else {
             return Effects::default();
         };
-        if result.is_ok() && warning.is_none() && !self.pending_deletes[i].remaining.is_empty() {
-            self.pending_deletes[i].in_flight = false;
-            return self.dispatch_deletes();
+        if result.is_ok() && warning.is_none() {
+            if let Some(deleted_sid) = self.pending_deletes[i].in_flight.take()
+                && let Err(err) = self.store.mark_session_deleted(thread, &deleted_sid, unix_now())
+            {
+                store_failed(log, &err);
+            }
+            if !self.pending_deletes[i].remaining.is_empty() {
+                return self.dispatch_deletes(log);
+            }
         }
         let pending = self.pending_deletes.remove(i);
         let outcome = match result {
@@ -1789,16 +1825,28 @@ impl Service {
         }
     }
 
-    fn dispatch_deletes(&mut self) -> Effects {
+    fn dispatch_deletes(&mut self, log: &mut Log) -> Effects {
         let mut unsupported = Vec::new();
+        let mut finished = Vec::new();
         if let Some(h) = self.harness.as_mut().filter(|h| h.is_initialized()) {
             for pending in &mut self.pending_deletes {
-                if !pending.in_flight
-                    && let Some(sid) = pending.remaining.pop_front()
-                {
-                    pending.in_flight = true;
-                    if !h.delete_session(&pending.thread, &sid) {
-                        unsupported.push(pending.thread.clone());
+                if pending.in_flight.is_none() {
+                    let mut dispatched = false;
+                    while let Some(sid) = pending.remaining.pop_front() {
+                        // Never delete a session ID that another thread now owns.
+                        if h.thread_for_session(&sid).is_some_and(|owner| owner != pending.thread) {
+                            continue;
+                        }
+                        if !h.delete_session(&pending.thread, &sid) {
+                            unsupported.push(pending.thread.clone());
+                        } else {
+                            pending.in_flight = Some(sid);
+                        }
+                        dispatched = true;
+                        break;
+                    }
+                    if !dispatched && pending.remaining.is_empty() {
+                        finished.push(pending.thread.clone());
                     }
                 }
             }
@@ -1809,7 +1857,11 @@ impl Service {
                 &thread,
                 Ok(()),
                 Some("The harness does not support session deletion; its copy may remain."),
+                log,
             ));
+        }
+        for thread in finished {
+            effects.extend(self.finish_delete(&thread, Ok(()), None, log));
         }
         effects
     }
@@ -4052,19 +4104,20 @@ impl Service {
             }
         } else {
             match self.mcp_sessions.get(session) {
-                Some(tid)
-                    if self.working_turns.get(tid).is_some_and(|active| {
-                        matches!(
-                            active.dispatch,
-                            TurnDispatch::PromptInFlight { .. } | TurnDispatch::HarnessStarted { .. }
-                        )
-                    }) =>
-                {
-                    tid.clone()
-                }
-                _ => return mcp_error("Could not identify the calling thread for this tool call."),
+                Some(tid) => tid.clone(),
+                None => return mcp_error("Could not identify the calling thread for this tool call."),
             }
         };
+
+        let in_flight = self.working_turns.get(&thread_id).is_some_and(|active| {
+            matches!(
+                active.dispatch,
+                TurnDispatch::PromptInFlight { .. } | TurnDispatch::HarnessStarted { .. }
+            )
+        });
+        if !in_flight {
+            return mcp_error("Could not identify an active turn for this tool call.");
+        }
 
         if self.deleting(&thread_id) {
             return mcp_error("The calling thread is being deleted.");
@@ -4157,7 +4210,18 @@ impl Service {
                 ("storage-error", err)
             })?;
 
-        if from_active_turn && self.working_turns.contains_key(thread_id) {
+        // Any active turn on the old session must no longer clear `needs_handoff`
+        // when it emits output or finishes: the flag in SQLite now belongs to
+        // this newer move, not the old session's handoff.
+        if let Some(active) = self.working_turns.get_mut(thread_id) {
+            active.handoff_pending = false;
+        }
+
+        let has_live_work = self.working_turns.contains_key(thread_id)
+            || self.working_subagents.values().any(|s| s.thread_id == thread_id)
+            || self.waiting.values().any(|w| w.thread_id == thread_id)
+            || self.pending_steers.iter().any(|p| p.thread_id == thread_id);
+        if from_active_turn && has_live_work {
             self.pending_session_resets.insert(thread_id.to_string());
         } else {
             self.pending_session_resets.remove(thread_id);
@@ -4179,12 +4243,12 @@ impl Service {
     }
 
     /// Detaches a thread's previous harness session after a turn during which
-    /// the thread moved to a new project folder, once no working turn,
-    /// outliving subagent, waiting request, or pending steer remains on that
-    /// old session, so the next turn opens a fresh session in the project's
-    /// folder with the thread's history.
+    /// the thread moved to a new project folder, once no read batch, working
+    /// turn, outliving subagent, waiting request, or pending steer remains on
+    /// that old session, so the next turn opens a fresh session in the
+    /// project's folder with the thread's history.
     fn maybe_reset_moved_session(&mut self, thread_id: &str) {
-        if !self.pending_session_resets.contains(thread_id) {
+        if self.in_harness_batch || !self.pending_session_resets.contains(thread_id) {
             return;
         }
         if self.working_turns.contains_key(thread_id)
@@ -4216,10 +4280,16 @@ impl Service {
     }
 
     fn dispatch_turn(&mut self, thread_id: &str) {
-        // Defensive guard: if a prior turn moved the thread and left a pending
-        // reset that was not yet flushed, detach before opening the next turn
-        // so it never reuses the old-folder session.
-        if self.pending_session_resets.remove(thread_id) {
+        // Defensive guard: `send_message` and `drain_queues` only reach here
+        // once any prior move's subagents/requests/steers have settled, so if
+        // a pending reset remained unflushed we detach before checking
+        // `has_session` (still respecting the subagent/request/steer guards).
+        if self.pending_session_resets.contains(thread_id)
+            && !self.working_subagents.values().any(|s| s.thread_id == thread_id)
+            && !self.waiting.values().any(|w| w.thread_id == thread_id)
+            && !self.pending_steers.iter().any(|p| p.thread_id == thread_id)
+        {
+            self.pending_session_resets.remove(thread_id);
             if let Some(harness) = self.harness.as_mut() {
                 harness.detach_session(thread_id);
             }
@@ -4334,7 +4404,7 @@ impl Service {
 
     fn apply_acp_event(&mut self, event: AcpEvent, log: &mut Log) -> Effects {
         match event {
-            AcpEvent::SessionDeleted { thread_id, result } => self.finish_delete(&thread_id, result, None),
+            AcpEvent::SessionDeleted { thread_id, result } => self.finish_delete(&thread_id, result, None, log),
             AcpEvent::SteerAnswered { steer, taken } => self.steer_answered(steer, taken, log),
             AcpEvent::Initialized => {
                 self.steering = self.harness.as_ref().is_some_and(AcpHarness::can_steer);
@@ -4359,7 +4429,7 @@ impl Service {
                     }
                 }
                 let mut effects = self.dispatch_history_loads();
-                effects.extend(self.dispatch_deletes());
+                effects.extend(self.dispatch_deletes(log));
                 effects
             }
             AcpEvent::InitializeFailed { message } => {

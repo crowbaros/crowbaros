@@ -219,9 +219,12 @@ fn normalize_path(path: &Path, label: &str) -> Result<PathBuf, ProjectError> {
                         )));
                     }
                     Ok(_) => {
-                        if let Ok(canon) = std::fs::canonicalize(&out) {
-                            out = canon;
-                        }
+                        out = std::fs::canonicalize(&out).map_err(|e| {
+                            ProjectError::Filesystem(format!(
+                                "Cannot resolve {} while traversing {label}: {e}",
+                                out.display()
+                            ))
+                        })?;
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                         if std::fs::symlink_metadata(&out).is_ok() {
@@ -231,7 +234,12 @@ fn normalize_path(path: &Path, label: &str) -> Result<PathBuf, ProjectError> {
                             )));
                         }
                     }
-                    Err(_) => {}
+                    Err(err) => {
+                        return Err(ProjectError::Filesystem(format!(
+                            "Cannot inspect {} while resolving {label}: {err}",
+                            out.display()
+                        )));
+                    }
                 }
                 // Never pop past root.
                 if out.components().count() > 1 {
@@ -320,10 +328,16 @@ mod tests {
             expected
         );
 
-        // Traversing `..` through a regular file fails cleanly.
+        // Traversing `..` through a regular file, a non-directory ancestor, or
+        // a symlink loop fails cleanly rather than popping past the error.
         let blocker = fake_home.join("file.txt");
         std::fs::write(&blocker, "x").unwrap();
         assert!(resolve_project_path("demo", Some("~/file.txt/.."), &fake_home).is_err());
+        assert!(resolve_project_path("demo", Some("~/file.txt/sub/.."), &fake_home).is_err());
+
+        std::os::unix::fs::symlink(fake_home.join("loop_b"), fake_home.join("loop_a")).unwrap();
+        std::os::unix::fs::symlink(fake_home.join("loop_a"), fake_home.join("loop_b")).unwrap();
+        assert!(resolve_project_path("demo", Some("~/loop_a/.."), &fake_home).is_err());
 
         // Directory listing walks up from non-existent leaf, skips hidden dirs, and sorts.
         std::fs::create_dir_all(fake_home.join("Projects")).unwrap();
