@@ -98,6 +98,9 @@ fn handle_events(model: &Entity<Model>, incoming: Vec<Event>, cx: &mut App) -> b
             } => quick_settings::show_osd(model, kind, percent, muted, cx),
             Event::Quit => cx.quit(),
             Event::Snapshot(s) => {
+                if drawer::reconcile_drawer_window(model, cx) {
+                    refresh = true;
+                }
                 if model.read(cx).snapshot == s {
                     continue;
                 }
@@ -111,11 +114,17 @@ fn handle_events(model: &Entity<Model>, incoming: Vec<Event>, cx: &mut App) -> b
                 refresh = true;
             }
             Event::Lock(locked) => {
+                if drawer::reconcile_drawer_window(model, cx) {
+                    refresh = true;
+                }
                 lock::set_lock_screen(model, locked, cx);
                 model.update(cx, |m, _| m.snapshot.locked = locked);
                 drawer::sync_mark_overlay(model, cx);
             }
             Event::Agent(agent_event) => {
+                if drawer::reconcile_drawer_window(model, cx) {
+                    refresh = true;
+                }
                 let effects = model.update(cx, |m, _| m.agent.handle_event(agent_event));
                 if drawer::apply_effects_from_app(model, effects, cx) {
                     refresh = true;
@@ -127,6 +136,9 @@ fn handle_events(model: &Entity<Model>, incoming: Vec<Event>, cx: &mut App) -> b
                 }
             }
             Event::AgentLaunch(result) => {
+                if drawer::reconcile_drawer_window(model, cx) {
+                    refresh = true;
+                }
                 match &result {
                     Ok(()) => log::info!("SHELL agent-sign-in launched=true"),
                     Err(error) => log::warn!("SHELL agent-sign-in launched=false error={error}"),

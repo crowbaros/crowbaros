@@ -1595,7 +1595,30 @@ mod tests {
         let _end_a = peer_a.join().unwrap();
         let _end_b = peer_b.join().unwrap();
 
-        assert!(matches!(rx_a.try_recv(), Ok(Event::Toggle)));
-        assert!(matches!(rx_b.try_recv(), Ok(Event::Lock(true))));
+        fn recv_within(rx: &mut crate::events::Receiver, timeout: Duration) -> Event {
+            let deadline = Instant::now() + timeout;
+            loop {
+                match rx.try_recv() {
+                    Ok(event) => return event,
+                    Err(e) if e.is_empty() => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "timed out waiting for compositor event"
+                        );
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(e) => panic!("compositor event channel closed before event arrived: {e}"),
+                }
+            }
+        }
+
+        assert!(matches!(
+            recv_within(&mut rx_a, Duration::from_secs(2)),
+            Event::Toggle
+        ));
+        assert!(matches!(
+            recv_within(&mut rx_b, Duration::from_secs(2)),
+            Event::Lock(true)
+        ));
     }
 }

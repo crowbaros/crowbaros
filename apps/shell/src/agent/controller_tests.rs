@@ -837,3 +837,34 @@ fn run_coalesces_composer_text_reconciles_blocked_actions_and_preserves_menu_cli
     assert!(effects.contains(&AgentEffect::SyncAgentView));
     assert!(effects.contains(&AgentEffect::NotifyDrawer));
 }
+
+#[test]
+fn closed_drawer_ignores_catalog_fetches_on_status_change_and_draft_edit_never_emits_focus() {
+    let mut ctrl = connected_controller();
+    let _ = ctrl.handle_intent(AgentIntent::DrawerOpened);
+    let _ = ctrl.handle_intent(AgentIntent::Action(ThreadAction::New));
+
+    // Typing in the composer never emits Focus effects (observers run without a GPUI Window).
+    for text in ["/", "/model ", "hello", ""] {
+        let effects = ctrl.handle_intent(AgentIntent::DraftChanged(text.into()));
+        assert!(
+            !effects.iter().any(|e| matches!(e, AgentEffect::Focus(_))),
+            "DraftChanged({text:?}) should not emit Focus"
+        );
+    }
+
+    // Open the Commands slash menu, then close the drawer (as when the compositor removes its display).
+    let _ = ctrl.handle_intent(AgentIntent::DraftChanged("/".into()));
+    assert!(ctrl.menu().is_some());
+    let _ = ctrl.handle_intent(AgentIntent::DrawerClosed);
+    assert!(!ctrl.drawer_up());
+    assert!(ctrl.menu().is_none());
+
+    // A subsequent Status event bumping catalog_epoch must NOT fetch commands or modes
+    // while the drawer is closed.
+    let effects = ctrl.handle_event(AgentEvent::Status(status(false, true)));
+    assert!(!has_command(&effects, |cmd| matches!(
+        cmd,
+        AgentCommand::FetchCommands { .. } | AgentCommand::FetchModes { .. }
+    )));
+}

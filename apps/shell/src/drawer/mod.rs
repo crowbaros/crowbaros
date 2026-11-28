@@ -403,6 +403,7 @@ pub struct AgentSurface {
     _input_sub: Subscription,
     _project_name_sub: Subscription,
     _project_folder_sub: Subscription,
+    _release_sub: Subscription,
     _tick: Task<()>,
 }
 
@@ -453,6 +454,11 @@ impl AgentSurface {
             });
             this.apply_effects(effects, None, cx);
         });
+        let release_sub = cx.on_release(|this, cx| {
+            if reconcile_drawer_window(&this.model, cx) {
+                cx.refresh_windows();
+            }
+        });
         let tick = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -481,6 +487,7 @@ impl AgentSurface {
             _input_sub: input_sub,
             _project_name_sub: project_name_sub,
             _project_folder_sub: project_folder_sub,
+            _release_sub: release_sub,
             _tick: tick,
         }
     }
@@ -589,7 +596,6 @@ impl AgentSurface {
                         }
                     }
                 } else {
-                    debug_assert!(false, "Focus({target:?}) emitted without a GPUI Window");
                     log::warn!("SHELL agent-surface dropped Focus({target:?}) without window");
                 }
             }
@@ -630,10 +636,29 @@ impl AgentSurface {
             m.agent_window = None;
             m.agent.handle_intent(AgentIntent::DrawerClosed)
         });
-        self.apply_effects(effects, Some(window), cx);
         window.remove_window();
-        cx.refresh_windows();
+        self.apply_effects(effects, Some(window), cx);
     }
+}
+
+/// Checks whether the tracked drawer window is still live in GPUI. If the
+/// compositor closed it externally (for example, when removing its display),
+/// clears the stale handle and runs `AgentIntent::DrawerClosed` so subsequent
+/// Lever events never treat a vanished drawer as open. Returns `true` when
+/// windows should be refreshed.
+pub fn reconcile_drawer_window(model: &Entity<Model>, cx: &mut App) -> bool {
+    let Some(w) = model.read(cx).agent_window else {
+        return false;
+    };
+    if w.update(cx, |_, _, _| ()).is_ok() {
+        return false;
+    }
+    log::info!("SHELL agent-surface up=false reason=external-close");
+    let effects = model.update(cx, |m, _| {
+        m.agent_window = None;
+        m.agent.handle_intent(AgentIntent::DrawerClosed)
+    });
+    apply_effects_from_app(model, effects, cx)
 }
 
 /// Brings the Agent's surface up on the display the gesture named, a third
@@ -674,18 +699,16 @@ fn show_agent_surface(model: &Entity<Model>, summon: &compositor::Summon, cx: &m
 }
 
 /// The summon gesture: closes any active exclusive shell popover (so it cannot
-/// retain keyboard focus over the Agent's surface), then brings the surface up,
-/// takes the keyboard back, or puts it away.
+/// retain keyboard focus over the Agent's surface), reconciles any external
+/// compositor close of the drawer window, then brings the surface up, takes the
+/// keyboard back, or puts it away.
 pub fn summoned(model: &Entity<Model>, summon: compositor::Summon, cx: &mut App) {
     close_active_popover(model, cx);
-    let agent = model.read(cx).agent_window;
-    let up = agent.is_some_and(|w| w.update(cx, |_, _, _| ()).is_ok());
-    if !up {
-        model.update(cx, |m, _| {
-            m.agent_window = None;
-            m.agent.mark_drawer_closed_externally();
-        });
+    if reconcile_drawer_window(model, cx) {
+        cx.refresh_windows();
     }
+    let agent = model.read(cx).agent_window;
+    let up = agent.is_some();
     match gesture_does(up, summon.keyboard) {
         Gesture::Show => show_agent_surface(model, &summon, cx),
         Gesture::TakeKeyboard => {

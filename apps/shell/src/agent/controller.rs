@@ -298,13 +298,6 @@ impl AgentController {
         self.project.making && self.state.thread.is_some() && !self.state.list_view
     }
 
-    /// Reconciles controller state when GPUI reports the drawer window closed
-    /// externally before a summon gesture.
-    pub fn mark_drawer_closed_externally(&mut self) {
-        self.drawer_up = false;
-        self.reset_ephemeral_drawer_ui();
-    }
-
     /// Builds a narrow read-only snapshot for a single `AgentSurface::render`
     /// frame without cloning saved drafts, submission tracking, or fetch guards.
     pub fn render_snapshot(&self) -> AgentRenderSnapshot {
