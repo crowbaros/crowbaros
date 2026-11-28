@@ -36,6 +36,24 @@ pub const DEFAULT_WAKE_QUIET: Duration = Duration::from_secs(10);
 const DISCOVERY_READ_RETRY: Duration = Duration::from_secs(1);
 const DISCOVERY_READ_RETRY_MAX: Duration = Duration::from_secs(60);
 
+/// How long the harness's store, once it appears, goes unwritten before a
+/// listing may start a harness on it, and the most it waits for that.
+const STORE_SETTLE_QUIET: Duration = Duration::from_secs(1);
+const STORE_SETTLE_MAX: Duration = Duration::from_secs(3);
+
+/// The harness's store, as discovery last saw it. A listing starts the
+/// harness, which sets up its store when it has none, and two OpenCode
+/// 2.4.1 processes that set one up at once can end one of them: the
+/// person's in their terminal, or Lever's own. So no listing starts a
+/// harness while the store has no data, nor until whoever made it has had
+/// time to set it up.
+#[derive(Debug, Clone, Copy)]
+enum StoreSeen {
+    Absent,
+    Settling { appeared: Instant, written: Instant },
+    Ready,
+}
+
 /// How long a running harness has to answer a `session/list`, by default.
 const DEFAULT_LIVE_LIST_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -301,6 +319,7 @@ pub struct Service {
     discovery: Option<DiscoveryRunner>,
     discovery_schedule: DiscoverySchedule,
     discovery_debounce: Duration,
+    store_seen: StoreSeen,
     /// True while a live `session/list` RPC is in flight on `self.harness`.
     live_list_in_flight: bool,
     /// When the live `session/list` in flight was asked.
@@ -439,9 +458,12 @@ impl Service {
             .as_ref()
             .and_then(|d| StoreWatcher::new(d.watch_specs()).ok().flatten());
         let mut discovery_schedule = DiscoverySchedule::new(discovery_debounce, discovery::DISCOVERY_MAX_WAIT);
-        if discovery.as_ref().is_some_and(DiscoveryRunner::has_store_data) {
+        let store_seen = if discovery.as_ref().is_some_and(DiscoveryRunner::has_store_data) {
             discovery_schedule.request(Instant::now());
-        }
+            StoreSeen::Ready
+        } else {
+            StoreSeen::Absent
+        };
         Self {
             pending_deletes: Vec::new(),
             store,
@@ -452,6 +474,7 @@ impl Service {
             discovery,
             discovery_schedule,
             discovery_debounce,
+            store_seen,
             live_list_in_flight: false,
             live_list_asked: None,
             live_list_timeout: DEFAULT_LIVE_LIST_TIMEOUT,
@@ -532,9 +555,39 @@ impl Service {
     /// debounced discovery scan when anything changed.
     pub fn on_store_changed(&mut self) {
         if self.watcher.as_mut().is_some_and(StoreWatcher::drain_changed) && self.discovery.is_some() {
+            let now = Instant::now();
+            if let StoreSeen::Settling { written, .. } = &mut self.store_seen {
+                *written = now;
+            }
             let busy = self.discovery_busy();
-            self.discovery_schedule.store_changed(Instant::now(), busy);
+            self.discovery_schedule.store_changed(now, busy);
         }
+    }
+
+    /// Whether a listing may start a harness on the store now. When it may
+    /// not, a pass is asked for when it may, or none while the store has no
+    /// data: its appearing brings one.
+    fn store_settled(&mut self) -> bool {
+        let now = Instant::now();
+        let has_data = self.discovery.as_ref().is_some_and(DiscoveryRunner::has_store_data);
+        self.store_seen = match self.store_seen {
+            _ if !has_data => StoreSeen::Absent,
+            StoreSeen::Absent => StoreSeen::Settling {
+                appeared: now,
+                written: now,
+            },
+            seen => seen,
+        };
+        let StoreSeen::Settling { appeared, written } = self.store_seen else {
+            return matches!(self.store_seen, StoreSeen::Ready);
+        };
+        let due = (written + STORE_SETTLE_QUIET).min(appeared + STORE_SETTLE_MAX);
+        if now >= due {
+            self.store_seen = StoreSeen::Ready;
+            return true;
+        }
+        self.discovery_schedule.request(due);
+        false
     }
 
     /// Whether a discovery pass is running: a one-shot listing or
@@ -685,6 +738,9 @@ impl Service {
                 self.live_list_in_flight = harness.list_sessions();
                 self.live_list_asked = self.live_list_in_flight.then(Instant::now);
             }
+            return;
+        }
+        if !self.store_settled() {
             return;
         }
         let Some(known) = self.known_sessions_for_discovery(log) else {

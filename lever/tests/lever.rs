@@ -9767,10 +9767,77 @@ fn a_session_written_while_the_running_harness_lists_its_last_follow_up_is_still
 }
 
 #[test]
+fn a_new_store_is_not_listed_until_whoever_made_it_has_set_it_up() {
+    let dir = TempDir::new();
+    let store_dir = dir.0.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let rpc_log = dir.0.join("rpc.jsonl");
+    let script = write_script(
+        &dir.0,
+        &json!({ "list_sessions": true, "sessions_file": sessions_file.to_str().unwrap() }),
+    );
+    let mut lever = start_lever_with_discovery(&dir.0, &script, Some(&rpc_log), &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+
+    // A harness run for the first time makes its store and sets it up,
+    // writing as it does: a listing then would start a second harness that
+    // sets it up too.
+    write_sessions_file(
+        &sessions_file,
+        &json!([{
+            "session_id": "ses_first_ever",
+            "cwd": "/tmp",
+            "title": "First ever",
+            "history": [{ "kind": "user_text", "text": "go" }]
+        }]),
+    );
+    let part = store_dir.join("setup.log");
+    let setting_up = Instant::now();
+    while setting_up.elapsed() < Duration::from_millis(1500) {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&part)
+            .unwrap();
+        std::io::Write::write_all(&mut f, b"setup\n").unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let set_up = Instant::now();
+    let rpc = std::fs::read_to_string(&rpc_log).unwrap_or_default();
+    assert!(
+        !rpc.contains("\"method\":\"session/list\""),
+        "a listing started a harness while the new store was being set up:\n{rpc}"
+    );
+
+    // Once it has been quiet a moment, the session is listed.
+    read_until(&mut watcher, |f| {
+        f["event"] == "threads" && f["threads"].as_array().is_some_and(|t| t.len() == 1)
+    });
+    let after = set_up.elapsed();
+    assert!(
+        after >= Duration::from_millis(800),
+        "listed only {after:?} after the store was set up"
+    );
+    assert!(
+        after < Duration::from_secs(3),
+        "listed {after:?} after the store was set up"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
 fn a_session_appears_while_its_store_keeps_changing() {
     let dir = TempDir::new();
     let store_dir = dir.0.join("harness-store");
     std::fs::create_dir_all(&store_dir).unwrap();
+    // A store the harness has used before.
+    std::fs::write(store_dir.join("parts.log"), b"part\n").unwrap();
     let sessions_file = store_dir.join("sessions.json");
     let cwd = dir.0.join("project");
     std::fs::create_dir_all(&cwd).unwrap();

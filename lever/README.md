@@ -329,7 +329,12 @@ ACP today:
     cannot tell from its own writes is a write in the moment a pass hands
     what it found to Lever, or one while that later pass lists; a session's
     next write brings it. Closing a file written to is not watched, as every
-    write was seen as it was made. Each listing command has a 15 s deadline,
+    write was seen as it was made. No listing starts a harness while the
+    harness's store has no data, as starting it would make one, nor, once
+    the store appears, until it has gone 1 s unwritten or 3 s have passed:
+    two OpenCode 2.4.1 processes that set up a new store at once can end one
+    of them, the person's in their terminal or Lever's own. Each listing
+    command has a 15 s deadline,
     runs in a process group of its own that is ended with it, whatever of
     the group is left ending too, and ends with Lever. Generic ACP harnesses
     are queried via one-shot `initialize` + paginated `session/list`. For
