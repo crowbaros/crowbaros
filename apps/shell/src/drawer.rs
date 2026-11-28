@@ -245,7 +245,6 @@ fn validate_project_form(
     place: Option<&str>,
 ) -> Result<(Option<String>, Option<String>, Option<String>), String> {
     let name = name.trim();
-    let folder = folder.trim();
     if let Some(place) = place {
         if name.is_empty() {
             return Err("Enter a project name.".into());
@@ -261,13 +260,14 @@ fn validate_project_form(
         let place_arg = (place != "~/Projects").then(|| place.to_string());
         return Ok((Some(name.to_string()), place_arg, None));
     }
-    if folder.is_empty() {
+    let folder = folder.trim_start();
+    if folder.trim().is_empty() {
         return Err("Enter or choose a folder.".into());
     }
     if folder.chars().any(char::is_control) {
         return Err("Folder path contains an invalid character.".into());
     }
-    if !folder.starts_with('/') && folder != "~" && !folder.starts_with("~/") {
+    if !folder.starts_with('/') && folder.trim() != "~" && !folder.starts_with("~/") {
         return Err("Enter an absolute folder path or start with ~/.".into());
     }
     Ok((None, None, Some(folder.to_string())))
@@ -636,8 +636,7 @@ impl AgentSurface {
                         self.project_error = None;
                         self.project_browse_open = true;
                         self.project_browse_loading = true;
-                        let start = folder.trim();
-                        let path = (!start.is_empty()).then(|| start.to_string());
+                        let path = (!folder.trim().is_empty()).then(|| folder.trim_start().to_string());
                         tx.list_dirs(path);
                     } else {
                         self.project_error = Some("The Agent is not reachable right now.".into());
@@ -3762,10 +3761,19 @@ mod tests {
             Ok((Some("notes".into()), Some("~/Code".into()), None))
         );
 
-        // Custom exact folder (place = None) sends `(None, None, Some(folder))`.
+        // Custom exact folder (place = None) sends `(None, None, Some(folder))`
+        // and preserves trailing spaces so existing folders like `notes ` stay distinct.
         assert_eq!(
             validate_project_form("notes", "~/Code/notes", None),
             Ok((None, None, Some("~/Code/notes".into())))
+        );
+        assert_eq!(
+            validate_project_form("notes", "~/notes ", None),
+            Ok((None, None, Some("~/notes ".into())))
+        );
+        assert_eq!(
+            validate_project_form("my-app", "~/notes /my-app", Some("~/notes ")),
+            Ok((Some("my-app".into()), Some("~/notes ".into()), None))
         );
         assert_eq!(
             validate_project_form("", "/home/crowbar/ExistingWork", None),

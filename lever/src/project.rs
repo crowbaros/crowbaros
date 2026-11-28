@@ -113,7 +113,7 @@ pub fn expand_absolute_path(raw: &str, home: &Path, label: &str) -> Result<PathB
 /// (defaulting to `<home>/Projects/<name>`).
 pub fn resolve_project_path(name: &str, place: Option<&str>, home: &Path) -> Result<PathBuf, ProjectError> {
     let valid_name = validate_name(name)?;
-    let parent = match place.map(str::trim).filter(|s| !s.is_empty()) {
+    let parent = match place.filter(|s| !s.trim().is_empty()) {
         Some(raw) => expand_absolute_path(raw, home, "Project place")?,
         None => normalize_path(&home.join(DEFAULT_PROJECTS_DIR), "Project place")?,
     };
@@ -382,6 +382,10 @@ mod tests {
         assert_eq!(
             resolve_exact_path(&trailing.to_string_lossy(), &base).unwrap(),
             trailing
+        );
+        assert_eq!(
+            resolve_project_path("my-app", Some(&trailing.to_string_lossy()), &base).unwrap(),
+            trailing.join("my-app")
         );
 
         let _ = std::fs::remove_dir_all(&base);

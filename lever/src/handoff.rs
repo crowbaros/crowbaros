@@ -98,7 +98,14 @@ pub fn render_thread_handoff(
             // rest of the budget to the newest turn while keeping its Person line.
             let pair_budget = remaining.saturating_sub(first_sep + newest_sep);
             if pair_budget > 64 {
-                let first_cap = rendered[0].len().min((pair_budget / 3).max(128).min(pair_budget / 2));
+                let first_cap = if rendered[newest].len() <= pair_budget {
+                    let spare = pair_budget - rendered[newest].len();
+                    rendered[0]
+                        .len()
+                        .min(spare.max((pair_budget / 3).max(128).min(pair_budget / 2)))
+                } else {
+                    rendered[0].len().min((pair_budget / 3).max(128).min(pair_budget / 2))
+                };
                 let first_entry = if rendered[0].len() <= first_cap {
                     rendered[0].clone()
                 } else {
@@ -264,14 +271,25 @@ fn format_turn(turn: &TurnRecord) -> String {
 }
 
 /// Fits a single turn within `max_bytes`, keeping its `[Turn N]` header and
-/// `Person:` message intact ahead of a tail-truncated answer body.
+/// `Person:` message intact (only capping the prompt if it would leave less
+/// than a small tail for the answer body) ahead of a tail-truncated body.
 fn fit_turn_in_budget(turn: &TurnRecord, max_bytes: usize) -> String {
     let full = format_turn(turn);
     if full.len() <= max_bytes {
         return full;
     }
-    let prompt_cap = (max_bytes / 2).max(64);
-    let (head, body) = format_turn_parts(turn, Some(prompt_cap));
+    let (full_head, body) = format_turn_parts(turn, None);
+    let min_body = if body.is_empty() {
+        0
+    } else {
+        (max_bytes / 4).clamp(64, 2048).min(max_bytes / 2)
+    };
+    let head = if full_head.len() + min_body + usize::from(!body.is_empty()) <= max_bytes {
+        full_head
+    } else {
+        let prompt_cap = max_bytes.saturating_sub(min_body + 32).max((max_bytes / 2).max(64));
+        format_turn_parts(turn, Some(prompt_cap)).0
+    };
     if head.len() >= max_bytes {
         return truncate_head(&head, max_bytes);
     }
@@ -571,5 +589,18 @@ mod tests {
         assert!(tight.contains("ORIGINAL_GOAL_TOKEN"), "{tight}");
         assert!(tight.contains("LATEST_ASK_TOKEN"), "{tight}");
         assert!(tight.contains("FINAL_ANSWER_TAIL"), "{tight}");
+
+        // A 20 KiB person message that fits within the 32 KiB handoff must not
+        // be cut off just because its answer is oversized.
+        let long_person = format!("PERSON_START {} PERSON_END", "p".repeat(20 * 1024));
+        let t2_long = sample_turn(2, &long_person, &huge_answer);
+        let rec_long = sample_record(vec![sample_turn(1, "ORIGINAL_GOAL_TOKEN", "ok"), t2_long]);
+        let rendered_long =
+            render_thread_handoff(&rec_long, "/home/person/Projects/demo", None, MAX_HANDOFF_BYTES).unwrap();
+        assert!(rendered_long.len() <= MAX_HANDOFF_BYTES);
+        assert!(rendered_long.contains("ORIGINAL_GOAL_TOKEN"));
+        assert!(rendered_long.contains("PERSON_START"));
+        assert!(rendered_long.contains("PERSON_END"));
+        assert!(rendered_long.contains("FINAL_ANSWER_TAIL"));
     }
 }

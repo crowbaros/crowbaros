@@ -710,6 +710,13 @@ impl AcpHarness {
         *entry = entry.wrapping_add(1);
         self.transport_failures.remove(thread_id);
         let session_id = self.thread_to_session.remove(thread_id);
+        if let Some(turn) = retired_turn {
+            for (cid, owner) in &self.child_to_thread {
+                if owner == thread_id {
+                    self.child_retired_turn.entry(cid.clone()).or_insert(turn);
+                }
+            }
+        }
         if let Some(sid) = session_id {
             self.session_to_thread.remove(&sid);
             self.session_models.remove(&sid);
@@ -2492,7 +2499,10 @@ impl AcpHarness {
         };
         let root_sid = obj.get("rootSessionId").and_then(Value::as_str);
         let parent_sid = obj.get("parentSessionId").and_then(Value::as_str);
-        let mut retired_turn: Option<u64> = None;
+        let retired_turn = root_sid
+            .and_then(|s| self.retired_root_to_thread.get(s).and_then(|(_, turn)| *turn))
+            .or_else(|| parent_sid.and_then(|s| self.retired_root_to_thread.get(s).and_then(|(_, turn)| *turn)))
+            .or_else(|| parent_sid.and_then(|s| self.child_retired_turn.get(s).copied()));
         let thread_id = self
             .child_to_thread
             .get(child_sid)
@@ -2506,22 +2516,8 @@ impl AcpHarness {
                         .cloned()
                 })
             })
-            .or_else(|| {
-                root_sid.and_then(|s| {
-                    self.retired_root_to_thread.get(s).map(|(tid, turn)| {
-                        retired_turn = *turn;
-                        tid.clone()
-                    })
-                })
-            })
-            .or_else(|| {
-                parent_sid.and_then(|s| {
-                    self.retired_root_to_thread.get(s).map(|(tid, turn)| {
-                        retired_turn = *turn;
-                        tid.clone()
-                    })
-                })
-            });
+            .or_else(|| root_sid.and_then(|s| self.retired_root_to_thread.get(s).map(|(tid, _)| tid.clone())))
+            .or_else(|| parent_sid.and_then(|s| self.retired_root_to_thread.get(s).map(|(tid, _)| tid.clone())));
         let Some(thread_id) = thread_id else {
             return;
         };
@@ -2537,10 +2533,6 @@ impl AcpHarness {
             return;
         }
         if let Some(turn) = retired_turn {
-            self.child_retired_turn.entry(child_sid.to_string()).or_insert(turn);
-        } else if let Some(parent) = parent_sid
-            && let Some(&turn) = self.child_retired_turn.get(parent)
-        {
             self.child_retired_turn.entry(child_sid.to_string()).or_insert(turn);
         }
         // A child of another of the thread's subagents was launched by it,
