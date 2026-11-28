@@ -3354,6 +3354,7 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 );
                 let is_disconnected = matches!(agent_event, agent::AgentEvent::Disconnected);
                 let is_lifecycle = matches!(agent_event, agent::AgentEvent::Lifecycle { .. });
+                let is_project_made = matches!(agent_event, agent::AgentEvent::ProjectMade { .. });
                 let should_scroll = matches!(
                     agent_event,
                     agent::AgentEvent::Message { .. }
@@ -3415,6 +3416,11 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 if is_lifecycle && let Some(w) = model.read(cx).agent {
                     let _ = w.update(cx, |view, window, cx| {
                         if view.model.read(cx).agent_state.list_view { window.focus(&view.focus); }
+                    });
+                }
+                if is_project_made && let Some(w) = model.read(cx).agent {
+                    let _ = w.update(cx, |view, window, cx| {
+                        view.on_project_made(window, cx);
                     });
                 }
                 if is_disconnected {
