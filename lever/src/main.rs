@@ -3,28 +3,18 @@
 //! its person socket, drives a harness over ACP, and keeps the record of every
 //! thread in the person's home.
 
-mod acp;
-mod channel;
-mod discovery;
-mod frames;
-mod fulcrum;
-mod handoff;
-mod log;
-mod mcp;
-mod opencode;
-mod project;
-mod service;
-mod store;
-mod sys;
-mod watcher;
-
-use acp::HarnessConfig;
-use channel::{Channel, LEVER_VERSION, Peer};
-use log::{Event, Log};
-use service::{
-    Broadcast, DEFAULT_DISCOVERY_DEBOUNCE, DEFAULT_IDLE_TIMEOUT, DEFAULT_STOP_TIMEOUT, DEFAULT_WAKE_QUIET, Effects,
-    PeerReply, Service, unix_now,
+use crowbar_lever::acp::{self, AcpHarnessFactory};
+use crowbar_lever::channel::{Channel, Peer};
+use crowbar_lever::harness::{HarnessConfig, HarnessDialect};
+use crowbar_lever::log::{Event, Log};
+use crowbar_lever::mcp;
+use crowbar_lever::service::{
+    self, Broadcast, DEFAULT_DISCOVERY_DEBOUNCE, DEFAULT_IDLE_TIMEOUT, DEFAULT_STOP_TIMEOUT, DEFAULT_WAKE_QUIET,
+    Effects, PeerReply, Service, unix_now,
 };
+use crowbar_lever::store::Store;
+use crowbar_lever::sys::{self, SignalPipe};
+use crowbar_lever::version::LEVER_VERSION;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::os::fd::AsRawFd;
@@ -33,8 +23,6 @@ use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
-use store::Store;
-use sys::SignalPipe;
 
 /// Most connections Lever keeps open on one socket. Each socket has its own
 /// count, so the person's clients cannot use up the shell's.
@@ -48,7 +36,7 @@ const USAGE: &str = "usage: crowbar-lever \
   --surface-socket <path> --shell-uid <uid> \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
-  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-watch <dir>]... [--harness-name <name>]] \
+  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-watch <dir>]... [--harness-name <name>] [--harness-dialect <opencode-acp|generic-acp>]] \
   [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>] [--discovery-debounce-ms <ms>] [--discovery-timeout-ms <ms>]";
 
 struct Options {
@@ -75,6 +63,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
     let mut fulcrum_socket = None;
     let mut harness_program = None;
     let mut harness_name = None;
+    let mut harness_dialect = None;
     let mut harness_args = Vec::new();
     let mut harness_env = Vec::new();
     let mut harness_watch = Vec::new();
@@ -99,6 +88,13 @@ fn parse_options(args: &[String]) -> Option<Options> {
             "--fulcrum-socket" if fulcrum_socket.is_none() => fulcrum_socket = Some(PathBuf::from(value)),
             "--harness" if harness_program.is_none() => harness_program = Some(value.clone()),
             "--harness-name" if harness_name.is_none() => harness_name = Some(value.clone()),
+            "--harness-dialect" if harness_dialect.is_none() => {
+                harness_dialect = Some(match value.as_str() {
+                    "opencode-acp" => HarnessDialect::OpenCodeAcp,
+                    "generic-acp" => HarnessDialect::GenericAcp,
+                    _ => return None,
+                });
+            }
             "--harness-arg" => harness_args.push(value.clone()),
             "--harness-env" => {
                 let (k, v) = value.split_once('=')?;
@@ -143,9 +139,11 @@ fn parse_options(args: &[String]) -> Option<Options> {
                 args: harness_args,
                 env: harness_env,
                 watch_paths: harness_watch,
+                dialect: harness_dialect,
             })
         }
         None if harness_name.is_some()
+            || harness_dialect.is_some()
             || !harness_args.is_empty()
             || !harness_env.is_empty()
             || !harness_watch.is_empty() =>
@@ -606,9 +604,12 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         }
     };
 
+    let discoverer = options.harness.as_ref().and_then(acp::discoverer_for_harness);
     let mut service = Service::new(
         store,
         options.harness,
+        Box::new(AcpHarnessFactory),
+        discoverer,
         options.fulcrum_socket,
         tool_socket.clone(),
         options.idle_timeout,
@@ -1001,5 +1002,60 @@ mod tests {
         assert!(std::os::unix::net::UnixStream::connect(&tight_occupied).is_ok());
         drop(tight_listener);
         drop(tight_unrelated);
+    }
+
+    #[test]
+    fn parse_options_handles_harness_dialect_flag() {
+        let base = |extra: &[&str]| -> Vec<String> {
+            let mut args: Vec<String> = [
+                "--state",
+                "/tmp/s",
+                "--surface-socket",
+                "/tmp/surf",
+                "--shell-uid",
+                "1000",
+                "--person-socket",
+                "/tmp/pers",
+                "--person-uid",
+                "1001",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect();
+            args.extend(extra.iter().map(|s| (*s).to_string()));
+            args
+        };
+
+        // Omitted dialect leaves HarnessConfig.dialect as None (default behavior).
+        let default_opts = parse_options(&base(&["--harness", "/bin/agent"])).unwrap();
+        assert_eq!(default_opts.harness.unwrap().dialect, None);
+
+        // Explicit opencode-acp and generic-acp both parse cleanly.
+        let oc_opts = parse_options(&base(&[
+            "--harness",
+            "/bin/agent-wrapper",
+            "--harness-dialect",
+            "opencode-acp",
+        ]))
+        .unwrap();
+        assert_eq!(oc_opts.harness.unwrap().dialect, Some(HarnessDialect::OpenCodeAcp));
+
+        let gen_opts = parse_options(&base(&["--harness", "/bin/agent", "--harness-dialect", "generic-acp"])).unwrap();
+        assert_eq!(gen_opts.harness.unwrap().dialect, Some(HarnessDialect::GenericAcp));
+
+        // Unknown value, duplicate flag, or dialect without --harness are all rejected.
+        assert!(parse_options(&base(&["--harness", "/bin/agent", "--harness-dialect", "bogus"])).is_none());
+        assert!(
+            parse_options(&base(&[
+                "--harness",
+                "/bin/agent",
+                "--harness-dialect",
+                "generic-acp",
+                "--harness-dialect",
+                "opencode-acp",
+            ]))
+            .is_none()
+        );
+        assert!(parse_options(&base(&["--harness-dialect", "generic-acp"])).is_none());
     }
 }

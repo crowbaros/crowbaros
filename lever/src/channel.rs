@@ -3,16 +3,12 @@
 use crate::frames::{self, FrameReader, MAX_FRAME};
 use crate::log::{Event, Log};
 use crate::service::{Broadcast, Service};
+use crate::version::PROTOCOL_VERSION;
 use serde_json::{Value, json};
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
-
-/// Lever's protocol version spoken on both the surface and person sockets.
-pub const PROTOCOL_VERSION: u64 = 1;
-/// Lever's package version reported in `status` replies.
-pub const LEVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Once this many bytes of replies wait for a peer, Lever reads no more from
 /// it, and answers no more of what it has read from it, until the peer has
 /// taken them. A peer that reads slowly, or not at all, is then held where it

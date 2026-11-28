@@ -9,8 +9,8 @@
 //! Lever's private `SO_PEERCRED`-checked Unix domain socket using credentials
 //! passed exclusively via environment variables (never command-line arguments).
 
-use crate::channel::{LEVER_VERSION, PROTOCOL_VERSION};
 use crate::frames::{self, FrameReader, MAX_FRAME};
+use crate::version::{LEVER_VERSION, PROTOCOL_VERSION};
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -30,6 +30,10 @@ pub const ENV_MCP_AUTH: &str = "CROWBAR_MCP_AUTH";
 /// Environment variable holding the per-session token identifying the calling
 /// thread for harnesses that spawn one MCP server per session.
 pub const ENV_MCP_SESSION: &str = "CROWBAR_MCP_SESSION";
+/// Optional environment variable naming a harness-specific `_meta` key on MCP
+/// `tools/call` params that carries the caller's native session ID (for
+/// harnesses that share one MCP server across sessions).
+pub const ENV_MCP_META_SESSION_KEY: &str = "CROWBAR_MCP_META_SESSION_KEY";
 
 /// Supported MCP protocol versions, newest first. During `initialize`, if the
 /// client proposes one of these, Lever echoes it; otherwise Lever responds with
@@ -100,11 +104,15 @@ pub fn tool_definitions() -> Value {
 }
 
 /// Extracts a caller harness-session hint from MCP `tools/call` params `_meta`,
-/// when a harness that shares one MCP server across sessions (such as OpenCode)
-/// attaches one.
-pub fn extract_meta_session(params: &Value) -> Option<String> {
+/// checking an adapter-declared `extra_key` first and then generic session keys.
+pub fn extract_meta_session(params: &Value, extra_key: Option<&str>) -> Option<String> {
     let meta = params.get("_meta")?.as_object()?;
-    for key in ["ai.opencode/sessionID", "sessionId", "session_id"] {
+    if let Some(key) = extra_key
+        && let Some(val) = meta.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
+    {
+        return Some(val.to_string());
+    }
+    for key in ["sessionId", "session_id"] {
         if let Some(val) = meta.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()) {
             return Some(val.to_string());
         }
@@ -150,12 +158,18 @@ pub fn run_stdio_bridge() -> Result<(), String> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| format!("mcp-bridge requires {ENV_MCP_AUTH}"))?;
     let session = std::env::var(ENV_MCP_SESSION).unwrap_or_default();
+    let meta_session_key = std::env::var(ENV_MCP_META_SESSION_KEY).ok().filter(|s| !s.is_empty());
 
     let stdin = io::stdin();
     let stdout = io::stdout();
-    serve_stdio(stdin.lock(), stdout.lock(), |tool, arguments, meta_session| {
-        call_lever_tool(Path::new(&socket), &auth, &session, tool, arguments, meta_session)
-    })
+    serve_stdio_with_meta_key(
+        stdin.lock(),
+        stdout.lock(),
+        meta_session_key.as_deref(),
+        |tool, arguments, meta_session| {
+            call_lever_tool(Path::new(&socket), &auth, &session, tool, arguments, meta_session)
+        },
+    )
 }
 
 /// Outcome returned by Lever for one `tools/call`.
@@ -167,7 +181,23 @@ pub struct ToolCallOutcome {
 
 /// Runs the MCP JSON-RPC 2.0 line loop over arbitrary `reader`/`writer` streams
 /// (allowing pure unit testing without sockets).
-pub fn serve_stdio<R, W, F>(reader: R, mut writer: W, mut on_tool_call: F) -> Result<(), String>
+pub fn serve_stdio<R, W, F>(reader: R, writer: W, on_tool_call: F) -> Result<(), String>
+where
+    R: BufRead,
+    W: Write,
+    F: FnMut(&str, &Value, Option<&str>) -> ToolCallOutcome,
+{
+    serve_stdio_with_meta_key(reader, writer, None, on_tool_call)
+}
+
+/// Like [`serve_stdio`], also checking `extra_meta_session_key` inside `_meta`
+/// on `tools/call` requests.
+pub fn serve_stdio_with_meta_key<R, W, F>(
+    reader: R,
+    mut writer: W,
+    extra_meta_session_key: Option<&str>,
+    mut on_tool_call: F,
+) -> Result<(), String>
 where
     R: BufRead,
     W: Write,
@@ -256,7 +286,7 @@ where
                     continue;
                 };
                 let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-                let meta_session = extract_meta_session(&params);
+                let meta_session = extract_meta_session(&params, extra_meta_session_key);
                 let outcome = on_tool_call(tool_name, &arguments, meta_session.as_deref());
                 json!({
                     "jsonrpc": "2.0",
@@ -394,20 +424,25 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#,
             r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
-            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"make_project","arguments":{"name":"demo","place":"~/Code"},"_meta":{"ai.opencode/sessionID":"ses_abc"}}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"make_project","arguments":{"name":"demo","place":"~/Code"},"_meta":{"vendor/sessionID":"ses_abc"}}}"#,
         ]
         .join("\n")
             + "\n";
 
         let mut out = Vec::new();
         let mut seen = Vec::new();
-        serve_stdio(input.as_bytes(), &mut out, |tool, args, meta| {
-            seen.push((tool.to_string(), args.clone(), meta.map(str::to_string)));
-            ToolCallOutcome {
-                ok: true,
-                text: "Project ready at /home/person/Code/demo".to_string(),
-            }
-        })
+        serve_stdio_with_meta_key(
+            input.as_bytes(),
+            &mut out,
+            Some("vendor/sessionID"),
+            |tool, args, meta| {
+                seen.push((tool.to_string(), args.clone(), meta.map(str::to_string)));
+                ToolCallOutcome {
+                    ok: true,
+                    text: "Project ready at /home/person/Code/demo".to_string(),
+                }
+            },
+        )
         .unwrap();
 
         let lines: Vec<Value> = String::from_utf8(out)

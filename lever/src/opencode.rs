@@ -12,19 +12,19 @@
 //! file `OPENCODE_CONFIG` names, then `OPENCODE_CONFIG_CONTENT`. A project's
 //! own settings, which OpenCode reads for a session in that project, are not.
 
-use crate::acp::{self, HarnessConfig};
-use crate::discovery::{
-    AcpSessionDiscoverer, Classified, ExternalSession, KnownSessions, Listing, SessionDiscoverer, spec_has_data,
-    watch_specs_from_paths,
-};
+use crate::discovery::{Classified, KnownSessions, Listing, SessionDiscoverer, spec_has_data, watch_specs_from_paths};
+use crate::harness::{ExternalSession, HarnessConfig};
 use crate::sys;
 use crate::watcher::WatchSpec;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+/// The OpenCode agent that is Lever's Ask first mode.
+pub const ASK_FIRST_AGENT: &str = "crowbar-ask-first";
 
 /// What a rule does.
 const ASK: &str = "ask";
@@ -323,9 +323,122 @@ fn database_watch(db: &Path) -> Option<WatchSpec> {
 /// session whose export fails is left for a later pass, tried again after a
 /// wait that grows each time, and only an export that names a parent marks it
 /// a subagent for good.
+/// Builds OpenCode's spawn environment with self-update disabled, the Ask first
+/// agent injected via `OPENCODE_CONFIG_CONTENT`, and free hosted Models gated
+/// behind `free_hosted_models`.
+pub fn build_harness_env(
+    extra: &[(String, String)],
+    existing_config_content: Option<&str>,
+    person: &[Value],
+    free_hosted_models: bool,
+) -> (Vec<(String, String)>, Vec<&'static str>) {
+    let mut env_set: Vec<(String, String)> = extra
+        .iter()
+        .filter(|(k, _)| {
+            k != "OPENCODE_CONFIG_CONTENT"
+                && k != "OPENCODE_DISABLE_FREE_MODELS"
+                && (free_hosted_models || k != "OPENCODE_DISABLE_MODELS_FETCH")
+        })
+        .cloned()
+        .collect();
+    env_set.push((
+        "OPENCODE_CONFIG_CONTENT".to_string(),
+        opencode_config_content(existing_config_content, person),
+    ));
+    let mut env_remove = Vec::new();
+    if free_hosted_models {
+        env_remove.push("OPENCODE_DISABLE_FREE_MODELS");
+    } else {
+        env_set.push(("OPENCODE_DISABLE_FREE_MODELS".to_string(), "1".to_string()));
+        env_set.push(("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string()));
+    }
+    (env_set, env_remove)
+}
+
+/// Produces the `OPENCODE_CONFIG_CONTENT` JSON string: OpenCode's
+/// self-update switched off, and the Ask first agent, built from OpenCode's
+/// own permission settings, added and made the agent a session starts with.
+/// Ask first keeps the person's own rules for commands and edits (`person`,
+/// their settings documents). It merges into any existing JSON object from
+/// the environment, keeping the other agents there, and touches no file in
+/// the person's home.
+pub fn opencode_config_content(existing: Option<&str>, person: &[Value]) -> String {
+    let mut map = existing
+        .and_then(parse_jsonc)
+        .and_then(|val| val.as_object().cloned())
+        .unwrap_or_default();
+    map.insert("update".to_string(), json!("disable"));
+    map.insert("default_agent".to_string(), json!(ASK_FIRST_AGENT));
+    let mut agents = map.get("agent").and_then(Value::as_object).cloned().unwrap_or_default();
+    agents.insert(
+        ASK_FIRST_AGENT.to_string(),
+        json!({
+            "mode": "primary",
+            "description": "Asks before it runs a command or edits a file.",
+            "permission": ask_first_permission(person),
+        }),
+    );
+    map.insert("agent".to_string(), Value::Object(agents));
+    Value::Object(map).to_string()
+}
+
+/// Builds a sanitized environment for one-shot OpenCode discovery/export
+/// commands: never enables free hosted Models, never contacts
+/// `models.opencode.ai`, disables self-update, and removes `PWD` so
+/// `.current_dir(...)` is honored.
+pub fn build_discovery_env(config: &HarnessConfig) -> (Vec<(String, String)>, Vec<&'static str>) {
+    let existing_config = config
+        .env
+        .iter()
+        .rev()
+        .find(|(k, _)| k == "OPENCODE_CONFIG_CONTENT")
+        .map(|(_, v)| v.clone())
+        .or_else(|| std::env::var("OPENCODE_CONFIG_CONTENT").ok());
+    let mut env_set: Vec<(String, String)> = config
+        .env
+        .iter()
+        .filter(|(k, _)| {
+            k != "OPENCODE_CONFIG_CONTENT"
+                && k != "OPENCODE_DISABLE_FREE_MODELS"
+                && k != "OPENCODE_DISABLE_MODELS_FETCH"
+                && k != "PWD"
+        })
+        .cloned()
+        .collect();
+    let mut cfg_map = existing_config
+        .as_deref()
+        .and_then(parse_jsonc)
+        .and_then(|val| val.as_object().cloned())
+        .unwrap_or_default();
+    cfg_map.insert("update".to_string(), json!("disable"));
+    env_set.push((
+        "OPENCODE_CONFIG_CONTENT".to_string(),
+        Value::Object(cfg_map).to_string(),
+    ));
+    env_set.push(("OPENCODE_DISABLE_FREE_MODELS".to_string(), "1".to_string()));
+    env_set.push(("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string()));
+    (env_set, vec!["PWD"])
+}
+
+/// Computes the watch specs for OpenCode's database and configured extra watch paths.
+pub fn watch_specs_for(config: &HarnessConfig) -> Vec<WatchSpec> {
+    let mut watch_specs = watch_specs_from_paths(&config.watch_paths);
+    if let Some(db) = database_path(&config.env) {
+        watch_specs.extend(database_watch(&db));
+        // A database that is a link is written where it leads, and its
+        // sidecars are kept there.
+        if let Some(target) = link_target(&db)
+            && target != db
+        {
+            watch_specs.extend(database_watch(&target));
+        }
+    }
+    watch_specs
+}
+
 pub struct OpenCodeSessionDiscoverer {
     config: HarnessConfig,
-    acp: AcpSessionDiscoverer,
+    lister: Box<dyn SessionDiscoverer>,
     watch_specs: Vec<WatchSpec>,
     cli_timeout: Duration,
     /// Sessions whose export failed.
@@ -348,26 +461,19 @@ const EXPORT_RETRY_MAX: Duration = Duration::from_secs(300);
 const CLI_MAX_STDOUT: usize = 64 * 1024 * 1024;
 
 impl OpenCodeSessionDiscoverer {
-    pub fn new(config: HarnessConfig) -> Self {
-        Self::with_cli_timeout(config, CLI_TIMEOUT)
+    pub fn new(config: HarnessConfig, watch_specs: Vec<WatchSpec>, lister: Box<dyn SessionDiscoverer>) -> Self {
+        Self::with_cli_timeout(config, watch_specs, lister, CLI_TIMEOUT)
     }
 
-    fn with_cli_timeout(config: HarnessConfig, cli_timeout: Duration) -> Self {
-        let mut watch_specs = watch_specs_from_paths(&config.watch_paths);
-        if let Some(db) = database_path(&config.env) {
-            watch_specs.extend(database_watch(&db));
-            // A database that is a link is written where it leads, and its
-            // sidecars are kept there.
-            if let Some(target) = link_target(&db)
-                && target != db
-            {
-                watch_specs.extend(database_watch(&target));
-            }
-        }
-        let acp = AcpSessionDiscoverer::new(config.clone(), watch_specs.clone());
+    fn with_cli_timeout(
+        config: HarnessConfig,
+        watch_specs: Vec<WatchSpec>,
+        lister: Box<dyn SessionDiscoverer>,
+        cli_timeout: Duration,
+    ) -> Self {
         Self {
             config,
-            acp,
+            lister,
             watch_specs,
             cli_timeout,
             failures: Mutex::new(HashMap::new()),
@@ -376,7 +482,7 @@ impl OpenCodeSessionDiscoverer {
 
     /// Runs `opencode session <args>`, bounded in time and output.
     fn run_cli(&self, args: &[&str], timeout: Duration) -> Ran {
-        let (env_set, env_remove) = acp::build_discovery_env(&self.config);
+        let (env_set, env_remove) = build_discovery_env(&self.config);
         let mut cmd = Command::new(&self.config.program);
         cmd.arg("session").args(args).env_remove("PWD");
         for key in &env_remove {
@@ -446,7 +552,7 @@ impl SessionDiscoverer for OpenCodeSessionDiscoverer {
     }
 
     fn list_sessions(&self) -> Result<Listing, String> {
-        self.acp.list_via_acp()
+        self.lister.list_sessions()
     }
 
     fn needs_classification(&self) -> bool {
@@ -871,8 +977,9 @@ mod tests {
             args: vec!["acp".into()],
             env: env(&named),
             watch_paths: Vec::new(),
+            dialect: None,
         };
-        let specs = OpenCodeSessionDiscoverer::new(config).watch_specs();
+        let specs = watch_specs_for(&config);
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].dir, PathBuf::from("/data/opencode"));
         assert_eq!(
@@ -905,8 +1012,9 @@ mod tests {
                     ("OPENCODE_DB".into(), String::new()),
                 ],
                 watch_paths: Vec::new(),
+                dialect: None,
             };
-            OpenCodeSessionDiscoverer::new(config).watch_specs()
+            watch_specs_for(&config)
         };
         let target_dir = std::fs::canonicalize(&moved).unwrap();
         // The file it leads to is there, and when it is not yet: SQLite
@@ -943,9 +1051,9 @@ mod tests {
                     ("OPENCODE_DB".into(), String::new()),
                 ],
                 watch_paths: Vec::new(),
+                dialect: None,
             };
-            OpenCodeSessionDiscoverer::new(config)
-                .watch_specs()
+            watch_specs_for(&config)
                 .into_iter()
                 .map(|spec| (spec.dir, spec.filenames))
                 .collect()
@@ -1098,8 +1206,22 @@ mod tests {
                     ),
                 ],
                 watch_paths: Vec::new(),
+                dialect: None,
             };
-            OpenCodeSessionDiscoverer::with_cli_timeout(config, timeout)
+            struct NoopLister;
+            impl SessionDiscoverer for NoopLister {
+                fn watch_specs(&self) -> Vec<WatchSpec> {
+                    Vec::new()
+                }
+                fn has_store_data(&self) -> bool {
+                    false
+                }
+                fn list_sessions(&self) -> Result<Listing, String> {
+                    Ok(Listing::default())
+                }
+            }
+            let watch_specs = watch_specs_for(&config);
+            OpenCodeSessionDiscoverer::with_cli_timeout(config, watch_specs, Box::new(NoopLister), timeout)
         }
 
         fn write(&self, name: &str, content: &str) {

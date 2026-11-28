@@ -39,7 +39,7 @@ crowbar-lever \
   --surface-socket <path> --shell-uid <uid> \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
-  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>] [--harness-watch <dir>]...] \
+  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>] [--harness-dialect <opencode-acp|generic-acp>] [--harness-watch <dir>]...] \
   [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>] [--discovery-debounce-ms <ms>] [--discovery-timeout-ms <ms>]
 ```
 
@@ -51,6 +51,12 @@ On Base:
 - `--fulcrum-socket` is `/run/crowbar-trusted/agent/compositor`, Fulcrum's agent socket for desktop context
 - `--harness` is `/usr/local/bin/opencode` with `--harness-arg acp` and
   `--harness-name OpenCode`
+
+`--harness-dialect` defaults to `opencode-acp` when omitted, keeping
+OpenCode's environment, modes, steering, and child updates. Pass
+`--harness-dialect opencode-acp` explicitly for a custom-named OpenCode wrapper
+to also use OpenCode's database discovery, or `--harness-dialect generic-acp`
+for a pure ACP v1 harness without OpenCode extensions.
 
 When `--harness` is omitted, Lever runs
 with no harness configured and refuses `send` with `no-harness`. When
