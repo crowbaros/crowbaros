@@ -224,8 +224,9 @@ ACP today:
   configuration option of category `mode`, and only those it knows:
   - **Ask first** (`ask-first`) is Lever's own. Lever adds to
     `OPENCODE_CONFIG_CONTENT` a primary OpenCode agent, `crowbar-ask-first`,
-    whose permission settings ask before a command (`bash`) or an edit
-    (`edit`), and makes it OpenCode's `default_agent`. OpenCode puts an
+    whose permission settings ask before a command (`bash`), an edit
+    (`edit`), or a Lever tool call (`crowbar_*`), and makes it OpenCode's
+    `default_agent`. OpenCode puts an
     agent's own rules after every rule in the person's settings, and the last
     that matches wins, so Ask first carries the person's own rules for `bash`
     and `edit`, and those for an action pattern that matches them (`*`,
@@ -261,6 +262,35 @@ ACP today:
   harness changes a session's mode itself while a turn's prompt runs, or
   between turns, the thread takes the new mode: OpenCode leaving Plan goes to
   `build`, so the thread is then in Full access.
+- **Lever tools over MCP (stdio, no network port).** On every thread session
+  Lever starts or loads (and never on probe sessions), Lever gives the harness
+  one Model Context Protocol (MCP) server named `crowbar` as a stdio command:
+  `crowbar-lever mcp-bridge`. The bridge opens no network port; it speaks
+  JSON-RPC 2.0 on standard input and output and forwards tool calls over
+  Lever's private Unix domain socket (`<state>/tools.sock`, mode `0600`,
+  `SO_PEERCRED`-checked to the person's UID) using credentials passed only in
+  environment variables (`CROWBAR_MCP_SOCKET`, `CROWBAR_MCP_AUTH`, and
+  `CROWBAR_MCP_SESSION`). To work across both per-session harnesses (Codex,
+  Claude Code, Pi, Antigravity) and harnesses that share one MCP server per
+  working directory (OpenCode), Lever resolves the calling thread first from
+  the harness's `_meta` session ID hint when present (refusing unknown or
+  subagent sessions) and otherwise from `CROWBAR_MCP_SESSION`. Lever currently
+  exposes one tool, `make_project(name, place?)`, which creates `~/Projects/<name>`
+  (or `<place>/<name>` when `place` is given, using an existing directory as-is)
+  and ties the calling thread to it. In Ask first, the harness asks the person
+  before calling `make_project`; in Full access, it runs without a request.
+- **Moving a thread to a project folder.** When a thread becomes a project
+  (either through `make-project` or through the `make_project` MCP tool),
+  Lever keeps it as one thread in SQLite, updates its `cwd` to the project
+  folder, remembers its prior harness session ID in `ignored_sessions` (so
+  session discovery does not re-import it as a second thread), and marks the
+  thread for a session handoff. On the next turn, Lever starts a new harness
+  session in the project folder and prepends a bounded `<thread-history>` block
+  (at most 32 KiB, keeping the opening turn and newest turns from Lever's
+  record) so the Agent knows what came before regardless of harness. If the
+  project was made mid-turn by the `make_project` tool, the current turn
+  finishes on the old session and Lever detaches that session as soon as the
+  turn ends so the next turn opens in the project folder.
 - **A Stop the harness does not carry out is carried out by Lever.** Lever
   sends `session/cancel` and waits up to `--stop-timeout-ms` (5 seconds) for
   the turn to end. When it has not, Lever ends the turn as `stopped`, and stops
@@ -711,6 +741,37 @@ Both operations emit matching lifecycle events to record subscribers and
 refresh list watches. Unknown IDs return `no-thread`; malformed fields return
 `invalid-request`; failed database writes return `storage-error`.
 
+#### `make-project`
+
+Makes an idle thread a project: creates the project folder if missing (an
+existing folder is used as-is and nothing inside changes), ties the thread to
+it in Lever's record, emits `thread-updated` with the new `cwd` (and refreshes
+list watches), and schedules a new harness session in the project folder with a
+`<thread-history>` handoff on the next turn. Either `name` (with optional
+`place`, defaulting to `~/Projects`) or an exact `path` is given.
+
+Request:
+
+```json
+{"op":"make-project","thread":"t-01a2b3c4d5e6","name":"notes","place":"~/Code"}
+```
+
+or with an explicit folder:
+
+```json
+{"op":"make-project","thread":"t-01a2b3c4d5e6","path":"~/Projects/notes"}
+```
+
+Reply:
+
+```json
+{"reply":"project-made","thread":"t-01a2b3c4d5e6","cwd":"/home/crowbar/Code/notes","created":true}
+```
+
+Errors: `no-thread`, `working` (a turn of the thread is working or the thread
+is being deleted), `project-error` (the folder cannot be created or is not a
+directory), `invalid-request`, `storage-error`.
+
 #### `send`
 
 Sends a message to a thread, starting a new thread when `thread` is omitted or
@@ -1095,11 +1156,11 @@ Pushed to every connection subscribed to `thread`:
   {"event":"subagent-act","thread":"t-01a2b3c4d5e6","turn":1,"subagent":"sub-01a2b3c4d5e6","act":"act-01a2b3c4d5e6","kind":"read","title":"Read README.md","state":"done"}
   ```
 
-- **`thread-updated`** — the thread's title, mode, Model, or effort changed.
-  It carries what changed: `title`, `mode`, `model`, and `effort`, which is
-  `null` for a thread that now has none. A thread's Model and effort are told
-  as soon as Lever knows them, the first time as its first turn's session
-  begins:
+- **`thread-updated`** — the thread's title, working directory (`cwd`), mode,
+  Model, or effort changed. It carries what changed: `title`, `cwd`, `mode`,
+  `model`, and `effort`, which is `null` for a thread that now has none. A
+  thread's Model and effort are told as soon as Lever knows them, the first
+  time as its first turn's session begins:
 
   ```json
   {"event":"thread-updated","thread":"t-01a2b3c4d5e6","title":"Inspect workspace"}

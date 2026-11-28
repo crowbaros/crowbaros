@@ -4,19 +4,20 @@
 
 use crate::channel::LEVER_VERSION;
 use crate::discovery::{ExternalSession, ImportedAct, ImportedSubagent, ImportedTurn, SessionHistory};
+use crate::mcp::{self, McpServerSpec};
 use crate::opencode;
 use crate::sys;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, Annotations, AvailableCommandInput, CLIENT_METHOD_NAMES, CancelNotification,
-    CancelRequestNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, Error as AcpError, ErrorCode,
-    IdleStopReason, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, ListSessionsRequest,
-    ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification,
-    PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, Response, Role,
-    SelectedPermissionOutcome, SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOptions, SessionId, SessionUpdate, SetSessionConfigOptionRequest,
-    SetSessionConfigOptionResponse, StateUpdate, StopReason, SubagentCapabilities, TextContent, ToolCall,
-    ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind,
+    CancelRequestNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, EnvVariable, Error as AcpError,
+    ErrorCode, IdleStopReason, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage,
+    ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, McpServer, McpServerStdio,
+    NewSessionRequest, NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind,
+    PromptRequest, PromptResponse, Request, RequestId, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, Response, Role, SelectedPermissionOutcome, SessionConfigId, SessionConfigKind,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOptions, SessionId, SessionUpdate,
+    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StateUpdate, StopReason, SubagentCapabilities,
+    TextContent, ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind,
 };
 use agent_client_protocol_schema::{MaybeUndefined, ProtocolVersion};
 use serde_json::{Value, json};
@@ -371,6 +372,7 @@ enum PendingRpc {
         turn: u64,
         session_id: String,
         cwd: String,
+        mcp_servers: Vec<McpServerSpec>,
     },
     /// Loads an externally-started session via `session/load` and captures its
     /// replayed updates into a [`SessionHistory`].
@@ -656,6 +658,30 @@ impl AcpHarness {
 
     pub fn session_for_thread(&self, thread_id: &str) -> Option<&str> {
         self.thread_to_session.get(thread_id).map(String::as_str)
+    }
+
+    pub fn thread_for_session(&self, session_id: &str) -> Option<&str> {
+        self.session_to_thread.get(session_id).map(String::as_str)
+    }
+
+    pub fn is_subagent_session(&self, session_id: &str) -> bool {
+        self.child_to_thread.contains_key(session_id)
+    }
+
+    /// Detaches a thread's active harness session (for instance when the thread
+    /// moved to a new project folder) and closes it on the harness when
+    /// supported so subsequent turns open a fresh session in the new folder.
+    pub fn detach_session(&mut self, thread_id: &str) {
+        let session_id = self.thread_to_session.get(thread_id).cloned();
+        self.forget_session(thread_id);
+        if let Some(sid) = session_id
+            && self.supports_close_session
+        {
+            let close = CloseSessionRequest::new(SessionId::new(sid));
+            let id = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
+            self.pending.insert(id, PendingRpc::CloseProbe);
+            let _ = self.on_writable();
+        }
     }
 
     /// Session IDs Lever opened as short-lived probes (for Models or efforts),
@@ -981,7 +1007,14 @@ impl AcpHarness {
     /// Starts or reloads an ACP session for `thread_id`. A thread has one
     /// session request under way at a time: when one is, it is given `turn`,
     /// so its answer goes to the turn that now waits for it.
-    pub fn ensure_session(&mut self, thread_id: &str, turn: u64, cwd: &str, existing_session_id: Option<&str>) {
+    pub fn ensure_session(
+        &mut self,
+        thread_id: &str,
+        turn: u64,
+        cwd: &str,
+        existing_session_id: Option<&str>,
+        mcp_servers: &[McpServerSpec],
+    ) {
         for pending in self.pending.values_mut() {
             match pending {
                 PendingRpc::NewSession {
@@ -1001,7 +1034,7 @@ impl AcpHarness {
             }
         }
         let Some(sid) = existing_session_id else {
-            self.request_new_session(thread_id, turn, cwd, false);
+            self.request_new_session(thread_id, turn, cwd, false, mcp_servers);
             return;
         };
         // A session another thread holds, or is loading, is not this thread's
@@ -1012,11 +1045,12 @@ impl AcpHarness {
             || self.loading_sessions.contains(sid)
             || self.history_loads.contains_key(sid);
         if !self.supports_load_session || taken {
-            self.request_new_session(thread_id, turn, cwd, true);
+            self.request_new_session(thread_id, turn, cwd, true, mcp_servers);
             return;
         }
         self.loading_sessions.insert(sid.to_string());
-        let req = LoadSessionRequest::new(SessionId::new(sid.to_string()), PathBuf::from(cwd));
+        let req = LoadSessionRequest::new(SessionId::new(sid.to_string()), PathBuf::from(cwd))
+            .mcp_servers(to_acp_mcp_servers(mcp_servers));
         let id = self.send_request(AGENT_METHOD_NAMES.session_load, &req);
         self.pending.insert(
             id,
@@ -1025,13 +1059,21 @@ impl AcpHarness {
                 turn,
                 session_id: sid.to_string(),
                 cwd: cwd.to_string(),
+                mcp_servers: mcp_servers.to_vec(),
             },
         );
         let _ = self.on_writable();
     }
 
-    fn request_new_session(&mut self, thread_id: &str, turn: u64, cwd: &str, afresh: bool) {
-        let req = NewSessionRequest::new(PathBuf::from(cwd));
+    fn request_new_session(
+        &mut self,
+        thread_id: &str,
+        turn: u64,
+        cwd: &str,
+        afresh: bool,
+        mcp_servers: &[McpServerSpec],
+    ) {
+        let req = NewSessionRequest::new(PathBuf::from(cwd)).mcp_servers(to_acp_mcp_servers(mcp_servers));
         let id = self.send_request(AGENT_METHOD_NAMES.session_new, &req);
         self.pending.insert(
             id,
@@ -1048,7 +1090,13 @@ impl AcpHarness {
     /// replayed history into a [`SessionHistory`]. Returns `false` if the
     /// harness does not advertise `loadSession` or the session is already held
     /// by another thread.
-    pub fn load_session_history(&mut self, thread_id: &str, session_id: &str, cwd: &str) -> bool {
+    pub fn load_session_history(
+        &mut self,
+        thread_id: &str,
+        session_id: &str,
+        cwd: &str,
+        mcp_servers: &[McpServerSpec],
+    ) -> bool {
         if !self.supports_load_session || session_id.is_empty() {
             return false;
         }
@@ -1063,7 +1111,8 @@ impl AcpHarness {
         }
         self.history_loads
             .insert(session_id.to_string(), HistoryBuilder::new(self.is_opencode));
-        let req = LoadSessionRequest::new(SessionId::new(session_id.to_string()), PathBuf::from(cwd));
+        let req = LoadSessionRequest::new(SessionId::new(session_id.to_string()), PathBuf::from(cwd))
+            .mcp_servers(to_acp_mcp_servers(mcp_servers));
         let id = self.send_request(AGENT_METHOD_NAMES.session_load, &req);
         self.pending.insert(
             id,
@@ -1570,9 +1619,10 @@ impl AcpHarness {
                     turn,
                     session_id,
                     cwd,
+                    mcp_servers,
                 } => {
                     self.loading_sessions.remove(&session_id);
-                    self.request_new_session(&thread_id, turn, &cwd, true);
+                    self.request_new_session(&thread_id, turn, &cwd, true, &mcp_servers);
                 }
                 PendingRpc::LoadHistory { thread_id, session_id } => {
                     self.history_loads.remove(&session_id);
@@ -1785,6 +1835,7 @@ impl AcpHarness {
                 turn,
                 session_id,
                 cwd,
+                mcp_servers,
             } => {
                 self.loading_sessions.remove(&session_id);
                 match serde_json::from_value::<LoadSessionResponse>(result) {
@@ -1810,7 +1861,7 @@ impl AcpHarness {
                             current_model,
                         });
                     }
-                    _ => self.request_new_session(&thread_id, turn, &cwd, true),
+                    _ => self.request_new_session(&thread_id, turn, &cwd, true, &mcp_servers),
                 }
             }
             PendingRpc::LoadHistory { thread_id, session_id } => {
@@ -3564,8 +3615,35 @@ fn request_detail(
             };
             (change, path)
         }
-        _ => (tool_detail(content, None, input), None),
+        _ => {
+            let mcp_detail = fields
+                .title
+                .as_deref()
+                .filter(|t| *t == mcp::TOOL_MAKE_PROJECT || t.ends_with(&format!("_{}", mcp::TOOL_MAKE_PROJECT)))
+                .and_then(|_| input.and_then(mcp::format_make_project_detail));
+            (mcp_detail.or_else(|| tool_detail(content, None, input)), None)
+        }
     }
+}
+
+/// Translates Lever's harness-agnostic [`McpServerSpec`] list into ACP v1
+/// stdio MCP server entries.
+fn to_acp_mcp_servers(specs: &[McpServerSpec]) -> Vec<McpServer> {
+    specs
+        .iter()
+        .map(|spec| {
+            let env: Vec<EnvVariable> = spec
+                .env
+                .iter()
+                .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
+                .collect();
+            McpServer::Stdio(
+                McpServerStdio::new(spec.name.clone(), spec.command.clone())
+                    .args(spec.args.clone())
+                    .env(env),
+            )
+        })
+        .collect()
 }
 
 /// The change from `old` to `new` as lines that begin `-` and `+`, with a few
@@ -4052,7 +4130,7 @@ mod tests {
         let ask_first = json!({
             "mode": "primary",
             "description": "Asks before it runs a command or edits a file.",
-            "permission": { "bash": { "*": "ask" }, "edit": { "*": "ask" } },
+            "permission": { "bash": { "*": "ask" }, "edit": { "*": "ask" }, "crowbar_*": { "*": "ask" } },
         });
         assert_eq!(
             serde_json::from_str::<Value>(&opencode_config_content(None, &[])).unwrap(),

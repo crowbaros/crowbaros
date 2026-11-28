@@ -1279,6 +1279,39 @@ pub fn unqueue(lever: &mut Connection, thread: &str, queued: &str) -> Result<End
     Ok(Ended::Done)
 }
 
+/// `crowbar-agent --resume ID --project NAME [--place DIR | --path DIR]`:
+/// make a thread a project tied to a folder.
+pub fn make_project(
+    lever: &mut Connection,
+    thread: &str,
+    name: Option<&str>,
+    place: Option<&str>,
+    path: Option<&str>,
+) -> Result<Ended> {
+    let mut req = json!({ "op": "make-project", "thread": thread });
+    if let Some(name) = name {
+        req["name"] = json!(name);
+    }
+    if let Some(place) = place {
+        req["place"] = json!(place);
+    }
+    if let Some(path) = path {
+        req["path"] = json!(path);
+    }
+    let reply = lever.request(req)?;
+    if refused(&reply).is_some() {
+        return Ok(Ended::Failed);
+    }
+    let cwd = text(&reply, "cwd");
+    let created = reply.get("created").and_then(Value::as_bool).unwrap_or(false);
+    if created {
+        eprintln!("{} is now a project at {cwd} (created).", text(&reply, "thread"));
+    } else {
+        eprintln!("{} is now a project at {cwd}.", text(&reply, "thread"));
+    }
+    Ok(Ended::Done)
+}
+
 /// `crowbar-agent default-mode [ask-first|full-access]`: show or set the mode
 /// new threads start in.
 pub fn default_mode(lever: &mut Connection, mode: Option<&str>) -> Result<Ended> {

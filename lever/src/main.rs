@@ -8,8 +8,11 @@ mod channel;
 mod discovery;
 mod frames;
 mod fulcrum;
+mod handoff;
 mod log;
+mod mcp;
 mod opencode;
+mod project;
 mod service;
 mod store;
 mod sys;
@@ -371,11 +374,13 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
     sys::become_subreaper().map_err(|e| format!("could not become the parent of what a harness leaves: {e}"))?;
     write_marker(&marker, pid)?;
 
+    let tool_socket = options.state.join("tools.sock");
     let store = Store::open(&options.state.join("lever.sqlite"), unix_now())?;
     let mut service = Service::new(
         store,
         options.harness,
         options.fulcrum_socket,
+        tool_socket.clone(),
         options.idle_timeout,
         options.stop_timeout,
         options.wake_quiet,
@@ -394,12 +399,21 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         whose: "the person's",
         uid: options.person_uid,
         is_person: true,
+        is_tool: false,
     };
     let surface_channel = Channel {
         peer: "the shell",
         whose: "the shell's",
         uid: options.shell_uid,
         is_person: false,
+        is_tool: false,
+    };
+    let tool_channel = Channel {
+        peer: "an MCP tool",
+        whose: "the person's",
+        uid: options.person_uid,
+        is_person: true,
+        is_tool: true,
     };
 
     let person_listener = bind_socket(&options.person_socket, 0o600)?;
@@ -431,6 +445,17 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         ),
     );
 
+    let tool_listener = match bind_socket(&tool_socket, 0o600) {
+        Ok(listener) => listener,
+        Err(err) => {
+            drop(surface_listener);
+            drop(person_listener);
+            let _ = std::fs::remove_file(&options.surface_socket);
+            let _ = std::fs::remove_file(&options.person_socket);
+            return Err(err);
+        }
+    };
+
     let mut peers: Vec<Peer> = Vec::new();
     let mut next_peer_id: u64 = 1;
     let stop_sig = loop {
@@ -447,7 +472,7 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         let watcher_fd = service.watcher_fd();
         let discovery_fd = service.discovery_fd();
 
-        let mut pollfds = Vec::with_capacity(7 + peers.len());
+        let mut pollfds = Vec::with_capacity(8 + peers.len());
         pollfds.push(libc::pollfd {
             fd: signals.fd(),
             events: libc::POLLIN,
@@ -460,6 +485,11 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         });
         pollfds.push(libc::pollfd {
             fd: surface_listener.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        });
+        pollfds.push(libc::pollfd {
+            fd: tool_listener.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         });
@@ -536,6 +566,9 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         if pollfds[2].revents & libc::POLLIN != 0 {
             accept_pending(&surface_listener, surface_channel, &mut peers, &mut next_peer_id, log);
         }
+        if pollfds[3].revents & libc::POLLIN != 0 {
+            accept_pending(&tool_listener, tool_channel, &mut peers, &mut next_peer_id, log);
+        }
 
         let mut keep = vec![true; peers.len()];
 
@@ -578,11 +611,11 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         deliver_broadcasts(&effects.broadcasts, &mut peers, &keep, log, &service);
         let mut broadcasts: Vec<Broadcast> = Vec::new();
 
-        // Process existing peers (indices 3..3+existing_len), keeping newly
+        // Process existing peers (indices 4..4+existing_len), keeping newly
         // accepted peers. What one peer's request has to tell who is
         // watching is told before the next peer is heard, so a peer that
         // resumes a thread is not then told of a turn its record has.
-        for (idx, pfd) in pollfds[3..3 + existing_len].iter().enumerate() {
+        for (idx, pfd) in pollfds[4..4 + existing_len].iter().enumerate() {
             let revents = pfd.revents;
             let peer = &mut peers[idx];
             if !keep[idx] || (revents == 0 && !peer.is_held() && !peer.is_lost()) {
@@ -627,8 +660,10 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
     // Clean stop: close active peers, stop harness, stop listening, remove sockets,
     // close DB, remove running marker, and log the stop signal.
     peers.clear();
+    drop(tool_listener);
     drop(surface_listener);
     drop(person_listener);
+    let _ = std::fs::remove_file(&tool_socket);
     let _ = std::fs::remove_file(&options.surface_socket);
     let _ = std::fs::remove_file(&options.person_socket);
     service.shutdown(log)?;
@@ -639,6 +674,13 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("mcp-bridge") && args.len() == 1 {
+        if let Err(err) = mcp::run_stdio_bridge() {
+            eprintln!("crowbar-lever mcp-bridge: {err}");
+            return ExitCode::from(1);
+        }
+        return ExitCode::SUCCESS;
+    }
     let Some(options) = parse_options(&args) else {
         eprintln!("{USAGE}");
         return ExitCode::from(2);

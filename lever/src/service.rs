@@ -8,7 +8,10 @@ use crate::discovery::{
     self, DiscoveryRunner, DiscoverySchedule, ExternalSession, KnownSessions, PassEnd, SessionHistory,
 };
 use crate::fulcrum;
+use crate::handoff;
 use crate::log::{Event, Log};
+use crate::mcp::{self, McpServerSpec};
+use crate::project;
 use crate::store::{
     ActPatch, ActRecord, NewRequest, NewThread, NoteRecord, QueuedRecord, RequestRecord, SteerRecord, Store,
     SubagentActPatch, SubagentPatch, SubagentRecord, ThreadMeta, ThreadRecord, ThreadSummary, TurnRecord,
@@ -156,6 +159,10 @@ struct WorkingTurn {
     turn: u64,
     message: String,
     context_prompt: Option<String>,
+    /// Bounded prior thread history handed to a fresh session when the thread
+    /// moved to a new project folder. Kept apart from `context_prompt` so it
+    /// is never recorded as desktop context.
+    handoff_prompt: Option<String>,
     cwd: String,
     existing_session_id: Option<String>,
     desired_model: Option<String>,
@@ -314,6 +321,16 @@ pub struct Service {
     store: Store,
     harness_config: Option<HarnessConfig>,
     fulcrum_socket: Option<PathBuf>,
+    /// Private Unix socket served to `crowbar-lever mcp-bridge` subprocesses.
+    tool_socket: PathBuf,
+    /// Harness-lifetime authentication token given to MCP bridges spawned by
+    /// the current harness process.
+    mcp_auth: String,
+    /// Maps each opaque per-session MCP token to its owning Lever thread ID.
+    mcp_sessions: HashMap<String, String>,
+    /// Threads that moved to a new project folder while a turn was in flight;
+    /// their old harness session is detached as soon as that turn finishes.
+    pending_session_resets: HashSet<String>,
     harness: Option<AcpHarness>,
     watcher: Option<StoreWatcher>,
     discovery: Option<DiscoveryRunner>,
@@ -441,10 +458,12 @@ pub struct Service {
 }
 
 impl Service {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         store: Store,
         harness_config: Option<HarnessConfig>,
         fulcrum_socket: Option<PathBuf>,
+        tool_socket: PathBuf,
         idle_timeout: Duration,
         stop_timeout: Duration,
         wake_quiet: Duration,
@@ -469,6 +488,10 @@ impl Service {
             store,
             harness_config,
             fulcrum_socket,
+            tool_socket,
+            mcp_auth: String::new(),
+            mcp_sessions: HashMap::new(),
+            pending_session_resets: HashSet::new(),
             harness: None,
             watcher,
             discovery,
@@ -1037,6 +1060,7 @@ impl Service {
             .working_turns
             .remove(thread_id)
             .is_some_and(|active| active.unsaved);
+        self.maybe_reset_moved_session(thread_id);
         if unsaved {
             self.end_turn(thread_id, turn, "failed", Some(UNSAVED_MESSAGE), log);
             return Broadcast {
@@ -1385,8 +1409,15 @@ impl Service {
         self.refresh_idle_timer();
     }
 
-    pub fn handle_request(&mut self, peer_id: u64, is_person: bool, value: &Value, log: &mut Log) -> RequestOutcome {
-        let mut outcome = self.handle_op(peer_id, is_person, value, log);
+    pub fn handle_request(
+        &mut self,
+        peer_id: u64,
+        is_person: bool,
+        is_tool: bool,
+        value: &Value,
+        log: &mut Log,
+    ) -> RequestOutcome {
+        let mut outcome = self.handle_op(peer_id, is_person, is_tool, value, log);
         outcome.broadcasts.extend(self.drain_queues(log));
         // An answer can free a prompt that waited on it.
         self.send_held_prompts();
@@ -1396,10 +1427,24 @@ impl Service {
         outcome
     }
 
-    fn handle_op(&mut self, peer_id: u64, is_person: bool, value: &Value, log: &mut Log) -> RequestOutcome {
+    fn handle_op(
+        &mut self,
+        peer_id: u64,
+        is_person: bool,
+        is_tool: bool,
+        value: &Value,
+        log: &mut Log,
+    ) -> RequestOutcome {
         let Some(op) = value.as_object().and_then(|o| o.get("op")).and_then(Value::as_str) else {
             return error_outcome("invalid-request", "Expected a JSON object with a string op field.");
         };
+
+        if is_tool {
+            return match op {
+                "mcp-call" => self.handle_mcp_call(value, log),
+                _ => error_outcome("unsupported", "This request is not supported on the tool socket."),
+            };
+        }
 
         match op {
             "answer" => self.handle_answer(value, log),
@@ -1416,6 +1461,7 @@ impl Service {
             "status" => self.handle_status(),
             "list" => self.handle_list(value),
             "archive" | "delete" => self.handle_lifecycle(peer_id, op, value, log),
+            "make-project" => self.handle_make_project(value, log),
             "send" => self.send_message(peer_id, is_person, value, None, log),
             "unqueue" => self.handle_unqueue(value, log),
             "resume" => self.handle_resume(peer_id, value, log),
@@ -1669,6 +1715,8 @@ impl Service {
         self.subagent_threads.remove(thread);
         self.held_stops.remove(thread);
         self.drain_wanted.remove(thread);
+        self.pending_session_resets.remove(thread);
+        self.mcp_sessions.retain(|_, tid| tid != thread);
         self.queued_prompts.retain(|_, (t, _)| t != thread);
         if let Err(e) = self.store.delete_thread(thread, unix_now()) {
             return error_outcome("storage-error", &e);
@@ -1836,10 +1884,11 @@ impl Service {
             .or_insert_with(|| (session_id.to_string(), cwd.to_string()));
         if self.harness.as_ref().is_some_and(AcpHarness::is_initialized) && !self.dispatched_history.contains(thread_id)
         {
+            let mcp_servers = self.mcp_servers_for_thread(thread_id);
             let loaded = self
                 .harness
                 .as_mut()
-                .is_some_and(|h| h.load_session_history(thread_id, session_id, cwd));
+                .is_some_and(|h| h.load_session_history(thread_id, session_id, cwd, &mcp_servers));
             if !loaded {
                 self.loading_history.remove(thread_id);
                 return Err((
@@ -1861,10 +1910,11 @@ impl Service {
             .map(|(tid, (sid, cwd))| (tid.clone(), sid.clone(), cwd.clone()))
             .collect();
         for (thread_id, session_id, cwd) in pending {
+            let mcp_servers = self.mcp_servers_for_thread(&thread_id);
             let loaded = self
                 .harness
                 .as_mut()
-                .is_some_and(|h| h.load_session_history(&thread_id, &session_id, &cwd));
+                .is_some_and(|h| h.load_session_history(&thread_id, &session_id, &cwd, &mcp_servers));
             if loaded {
                 self.dispatched_history.insert(thread_id);
             } else {
@@ -2575,6 +2625,7 @@ impl Service {
         let woken = requested_thread.and_then(|tid| self.harness_turn_to_take_over(tid));
         let mut mode_changed = false;
         let mut effort_changed = requested_effort.is_some();
+        let mut needs_handoff = false;
         let (thread_id, cwd, existing_session_id, desired_model, desired_effort, mode, new_thread) = if let Some(tid) =
             requested_thread
         {
@@ -2659,6 +2710,7 @@ impl Service {
                     }
                     mode_changed = requested_mode.is_some_and(|m| m != meta.mode);
                     effort_changed = requested_effort.is_some_and(|e| meta.effort.as_deref() != Some(e));
+                    needs_handoff = meta.needs_handoff;
                     let model = requested_model
                         .map(str::to_string)
                         .or(meta.model)
@@ -2776,6 +2828,16 @@ impl Service {
             message: msg_event,
         });
 
+        let handoff_prompt = if needs_handoff && !new_thread {
+            self.store
+                .get_thread(&thread_id)
+                .ok()
+                .flatten()
+                .and_then(|rec| handoff::render_thread_handoff(&rec, &cwd, Some(turn), handoff::MAX_HANDOFF_BYTES))
+        } else {
+            None
+        };
+
         self.idle_since = None;
         self.working_turns.insert(
             thread_id.clone(),
@@ -2783,6 +2845,7 @@ impl Service {
                 turn,
                 message: text.to_string(),
                 context_prompt,
+                handoff_prompt,
                 cwd: cwd.clone(),
                 existing_session_id: existing_session_id.clone(),
                 desired_model,
@@ -3720,6 +3783,9 @@ impl Service {
             &format!("started {} (process {})", cfg.name, harness.pid()),
         );
         self.harness = Some(harness);
+        self.mcp_auth = sys::random_hex(16);
+        self.mcp_sessions.clear();
+        self.pending_session_resets.clear();
         self.model_catalog = None;
         self.efforts.clear();
         self.harness_env_stale = false;
@@ -3737,6 +3803,9 @@ impl Service {
                 .unwrap_or("harness");
             let _ = log.write(Event::Harness, &format!("stopped {name} (process {pid}) {reason}"));
         }
+        self.mcp_auth.clear();
+        self.mcp_sessions.clear();
+        self.pending_session_resets.clear();
         self.model_catalog = None;
         self.efforts.clear();
         self.commands = None;
@@ -3756,14 +3825,293 @@ impl Service {
         self.dispatched_history.clear();
     }
 
+    /// Builds the harness-agnostic MCP server configuration for `thread_id`,
+    /// minting a per-session token bound to `thread_id` while keeping the
+    /// harness-lifetime auth secret in the bridge's environment.
+    fn mcp_servers_for_thread(&mut self, thread_id: &str) -> Vec<McpServerSpec> {
+        if self.mcp_auth.is_empty() {
+            return Vec::new();
+        }
+        let session_token = self
+            .mcp_sessions
+            .iter()
+            .find(|(_, tid)| tid.as_str() == thread_id)
+            .map(|(tok, _)| tok.clone())
+            .unwrap_or_else(|| {
+                let tok = sys::random_hex(16);
+                self.mcp_sessions.insert(tok.clone(), thread_id.to_string());
+                tok
+            });
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/local/bin/crowbar-lever"));
+        vec![McpServerSpec::crowbar(
+            exe,
+            &self.tool_socket,
+            &self.mcp_auth,
+            &session_token,
+        )]
+    }
+
+    /// Handles `op: "make-project"` from the drawer or `crowbar-agent`.
+    fn handle_make_project(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
+        let Some(obj) = value.as_object() else {
+            return error_outcome("invalid-request", "Expected a JSON object.");
+        };
+        let Some(thread_id) = obj.get("thread").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
+            return error_outcome("invalid-request", "make-project requires a thread ID.");
+        };
+        let name = obj.get("name").and_then(Value::as_str);
+        let place = obj.get("place").and_then(Value::as_str);
+        let path = obj.get("path").and_then(Value::as_str);
+        if obj.contains_key("name") && name.is_none() {
+            return error_outcome("invalid-request", "name must be a string.");
+        }
+        if obj.contains_key("place") && !obj["place"].is_null() && place.is_none() {
+            return error_outcome("invalid-request", "place must be a string or null.");
+        }
+        if obj.contains_key("path") && !obj["path"].is_null() && path.is_none() {
+            return error_outcome("invalid-request", "path must be a string or null.");
+        }
+        if path.is_some() && place.is_some() {
+            return error_outcome("invalid-request", "Provide either path or place, not both.");
+        }
+        let home = PathBuf::from(default_cwd());
+        let target = match (path, name) {
+            (Some(exact), _) => project::resolve_exact_path(exact, &home),
+            (None, Some(name)) => project::resolve_project_path(name, place, &home),
+            (None, None) => Err(project::ProjectError::Invalid(
+                "make-project requires a project name or folder path.".to_string(),
+            )),
+        };
+        let target = match target {
+            Ok(p) => p,
+            Err(err) => return error_outcome(err.code(), err.message()),
+        };
+
+        self.save_endings();
+        if self.unsaved_endings.iter().any(|e| e.thread_id == thread_id)
+            || self.unsaved_subagent_endings.iter().any(|e| e.thread_id == thread_id)
+        {
+            return error_outcome(
+                "storage-error",
+                "Lever is still saving how this thread's last turn ended.",
+            );
+        }
+        let meta = match self.store.thread_meta(thread_id) {
+            Ok(Some(meta)) => meta,
+            Ok(None) => return error_outcome("no-thread", &format!("There is no thread {thread_id}.")),
+            Err(err) => {
+                store_failed(log, &err);
+                return error_outcome("storage-error", &err);
+            }
+        };
+        if meta.needs_history {
+            return error_outcome(
+                "working",
+                "Open this thread first so Lever imports its history before making it a project.",
+            );
+        }
+        if meta.working_turn.is_some() || self.thread_busy(thread_id) {
+            return error_outcome(
+                "working",
+                "Wait for the current turn to finish before making this thread a project.",
+            );
+        }
+
+        match self.apply_make_project(thread_id, &meta, &target, false, log) {
+            Ok((cwd, created, broadcasts)) => RequestOutcome {
+                reply: Some(json!({
+                    "reply": "project-made",
+                    "thread": thread_id,
+                    "cwd": cwd,
+                    "created": created,
+                })),
+                subscribe: None,
+                broadcasts,
+            },
+            Err((code, msg)) => error_outcome(code, &msg),
+        }
+    }
+
+    /// Handles `op: "mcp-call"` from `crowbar-lever mcp-bridge` over Lever's
+    /// private tool Unix socket.
+    fn handle_mcp_call(&mut self, value: &Value, log: &mut Log) -> RequestOutcome {
+        let mcp_error = |text: &str| RequestOutcome {
+            reply: Some(json!({ "reply": "mcp-result", "ok": false, "text": text })),
+            subscribe: None,
+            broadcasts: Vec::new(),
+        };
+        let Some(obj) = value.as_object() else {
+            return mcp_error("Invalid MCP tool request.");
+        };
+        let auth = obj.get("auth").and_then(Value::as_str).unwrap_or("");
+        if self.mcp_auth.is_empty() || auth != self.mcp_auth {
+            return mcp_error("MCP bridge authentication failed.");
+        }
+        let session = obj.get("session").and_then(Value::as_str).unwrap_or("");
+        let meta_session = obj
+            .get("meta_session")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        let Some(tool) = obj.get("tool").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
+            return mcp_error("Missing tool name.");
+        };
+        let arguments = obj.get("arguments").unwrap_or(&Value::Null);
+
+        let thread_id = if let Some(sid) = meta_session {
+            let Some(harness) = self.harness.as_ref() else {
+                return mcp_error("No active harness session for this tool call.");
+            };
+            if harness.is_subagent_session(sid) {
+                return mcp_error("Only the main thread can be made into a project, not a subagent.");
+            }
+            match harness.thread_for_session(sid) {
+                Some(tid) => tid.to_string(),
+                None => return mcp_error("Could not identify the calling thread for this tool call."),
+            }
+        } else {
+            match self.mcp_sessions.get(session) {
+                Some(tid) => tid.clone(),
+                None => return mcp_error("Could not identify the calling thread for this tool call."),
+            }
+        };
+
+        match tool {
+            mcp::TOOL_MAKE_PROJECT => {
+                let Some(args_obj) = arguments.as_object() else {
+                    return mcp_error("make_project arguments must be a JSON object.");
+                };
+                let Some(name) = args_obj.get("name").and_then(Value::as_str) else {
+                    return mcp_error("make_project requires a string 'name' argument.");
+                };
+                let place = match args_obj.get("place") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(s)) => Some(s.as_str()),
+                    Some(_) => return mcp_error("make_project 'place' must be a string."),
+                };
+                let home = PathBuf::from(default_cwd());
+                let target = match project::resolve_project_path(name, place, &home) {
+                    Ok(p) => p,
+                    Err(err) => return mcp_error(err.message()),
+                };
+                let meta = match self.store.thread_meta(&thread_id) {
+                    Ok(Some(meta)) => meta,
+                    Ok(None) => return mcp_error("The calling thread no longer exists."),
+                    Err(err) => {
+                        store_failed(log, &err);
+                        return mcp_error(&format!("Could not read thread record: {err}"));
+                    }
+                };
+                match self.apply_make_project(&thread_id, &meta, &target, true, log) {
+                    Ok((cwd, created, broadcasts)) => {
+                        let status = if created {
+                            format!("Created project folder {cwd} and tied this thread to it.")
+                        } else {
+                            format!("Tied this thread to existing folder {cwd} without changing its contents.")
+                        };
+                        let text = format!(
+                            "{status} Subsequent turns will run in {cwd} automatically with the thread's conversation history preserved. If you run any command in this current turn, use {cwd} as the working directory."
+                        );
+                        RequestOutcome {
+                            reply: Some(json!({
+                                "reply": "mcp-result",
+                                "ok": true,
+                                "text": text,
+                                "data": {
+                                    "path": cwd,
+                                    "created": created,
+                                }
+                            })),
+                            subscribe: None,
+                            broadcasts,
+                        }
+                    }
+                    Err((_, msg)) => mcp_error(&msg),
+                }
+            }
+            other => mcp_error(&format!("Unknown tool: {other}")),
+        }
+    }
+
+    /// Creates the target project directory (if missing) and updates the thread
+    /// record and harness session lifecycle.
+    fn apply_make_project(
+        &mut self,
+        thread_id: &str,
+        meta: &ThreadMeta,
+        target: &Path,
+        from_active_turn: bool,
+        log: &mut Log,
+    ) -> Result<(String, bool, Vec<Broadcast>), (&'static str, String)> {
+        let created = project::ensure_project_dir(target).map_err(|e| (e.code(), e.message().to_string()))?;
+        let target_str = target.to_string_lossy().into_owned();
+        if target_str == meta.cwd {
+            return Ok((target_str, created, Vec::new()));
+        }
+
+        let has_prior = meta.latest_turn.is_some();
+        let old_session = meta.harness_session_id.clone().filter(|s| !s.is_empty()).or_else(|| {
+            self.harness
+                .as_ref()
+                .and_then(|h| h.session_for_thread(thread_id))
+                .map(str::to_string)
+        });
+
+        self.store
+            .move_thread_to_project(thread_id, &target_str, has_prior, old_session.as_deref(), unix_now())
+            .map_err(|err| {
+                store_failed(log, &err);
+                ("storage-error", err)
+            })?;
+
+        if from_active_turn && self.working_turns.contains_key(thread_id) {
+            self.pending_session_resets.insert(thread_id.to_string());
+        } else {
+            self.pending_session_resets.remove(thread_id);
+            if let Some(harness) = self.harness.as_mut() {
+                harness.detach_session(thread_id);
+            }
+            self.mcp_sessions.retain(|_, tid| tid != thread_id);
+        }
+
+        let broadcasts = vec![Broadcast {
+            thread_id: thread_id.to_string(),
+            message: json!({
+                "event": "thread-updated",
+                "thread": thread_id,
+                "cwd": target_str,
+            }),
+        }];
+        Ok((target_str, created, broadcasts))
+    }
+
+    /// Detaches a thread's previous harness session after a turn during which
+    /// the thread moved to a new project folder, so the next turn opens a
+    /// fresh session in the project's folder with the thread's history.
+    fn maybe_reset_moved_session(&mut self, thread_id: &str) {
+        if self.pending_session_resets.remove(thread_id) {
+            if let Some(harness) = self.harness.as_mut() {
+                harness.detach_session(thread_id);
+            }
+            self.mcp_sessions.retain(|_, tid| tid != thread_id);
+        }
+    }
+
     fn dispatch_turn(&mut self, thread_id: &str) {
-        let Some(harness) = self.harness.as_mut() else {
-            return;
-        };
-        let Some(active) = self.working_turns.get_mut(thread_id) else {
-            return;
-        };
-        if let Some(session_id) = harness.session_for_thread(thread_id).map(str::to_string) {
+        let has_session = self
+            .harness
+            .as_ref()
+            .and_then(|h| h.session_for_thread(thread_id))
+            .is_some();
+        if has_session {
+            let Some(harness) = self.harness.as_mut() else {
+                return;
+            };
+            let Some(active) = self.working_turns.get_mut(thread_id) else {
+                return;
+            };
+            let Some(session_id) = harness.session_for_thread(thread_id).map(str::to_string) else {
+                return;
+            };
             if let Some(model) = active.desired_model.clone()
                 && harness.session_current_model(&session_id) != Some(model.as_str())
             {
@@ -3773,6 +4121,13 @@ impl Service {
                 self.continue_turn(thread_id);
             }
         } else {
+            let mcp_servers = self.mcp_servers_for_thread(thread_id);
+            let Some(harness) = self.harness.as_mut() else {
+                return;
+            };
+            let Some(active) = self.working_turns.get_mut(thread_id) else {
+                return;
+            };
             // A harness that was started again has seen none of this
             // thread's acts or subagents, and may still name them.
             if let Ok(ids) = self.store.harness_call_ids(thread_id) {
@@ -3787,6 +4142,7 @@ impl Service {
                 active.turn,
                 &active.cwd,
                 active.existing_session_id.as_deref(),
+                &mcp_servers,
             );
         }
     }
@@ -3831,14 +4187,24 @@ impl Service {
             active.dispatch = TurnDispatch::WaitingForSubagentAnswer;
         } else {
             self.pending_effort_threads.remove(thread_id);
+            let combined_context = match (&active.handoff_prompt, &active.context_prompt) {
+                (Some(handoff), Some(ctx)) => Some(format!("{handoff}\n\n{ctx}")),
+                (Some(handoff), None) => Some(handoff.clone()),
+                (None, Some(ctx)) => Some(ctx.clone()),
+                (None, None) => None,
+            };
+            let sent_handoff = active.handoff_prompt.is_some();
             harness.send_prompt(
                 thread_id,
                 active.turn,
                 &session_id,
-                active.context_prompt.as_deref(),
+                combined_context.as_deref(),
                 &active.message,
             );
             active.dispatch = TurnDispatch::PromptInFlight { session_id };
+            if sent_handoff {
+                let _ = self.store.clear_needs_handoff(thread_id);
+            }
         }
     }
 
@@ -4624,6 +4990,7 @@ impl Service {
                     .working_turns
                     .remove(&thread_id)
                     .is_some_and(|active| active.unsaved);
+                self.maybe_reset_moved_session(&thread_id);
                 let outcome = match outcome {
                     TurnOutcome::Done if unsaved => TurnOutcome::Failed(UNSAVED_MESSAGE.to_string()),
                     other => other,
@@ -5276,6 +5643,9 @@ impl Service {
     /// request it asked is withdrawn, and every turn or subagent it was
     /// working on is interrupted.
     fn after_harness_gone(&mut self, why: &str, log: &mut Log) -> Effects {
+        self.mcp_auth.clear();
+        self.mcp_sessions.clear();
+        self.pending_session_resets.clear();
         self.model_catalog = None;
         self.subagent_threads.clear();
         self.held_stops.clear();
@@ -5372,6 +5742,7 @@ impl Service {
             return Vec::new();
         }
         self.working_turns.remove(thread_id);
+        self.maybe_reset_moved_session(thread_id);
         self.end_turn(thread_id, turn, "failed", Some(message), log);
         self.refresh_idle_timer();
         vec![Broadcast {
@@ -5729,6 +6100,7 @@ impl Service {
                 turn,
                 message: String::new(),
                 context_prompt: None,
+                handoff_prompt: None,
                 cwd: meta.cwd,
                 existing_session_id: meta.harness_session_id,
                 desired_model: None,

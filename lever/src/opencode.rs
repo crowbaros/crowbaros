@@ -165,12 +165,14 @@ fn matches_wildcard(input: &str, pattern: &str) -> bool {
     pat[p..].iter().all(|c| *c == '*')
 }
 
-/// The Ask first agent's `permission`: it asks before a command or an edit,
-/// except where the person's own rules say otherwise.
+/// The Ask first agent's `permission`: it asks before a command, an edit, or
+/// one of Lever's own MCP tools (`crowbar_*`), except where the person's own
+/// rules say otherwise.
 pub fn ask_first_permission(documents: &[Value]) -> Value {
     let mut permission = Map::new();
     permission.insert("bash".to_string(), rules_for(documents, "shell"));
     permission.insert("edit".to_string(), rules_for(documents, "edit"));
+    permission.insert("crowbar_*".to_string(), rules_for(documents, "crowbar_*"));
     Value::Object(permission)
 }
 
@@ -683,10 +685,15 @@ mod tests {
 
     #[test]
     fn ask_first_asks_before_all_and_keeps_the_persons_own_rules_after_it() {
-        // With no settings of the person's, it asks before every command and edit.
+        // With no settings of the person's, it asks before every command, edit,
+        // and CrowbarOS MCP tool.
         assert_eq!(
             ask_first_permission(&[]),
-            json!({ "bash": { "*": "ask" }, "edit": { "*": "ask" } })
+            json!({
+                "bash": { "*": "ask" },
+                "edit": { "*": "ask" },
+                "crowbar_*": { "*": "ask" }
+            })
         );
 
         // Their refusals and their own allowances still decide what they name.
@@ -702,7 +709,8 @@ mod tests {
             permission,
             json!({
                 "bash": { "*": "ask", "git status": "allow", "rm *": "deny" },
-                "edit": { "*": "ask", "secret/**": "deny" }
+                "edit": { "*": "ask", "secret/**": "deny" },
+                "crowbar_*": { "*": "ask" }
             })
         );
         // Order is what decides, so it is kept.
@@ -722,12 +730,17 @@ mod tests {
         );
         assert_eq!(permission["edit"], json!({ "*": "deny" }));
 
-        // A rule for every action is one for commands and edits too, where
-        // the person put it, and the newer list of rules is read as well.
+        // A rule for every action is one for commands, edits, and CrowbarOS MCP
+        // tools too, where the person put it, and the newer list of rules is
+        // read as well.
         let every = json!({ "permission": { "*": "deny", "read": "allow", "bash": { "git status": "allow" } } });
         assert_eq!(
             ask_first_permission(&[every]),
-            json!({ "bash": { "*": "deny", "git status": "allow" }, "edit": { "*": "deny" } })
+            json!({
+                "bash": { "*": "deny", "git status": "allow" },
+                "edit": { "*": "deny" },
+                "crowbar_*": { "*": "deny" }
+            })
         );
         let listed = json!({ "permissions": [
             { "action": "shell", "resource": "rm *", "effect": "deny" },
@@ -736,7 +749,11 @@ mod tests {
         ] });
         assert_eq!(
             ask_first_permission(&[listed]),
-            json!({ "bash": { "*": "ask", "rm *": "deny" }, "edit": { "*": "ask", "secret/**": "deny" } })
+            json!({
+                "bash": { "*": "ask", "rm *": "deny" },
+                "edit": { "*": "ask", "secret/**": "deny" },
+                "crowbar_*": { "*": "ask" }
+            })
         );
 
         // An action is a pattern, as OpenCode has it.
@@ -746,7 +763,11 @@ mod tests {
         });
         assert_eq!(
             ask_first_permission(&[patterned]),
-            json!({ "bash": { "*": "ask", "rm *": "deny" }, "edit": { "*": "ask", "secret/**": "deny" } })
+            json!({
+                "bash": { "*": "ask", "rm *": "deny" },
+                "edit": { "*": "ask", "secret/**": "deny" },
+                "crowbar_*": { "*": "ask" }
+            })
         );
         // Older names are renamed whole before any pattern is matched: `ba*`
         // names no command, and `write` is an edit.
@@ -755,7 +776,11 @@ mod tests {
         });
         assert_eq!(
             ask_first_permission(&[older]),
-            json!({ "bash": { "*": "ask", "rm *": "deny" }, "edit": { "*": "ask", "secret/**": "deny" } })
+            json!({
+                "bash": { "*": "ask", "rm *": "deny" },
+                "edit": { "*": "ask", "secret/**": "deny" },
+                "crowbar_*": { "*": "ask" }
+            })
         );
         assert!(matches_wildcard("shell", "*"));
         assert!(matches_wildcard("shell", "s*l"));

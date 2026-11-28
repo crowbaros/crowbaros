@@ -50,6 +50,9 @@ pub struct ThreadMeta {
     /// True when this thread was discovered from a harness's own store and its
     /// history has not yet been read into Lever's record.
     pub needs_history: bool,
+    /// True when this thread moved to a new project folder and its next fresh
+    /// harness session must be handed the thread's prior turns.
+    pub needs_handoff: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -277,6 +280,7 @@ impl Store {
                  mode TEXT,\n\
                  effort TEXT,\n\
                  needs_history INTEGER NOT NULL DEFAULT 0,\n\
+                 needs_handoff INTEGER NOT NULL DEFAULT 0,\n\
                  created_at INTEGER NOT NULL,\n\
                  updated_at INTEGER NOT NULL\n\
              );\n\
@@ -404,6 +408,7 @@ impl Store {
         ensure_column(&conn, "requests", "subagent_id", "TEXT")?;
         ensure_column(&conn, "turns", "origin", "TEXT")?;
         ensure_column(&conn, "threads", "needs_history", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(&conn, "threads", "needs_handoff", "INTEGER NOT NULL DEFAULT 0")?;
 
         // Any turn or subagent left working by a Lever that ended abruptly is
         // interrupted, and a request that waited went with the harness that asked it.
@@ -584,17 +589,28 @@ impl Store {
             Option<String>,
             Option<String>,
             bool,
+            bool,
         );
         let row: Option<Row> = self
             .conn
             .query_row(
-                "SELECT cwd, harness_session_id, model, mode, effort, needs_history FROM threads WHERE id = ?1",
+                "SELECT cwd, harness_session_id, model, mode, effort, needs_history, needs_handoff FROM threads WHERE id = ?1",
                 params![thread_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|e| format!("could not query thread: {e}"))?;
-        let Some((cwd, harness_session_id, model, mode, effort, needs_history)) = row else {
+        let Some((cwd, harness_session_id, model, mode, effort, needs_history, needs_handoff)) = row else {
             return Ok(None);
         };
         let latest_turn: Option<u64> = self
@@ -628,7 +644,44 @@ impl Store {
             latest_turn,
             working_turn,
             needs_history,
+            needs_handoff,
         }))
+    }
+
+    /// Moves a thread to a project folder, clearing its previous harness
+    /// session ID (and remembering it as ignored so discovery does not
+    /// re-import it as a second thread) and marking whether the next fresh
+    /// session must be handed the thread's prior turns.
+    pub fn move_thread_to_project(
+        &self,
+        thread_id: &str,
+        new_cwd: &str,
+        needs_handoff: bool,
+        old_session_id: Option<&str>,
+        now: i64,
+    ) -> Result<(), String> {
+        self.all_or_none("move thread to project", || {
+            self.conn
+                .execute(
+                    "UPDATE threads SET cwd = ?1, harness_session_id = NULL, needs_handoff = ?2, updated_at = ?3 \
+                     WHERE id = ?4",
+                    params![new_cwd, needs_handoff, now, thread_id],
+                )
+                .map_err(|e| format!("could not update thread project folder: {e}"))?;
+            if let Some(sid) = old_session_id.filter(|s| !s.is_empty()) {
+                self.remember_ignored_session(sid, "moved", now)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Clears the pending history-handoff flag once a fresh session has
+    /// received the thread's prior turns.
+    pub fn clear_needs_handoff(&self, thread_id: &str) -> Result<(), String> {
+        self.conn
+            .execute("UPDATE threads SET needs_handoff = 0 WHERE id = ?1", params![thread_id])
+            .map_err(|e| format!("could not clear thread handoff flag: {e}"))?;
+        Ok(())
     }
 
     /// Returns `(known_thread_sessions, known_subagents_and_ignored)` from the

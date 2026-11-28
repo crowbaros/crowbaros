@@ -1467,6 +1467,7 @@ fn lever_speaks_every_message_documented_in_readme() {
                 "commands",
                 "efforts",
                 "list",
+                "make-project",
                 "models",
                 "resume",
                 "send",
@@ -1501,6 +1502,7 @@ fn lever_speaks_every_message_documented_in_readme() {
                 "model-set",
                 "models",
                 "ok",
+                "project-made",
                 "queued",
                 "resumed",
                 "sent",
@@ -1793,6 +1795,14 @@ fn lever_speaks_every_message_documented_in_readme() {
 
     write_frame(&mut peer, &json!({"op":"list","watch":true})).unwrap();
     record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    write_frame(
+        &mut peer,
+        &json!({ "op": "make-project", "thread": thread_id, "name": "readme-check" }),
+    )
+    .unwrap();
+    while !seen_replies.contains_key("project-made") {
+        record(read_frame(&mut peer).unwrap(), &mut seen_replies, &mut seen_events);
+    }
     for (op, reply) in [("archive", "archived"), ("delete", "deleted")] {
         write_frame(&mut peer, &json!({"op":op,"thread":thread_id})).unwrap();
         loop {
@@ -4143,7 +4153,11 @@ fn lever_adds_ask_first_for_its_own_harness_and_leaves_the_persons_opencode_file
     let permission = &content["agent"]["crowbar-ask-first"]["permission"];
     assert_eq!(
         permission,
-        &json!({ "bash": { "*": "ask", "rm *": "deny" }, "edit": { "*": "ask" } })
+        &json!({
+            "bash": { "*": "ask", "rm *": "deny" },
+            "edit": { "*": "ask" },
+            "crowbar_*": { "*": "ask" }
+        })
     );
     let order: Vec<&String> = permission["bash"].as_object().unwrap().keys().collect();
     assert_eq!(order, ["*", "rm *"], "the person's rule comes after Ask first's");
@@ -11283,6 +11297,485 @@ fn missing_store_directory_is_promoted_when_created_later() {
                 .is_some_and(|ts| ts.iter().any(|t| t["title"] == "Created later"))
     });
     assert_eq!(pushed["threads"].as_array().unwrap().len(), 1);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_thread_becomes_a_project_by_control_and_continues_in_the_new_folder_with_history() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "third turn",
+                    "steps": [{ "kind": "text", "text": "THIRD_CWD={cwd}\nTHIRD_PROMPT={prompt}" }]
+                },
+                {
+                    "match": "check after project",
+                    "steps": [{ "kind": "text", "text": "CWD={cwd}\nPROMPT={prompt}" }]
+                },
+                {
+                    "match": "PRIOR_CONTEXT_ALPHA",
+                    "steps": [{ "kind": "text", "text": "Initial answer in {cwd}" }]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+
+    // Turn 1 starts in $HOME.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "text": "Remember PRIOR_CONTEXT_ALPHA" }),
+    )
+    .unwrap();
+    let sent = read_frame(&mut client).unwrap();
+    assert_eq!(sent["reply"], "sent");
+    let tid = sent["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 1);
+
+    // Make this thread a project using default ~/Projects/<name>.
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": tid, "name": "alpha" }),
+    )
+    .unwrap();
+    let made = read_frame(&mut client).unwrap();
+    let expected = home.join("Projects").join("alpha");
+    let expected_str = expected.to_str().unwrap();
+    assert_eq!(made["reply"], "project-made");
+    assert_eq!(made["thread"], tid);
+    assert_eq!(made["cwd"], expected_str);
+    assert_eq!(made["created"], true);
+    assert!(expected.is_dir());
+
+    // Subscribed peer receives `thread-updated` with new cwd, and list watcher sees it under the project folder.
+    let updated = read_until(&mut client, |f| {
+        f["event"] == "thread-updated" && f["cwd"] == expected_str
+    });
+    assert_eq!(updated["thread"], tid);
+    let listed = read_until(&mut watcher, |f| {
+        f["event"] == "threads"
+            && f["threads"]
+                .as_array()
+                .is_some_and(|ts| ts.len() == 1 && ts[0]["thread"] == tid && ts[0]["cwd"] == expected_str)
+    });
+    assert_eq!(listed["threads"].as_array().unwrap().len(), 1);
+
+    // Turn 2 opens a new session in the project folder and receives `<thread-history>` containing Turn 1.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "check after project" }),
+    )
+    .unwrap();
+    assert_eq!(read_frame(&mut client).unwrap()["reply"], "sent");
+    let mut turn2_text = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" {
+            turn2_text.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["turn"] == 2 {
+            break;
+        }
+    }
+    assert!(turn2_text.contains(&format!("CWD={expected_str}")), "got: {turn2_text}");
+    assert!(turn2_text.contains("<thread-history>"), "got: {turn2_text}");
+    assert!(turn2_text.contains("PRIOR_CONTEXT_ALPHA"), "got: {turn2_text}");
+
+    // Turn 3 continues in the same new session without re-injecting `<thread-history>`.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "third turn" }),
+    )
+    .unwrap();
+    assert_eq!(read_frame(&mut client).unwrap()["reply"], "sent");
+    let mut turn3_text = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" {
+            turn3_text.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["turn"] == 3 {
+            break;
+        }
+    }
+    assert!(
+        turn3_text.contains(&format!("THIRD_CWD={expected_str}")),
+        "got: {turn3_text}"
+    );
+    assert!(!turn3_text.contains("<thread-history>"), "got: {turn3_text}");
+
+    // Lever's record stays one thread with all 3 turns and the project's cwd.
+    write_frame(&mut client, &json!({ "op": "resume", "thread": tid })).unwrap();
+    let resumed = read_frame(&mut client).unwrap();
+    assert_eq!(resumed["reply"], "resumed");
+    assert_eq!(resumed["cwd"], expected_str);
+    assert_eq!(resumed["turns"].as_array().unwrap().len(), 3);
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn making_a_project_uses_an_existing_folder_as_is_and_refuses_an_uncreatable_place() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    let existing = home.join("ExistingWork");
+    std::fs::create_dir_all(&existing).unwrap();
+    let marker = existing.join("README.txt");
+    std::fs::write(&marker, "keep me intact").unwrap();
+    let blocker = home.join("regular-file");
+    std::fs::write(&blocker, "not a directory").unwrap();
+
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                { "match": "hold", "stall": true, "steps": [{ "kind": "text", "text": "holding" }] },
+                { "match": "start", "steps": [{ "kind": "text", "text": "ok" }] }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+
+    write_frame(&mut client, &json!({ "op": "send", "text": "start" })).unwrap();
+    let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done");
+
+    // Existing folder via explicit `path` is used as-is and nothing inside changes.
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": tid, "path": "~/ExistingWork" }),
+    )
+    .unwrap();
+    let made = read_frame(&mut client).unwrap();
+    assert_eq!(made["reply"], "project-made");
+    assert_eq!(made["cwd"], existing.to_str().unwrap());
+    assert_eq!(made["created"], false);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "keep me intact");
+    assert_eq!(std::fs::read_dir(&existing).unwrap().count(), 1);
+    let _ = read_until(&mut client, |f| f["event"] == "thread-updated");
+
+    // Uncreatable place (blocked by a regular file) fails cleanly and keeps thread cwd unchanged.
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": tid, "name": "sub", "place": "~/regular-file" }),
+    )
+    .unwrap();
+    let err = read_frame(&mut client).unwrap();
+    assert_eq!(err["reply"], "error");
+    assert_eq!(err["code"], "project-error");
+
+    // Existing regular file as exact path also fails cleanly.
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": tid, "path": "~/regular-file" }),
+    )
+    .unwrap();
+    let err2 = read_frame(&mut client).unwrap();
+    assert_eq!(err2["reply"], "error");
+    assert_eq!(err2["code"], "project-error");
+
+    // Invalid project names fail with invalid-request.
+    for bad in ["", "a/b", ".."] {
+        write_frame(
+            &mut client,
+            &json!({ "op": "make-project", "thread": tid, "name": bad }),
+        )
+        .unwrap();
+        let bad_reply = read_frame(&mut client).unwrap();
+        assert_eq!(bad_reply["reply"], "error");
+        assert_eq!(bad_reply["code"], "invalid-request");
+    }
+
+    // Thread still points at ~/ExistingWork.
+    write_frame(&mut client, &json!({ "op": "list" })).unwrap();
+    let list = read_frame(&mut client).unwrap();
+    assert_eq!(list["threads"][0]["cwd"], existing.to_str().unwrap());
+
+    // Control call refused while a turn is working.
+    write_frame(&mut client, &json!({ "op": "send", "thread": tid, "text": "hold" })).unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let _ = read_until(&mut client, |f| f["event"] == "text");
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": tid, "name": "busy" }),
+    )
+    .unwrap();
+    let busy_reply = read_until(&mut client, |f| f.get("reply").is_some());
+    assert_eq!(busy_reply["reply"], "error");
+    assert_eq!(busy_reply["code"], "working");
+
+    write_frame(&mut client, &json!({ "op": "stop", "thread": tid })).unwrap();
+    let _ = read_until(&mut client, |f| f["event"] == "stopped");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_thread_becomes_a_project_by_the_mcp_tool_respecting_mode_and_named_place() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "modes": true,
+            "turns": [
+                {
+                    "match": "where am i",
+                    "steps": [
+                        { "kind": "text", "text": "NOW_IN={cwd}\nHIST={prompt}" }
+                    ]
+                },
+                {
+                    "match": "make gamma",
+                    "steps": [
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_proj_gamma",
+                            "tool": "make_project",
+                            "arguments": { "name": "gamma" },
+                            "reply": "GAMMA={mcp_result}"
+                        }
+                    ]
+                },
+                {
+                    "match": "make beta in ~/Code",
+                    "steps": [
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_proj_beta",
+                            "tool": "make_project",
+                            "arguments": { "name": "beta", "place": "~/Code" },
+                            "reply": "MCP={mcp_result}"
+                        }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    // Turn 1 in Ask first: MCP call raises a permission request; denying it creates nothing.
+    write_frame(&mut client, &json!({ "op": "send", "text": "make beta in ~/Code" })).unwrap();
+    let sent1 = read_frame(&mut client).unwrap();
+    let tid = sent1["thread"].as_str().unwrap().to_string();
+    let req1 = read_until(&mut client, |f| f["event"] == "request" && f["state"] == "waiting");
+    assert_eq!(req1["detail"], "~/Code/beta");
+    let req1_id = req1["request"].as_str().unwrap().to_string();
+
+    write_frame(
+        &mut client,
+        &json!({ "op": "answer", "thread": tid, "request": req1_id, "answer": "no" }),
+    )
+    .unwrap();
+    let _ = read_until(&mut client, |f| f["event"] == "stopped" || f["event"] == "done");
+    let beta_path = home.join("Code").join("beta");
+    assert!(!beta_path.exists(), "denied MCP call must not create project folder");
+
+    // Turn 2 in Ask first: answering `once` runs the real `crowbar-lever mcp-bridge` over stdio.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "make beta in ~/Code (approved)" }),
+    )
+    .unwrap();
+    assert_eq!(read_frame(&mut client).unwrap()["reply"], "sent");
+    let req2 = read_until(&mut client, |f| f["event"] == "request" && f["state"] == "waiting");
+    let req2_id = req2["request"].as_str().unwrap().to_string();
+    write_frame(
+        &mut client,
+        &json!({ "op": "answer", "thread": tid, "request": req2_id, "answer": "once" }),
+    )
+    .unwrap();
+
+    let mut saw_updated = false;
+    let mut saw_mcp_text = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "thread-updated" && f["cwd"] == beta_path.to_str().unwrap() {
+            saw_updated = true;
+        }
+        if f["event"] == "text" {
+            saw_mcp_text.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["turn"] == 2 {
+            break;
+        }
+    }
+    assert!(saw_updated, "expected thread-updated with ~/Code/beta");
+    assert!(beta_path.is_dir(), "approved MCP call must create ~/Code/beta");
+    assert!(
+        saw_mcp_text.contains(beta_path.to_str().unwrap()),
+        "got: {saw_mcp_text}"
+    );
+
+    // Turn 3 runs in a fresh session in ~/Code/beta and receives `<thread-history>` from before.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "where am i" }),
+    )
+    .unwrap();
+    assert_eq!(read_frame(&mut client).unwrap()["reply"], "sent");
+    let mut turn3 = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" {
+            turn3.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["turn"] == 3 {
+            break;
+        }
+    }
+    assert!(
+        turn3.contains(&format!("NOW_IN={}", beta_path.display())),
+        "got: {turn3}"
+    );
+    assert!(turn3.contains("<thread-history>"), "got: {turn3}");
+    assert!(turn3.contains("make beta in ~/Code"), "got: {turn3}");
+
+    // Second thread in full-access: MCP call runs with no permission request.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "text": "make gamma", "mode": "full-access" }),
+    )
+    .unwrap();
+    let sent_g = read_frame(&mut client).unwrap();
+    let tid_g = sent_g["thread"].as_str().unwrap().to_string();
+    let mut saw_request_in_full_access = false;
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "request" {
+            saw_request_in_full_access = true;
+        }
+        if f["event"] == "done" && f["thread"] == tid_g {
+            break;
+        }
+    }
+    assert!(!saw_request_in_full_access);
+    assert!(home.join("Projects").join("gamma").is_dir());
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn mcp_tool_routes_correctly_for_both_per_session_and_shared_cwd_harnesses() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                { "match": "warmup", "steps": [{ "kind": "text", "text": "ready" }] },
+                {
+                    "match": "shared-mcp-call",
+                    "steps": [
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_shared",
+                            "tool": "make_project",
+                            "arguments": { "name": "from-shared" },
+                            "shared_by_cwd": true,
+                            "send_meta_session": true,
+                            "reply": "SHARED={mcp_result}"
+                        }
+                    ]
+                },
+                {
+                    "match": "token-mcp-call",
+                    "steps": [
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_token",
+                            "tool": "make_project",
+                            "arguments": { "name": "from-token" },
+                            "shared_by_cwd": false,
+                            "send_meta_session": false,
+                            "reply": "TOKEN={mcp_result}"
+                        }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    // Start two threads in the same folder ($HOME): T1 first, then T2 (overwriting `cwd_mcps[$HOME]`).
+    write_frame(&mut client, &json!({ "op": "send", "text": "warmup t1" })).unwrap();
+    let t1 = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["thread"] == t1);
+
+    write_frame(&mut client, &json!({ "op": "send", "text": "warmup t2" })).unwrap();
+    let t2 = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["thread"] == t2);
+
+    // T1 calls the shared-per-cwd MCP bridge (which carries T2's env token) with T1's `_meta` session ID.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": t1, "text": "shared-mcp-call" }),
+    )
+    .unwrap();
+    assert_eq!(read_frame(&mut client).unwrap()["reply"], "sent");
+    let _ = read_until(&mut client, |f| {
+        f["event"] == "done" && f["thread"] == t1 && f["turn"] == 2
+    });
+
+    // T2 calls its per-session MCP bridge with NO `_meta` session ID (as Codex/Claude/Pi/Antigravity do).
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": t2, "text": "token-mcp-call" }),
+    )
+    .unwrap();
+    assert_eq!(read_frame(&mut client).unwrap()["reply"], "sent");
+    let _ = read_until(&mut client, |f| {
+        f["event"] == "done" && f["thread"] == t2 && f["turn"] == 2
+    });
+
+    // Verify each thread moved to its own project folder, with zero cross-talk.
+    write_frame(&mut client, &json!({ "op": "list" })).unwrap();
+    let list = read_frame(&mut client).unwrap();
+    let threads = list["threads"].as_array().unwrap();
+    let t1_row = threads.iter().find(|r| r["thread"] == t1).unwrap();
+    let t2_row = threads.iter().find(|r| r["thread"] == t2).unwrap();
+    assert_eq!(
+        t1_row["cwd"],
+        home.join("Projects").join("from-shared").to_str().unwrap()
+    );
+    assert_eq!(
+        t2_row["cwd"],
+        home.join("Projects").join("from-token").to_str().unwrap()
+    );
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));

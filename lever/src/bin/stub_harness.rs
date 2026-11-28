@@ -39,7 +39,7 @@ use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AgentCapabilities, AvailableCommand, AvailableCommandInput, AvailableCommandsUpdate,
     CLIENT_METHOD_NAMES, CancelNotification, CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate,
     ContentBlock, ContentChunk, Diff, Error as AcpError, Implementation, InitializeRequest, InitializeResponse,
-    JsonRpcMessage, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse,
+    JsonRpcMessage, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, McpServer,
     NewSessionRequest, NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOption,
     PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId, RequestPermissionRequest, Response,
     SessionCapabilities, SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory,
@@ -523,6 +523,30 @@ enum Step {
         #[serde(default)]
         linger_ms: u64,
     },
+    /// Spawns a stdio MCP server passed in `session/new` (or `session/load`)
+    /// and invokes one tool over real MCP JSON-RPC 2.0.
+    McpCall {
+        id: String,
+        #[serde(default = "default_mcp_server")]
+        server: String,
+        tool: String,
+        #[serde(default)]
+        arguments: Value,
+        /// Attaches `_meta["ai.opencode/sessionID"]` on `tools/call`.
+        #[serde(default)]
+        send_meta_session: bool,
+        /// Uses the latest MCP server registered for this session's cwd,
+        /// simulating OpenCode's shared-per-cwd MCP server.
+        #[serde(default)]
+        shared_by_cwd: bool,
+        /// Optional reply text template emitted after the call (`{mcp_result}`).
+        #[serde(default)]
+        reply: Option<String>,
+    },
+}
+
+fn default_mcp_server() -> String {
+    "crowbar".to_string()
 }
 
 fn default_subagent_protocol() -> String {
@@ -1740,9 +1764,258 @@ fn emit_step(
         | Step::SubagentAct { .. }
         | Step::SubagentAsk { .. }
         | Step::SubagentEnd { .. }
-        | Step::SubagentStall { .. } => {}
+        | Step::SubagentStall { .. }
+        | Step::McpCall { .. } => {}
     }
     false
+}
+
+/// Runs one scripted MCP tool call step: checks the session's permission rule
+/// (raising `session/request_permission` in Ask first mode), spawns the stdio
+/// MCP command from `mcp_servers`, performs MCP `initialize` + `tools/list` +
+/// `tools/call`, and reports the act and optional reply text.
+#[allow(clippy::too_many_arguments)]
+fn run_mcp_call(
+    writer: &Writer,
+    session_id: &SessionId,
+    asking: &Asking<'_>,
+    cancel: &CancelFlag,
+    mcp_servers: &[McpServer],
+    id: &str,
+    server: &str,
+    tool: &str,
+    arguments: &Value,
+    send_meta_session: bool,
+    reply: Option<&str>,
+) -> Asked {
+    let title = format!("{server}_{tool}");
+    let permission = format!("{server}_*");
+    let mut call = ToolCall::new(ToolCallId::new(id.to_string()), title.clone())
+        .kind(ToolKind::Other)
+        .status(ToolCallStatus::InProgress)
+        .raw_input(arguments.clone());
+    writer.send_update(session_id, SessionUpdate::ToolCall(call.clone()));
+
+    let sid = session_id.0.as_ref().to_string();
+    let mode = asking
+        .session_modes
+        .lock()
+        .unwrap()
+        .get(&sid)
+        .cloned()
+        .unwrap_or_else(|| asking.modes.default.clone());
+    let rule = if asking.modes.offered {
+        asking.modes.rule(&mode, &permission)
+    } else {
+        "allow".to_string()
+    };
+    let allowed_always = asking
+        .always
+        .lock()
+        .unwrap()
+        .get(&sid)
+        .is_some_and(|granted| granted.iter().any(|p| p == &permission));
+    if rule == "deny" {
+        act_update(
+            writer,
+            session_id,
+            id,
+            ToolCallStatus::Failed,
+            "Not allowed in this mode",
+        );
+        return Asked::Went;
+    }
+    if rule == "ask" && !allowed_always {
+        let n = asking.next_request.fetch_add(1, Ordering::Relaxed);
+        let request_id = RequestId::Number(n as i64);
+        let (tx, rx) = std::sync::mpsc::channel();
+        asking.replies.lock().unwrap().insert(n.to_string(), tx);
+        let options = vec![
+            PermissionOption::new("once", "Allow once", PermissionOptionKind::AllowOnce),
+            PermissionOption::new("always", "Always allow", PermissionOptionKind::AllowAlways),
+            PermissionOption::new("reject", "Reject", PermissionOptionKind::RejectOnce),
+        ];
+        let fields = ToolCallUpdateFields::new()
+            .title(title.clone())
+            .kind(ToolKind::Other)
+            .raw_input(arguments.clone());
+        let req = RequestPermissionRequest::new(
+            session_id.clone(),
+            ToolCallUpdate::new(ToolCallId::new(id.to_string()), fields),
+            options,
+        );
+        writer.send(
+            &serde_json::to_value(JsonRpcMessage::wrap(Request {
+                id: request_id,
+                method: CLIENT_METHOD_NAMES.session_request_permission.into(),
+                params: Some(req),
+            }))
+            .expect("serialize permission request"),
+        );
+        let answer = loop {
+            if cancel.is_cancelled() {
+                asking.replies.lock().unwrap().remove(&n.to_string());
+                writer.send(&json!({
+                    "jsonrpc": "2.0",
+                    "method": PROTOCOL_LEVEL_METHOD_NAMES.cancel_request,
+                    "params": { "requestId": n },
+                }));
+                return Asked::Ended;
+            }
+            match rx.recv_timeout(Duration::from_millis(20)) {
+                Ok(reply) => break Some(reply),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Asked::Ended,
+            }
+        };
+        let chosen = answer
+            .as_ref()
+            .and_then(|r| r.pointer("/result/outcome"))
+            .filter(|o| o.get("outcome").and_then(Value::as_str) == Some("selected"))
+            .and_then(|o| o.get("optionId").and_then(Value::as_str));
+        match chosen {
+            Some("once") => {}
+            Some("always") => {
+                asking
+                    .always
+                    .lock()
+                    .unwrap()
+                    .entry(sid.clone())
+                    .or_default()
+                    .push(permission);
+            }
+            _ => {
+                act_update(writer, session_id, id, ToolCallStatus::Failed, "Rejected by the person");
+                return Asked::Ended;
+            }
+        }
+    }
+
+    let Some(stdio) = mcp_servers.iter().find_map(|s| match s {
+        McpServer::Stdio(stdio) if stdio.name == server => Some(stdio),
+        _ => None,
+    }) else {
+        let msg = format!("MCP server '{server}' not found");
+        act_update(writer, session_id, id, ToolCallStatus::Failed, &msg);
+        return Asked::Went;
+    };
+
+    let outcome = invoke_stdio_mcp(stdio, tool, arguments, send_meta_session.then_some(sid.as_str()));
+    call.status = if outcome.0 {
+        ToolCallStatus::Completed
+    } else {
+        ToolCallStatus::Failed
+    };
+    act_update(writer, session_id, id, call.status, &outcome.1);
+    if let Some(template) = reply {
+        let text = template.replace("{mcp_result}", &outcome.1);
+        writer.send_update(
+            session_id,
+            SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(text))),
+        );
+    }
+    Asked::Went
+}
+
+fn invoke_stdio_mcp(
+    stdio: &agent_client_protocol_schema::v1::McpServerStdio,
+    tool: &str,
+    arguments: &Value,
+    meta_session: Option<&str>,
+) -> (bool, String) {
+    let mut cmd = std::process::Command::new(&stdio.command);
+    cmd.args(&stdio.args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    for var in &stdio.env {
+        cmd.env(&var.name, &var.value);
+    }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return (false, format!("failed to spawn MCP bridge: {e}")),
+    };
+    let mut stdin = match child.stdin.take() {
+        Some(s) => s,
+        None => return (false, "MCP bridge had no stdin".to_string()),
+    };
+    let stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => return (false, "MCP bridge had no stdout".to_string()),
+    };
+    let mut reader = BufReader::new(stdout);
+
+    let send_line = |stdin: &mut std::process::ChildStdin, val: &Value| -> Result<(), String> {
+        writeln!(stdin, "{val}").map_err(|e| format!("MCP write failed: {e}"))?;
+        stdin.flush().map_err(|e| format!("MCP flush failed: {e}"))
+    };
+    let read_line = |reader: &mut BufReader<std::process::ChildStdout>| -> Result<Value, String> {
+        let mut line = String::new();
+        let n = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("MCP read failed: {e}"))?;
+        if n == 0 {
+            return Err("MCP bridge closed stdout".to_string());
+        }
+        serde_json::from_str(&line).map_err(|e| format!("MCP invalid JSON: {e}"))
+    };
+
+    let res = (|| -> Result<(bool, String), String> {
+        send_line(
+            &mut stdin,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": { "name": "crowbar-stub-harness", "version": "0.1.0" }
+                }
+            }),
+        )?;
+        let _init = read_line(&mut reader)?;
+        send_line(
+            &mut stdin,
+            &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        )?;
+        send_line(
+            &mut stdin,
+            &json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
+        )?;
+        let listed = read_line(&mut reader)?;
+        let has_tool = listed["result"]["tools"]
+            .as_array()
+            .is_some_and(|arr| arr.iter().any(|t| t.get("name").and_then(Value::as_str) == Some(tool)));
+        if !has_tool {
+            return Err(format!("MCP server did not list tool '{tool}'"));
+        }
+        let mut params = json!({ "name": tool, "arguments": arguments });
+        if let Some(sid) = meta_session {
+            params["_meta"] = json!({ "ai.opencode/sessionID": sid });
+        }
+        send_line(
+            &mut stdin,
+            &json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": params }),
+        )?;
+        let call_resp = read_line(&mut reader)?;
+        let is_err = call_resp["result"]["isError"].as_bool().unwrap_or(false);
+        let text = call_resp["result"]["content"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|c| c.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        Ok((!is_err, text))
+    })();
+
+    drop(stdin);
+    let _ = child.wait();
+    match res {
+        Ok(pair) => pair,
+        Err(err) => (false, err),
+    }
 }
 
 fn prompt_text(req: &PromptRequest) -> String {
@@ -1888,6 +2161,9 @@ fn run(options: Options) -> Result<(), String> {
     let session_models: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
     let session_modes: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
     let session_efforts: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let session_cwds: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let session_mcps: Arc<Mutex<HashMap<String, Vec<McpServer>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let cwd_mcps: Arc<Mutex<HashMap<String, Vec<McpServer>>>> = Arc::new(Mutex::new(HashMap::new()));
     let commands_update = (!script.commands.is_empty()).then(|| {
         AvailableCommandsUpdate::new(
             script
@@ -2017,12 +2293,21 @@ fn run(options: Options) -> Result<(), String> {
                 continue;
             }
             match serde_json::from_value::<NewSessionRequest>(params) {
-                Ok(_new_req) => {
+                Ok(new_req) => {
                     let n = next_session.fetch_add(1, Ordering::Relaxed);
                     let sid = script
                         .session_id
                         .clone()
                         .unwrap_or_else(|| format!("{}{n}", script.session_prefix));
+                    let cwd_str = new_req.cwd.to_string_lossy().into_owned();
+                    session_cwds.lock().unwrap().insert(sid.clone(), cwd_str.clone());
+                    if !new_req.mcp_servers.is_empty() {
+                        session_mcps
+                            .lock()
+                            .unwrap()
+                            .insert(sid.clone(), new_req.mcp_servers.clone());
+                        cwd_mcps.lock().unwrap().insert(cwd_str, new_req.mcp_servers.clone());
+                    }
                     if script.emit_catalog_update_on_new_session {
                         let existing: Vec<_> = {
                             let models_map = session_models.lock().unwrap();
@@ -2421,6 +2706,15 @@ fn run(options: Options) -> Result<(), String> {
                         writer.send_error(id, AcpError::new(err.code, err.message.clone()));
                     } else {
                         let sid = load_req.session_id.0.as_ref().to_string();
+                        let cwd_str = load_req.cwd.to_string_lossy().into_owned();
+                        session_cwds.lock().unwrap().insert(sid.clone(), cwd_str.clone());
+                        if !load_req.mcp_servers.is_empty() {
+                            session_mcps
+                                .lock()
+                                .unwrap()
+                                .insert(sid.clone(), load_req.mcp_servers.clone());
+                            cwd_mcps.lock().unwrap().insert(cwd_str, load_req.mcp_servers.clone());
+                        }
                         if let Some(mode) = &script.load_mode {
                             session_modes
                                 .lock()
@@ -2547,6 +2841,10 @@ fn run(options: Options) -> Result<(), String> {
             let sid_key = prompt_req.session_id.0.as_ref().to_string();
             let model = session_models.lock().unwrap().get(&sid_key).cloned();
             let effort = session_efforts.lock().unwrap().get(&sid_key).cloned();
+            let session_cwd = session_cwds.lock().unwrap().get(&sid_key).cloned().unwrap_or_default();
+            let prompt_full = text.clone();
+            let session_mcps_ref = Arc::clone(&session_mcps);
+            let cwd_mcps_ref = Arc::clone(&cwd_mcps);
             active_cancels.lock().unwrap().insert(sid_key.clone(), cancel.clone());
 
             let writer = writer.clone();
@@ -2585,7 +2883,10 @@ fn run(options: Options) -> Result<(), String> {
                     .iter()
                     .map(|step| match step {
                         Step::Text { text } => Step::Text {
-                            text: text.replace("{effort}", &at_effort),
+                            text: text
+                                .replace("{effort}", &at_effort)
+                                .replace("{cwd}", &session_cwd)
+                                .replace("{prompt}", &prompt_full),
                         },
                         other => other.clone(),
                     })
@@ -2599,6 +2900,48 @@ fn run(options: Options) -> Result<(), String> {
                     match step {
                         Step::Ask(step) => {
                             let asked = ask(&writer, &session_id, &asking, Some(heard), step);
+                            if asked == Asked::Ended {
+                                was_cancelled = true;
+                                break;
+                            }
+                        }
+                        Step::McpCall {
+                            id,
+                            server,
+                            tool,
+                            arguments,
+                            send_meta_session,
+                            shared_by_cwd,
+                            reply,
+                        } => {
+                            let servers = if *shared_by_cwd {
+                                cwd_mcps_ref
+                                    .lock()
+                                    .unwrap()
+                                    .get(&session_cwd)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            } else {
+                                session_mcps_ref
+                                    .lock()
+                                    .unwrap()
+                                    .get(&sid_key)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            };
+                            let asked = run_mcp_call(
+                                &writer,
+                                &session_id,
+                                &asking,
+                                heard,
+                                &servers,
+                                id,
+                                server,
+                                tool,
+                                arguments,
+                                *send_meta_session,
+                                reply.as_deref(),
+                            );
                             if asked == Asked::Ended {
                                 was_cancelled = true;
                                 break;

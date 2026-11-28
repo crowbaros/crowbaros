@@ -29,6 +29,8 @@ usage: crowbar-agent                          talk with the Agent, a line at a t
        crowbar-agent --mode MODE \"<request>\"  start a thread in a mode
        crowbar-agent --resume ID --answer R A answer a thread's request R with A
        crowbar-agent --resume ID --unqueue Q  take back message Q that waits in a thread
+       crowbar-agent --resume ID --project N [--place DIR | --path DIR]
+                                              make a thread a project in ~/Projects/N or DIR
        crowbar-agent --stop ID                stop the working turn of a thread
        crowbar-agent models                   list the Models the harness offers
        crowbar-agent efforts M                list the effort levels of Model M
@@ -80,6 +82,12 @@ enum Command {
         thread: String,
         queued: String,
     },
+    MakeProject {
+        thread: String,
+        name: Option<String>,
+        place: Option<String>,
+        path: Option<String>,
+    },
     DefaultMode {
         mode: Option<String>,
     },
@@ -124,6 +132,9 @@ fn command(args: &[String]) -> Result<Command, String> {
     let (mut mode, mut answer): (Option<String>, Option<(String, String)>) = (None, None);
     let mut effort: Option<String> = None;
     let mut unqueue: Option<String> = None;
+    let mut project: Option<String> = None;
+    let mut place: Option<String> = None;
+    let mut path: Option<String> = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         // An option comes before the request. A dash inside a request is the request's.
@@ -183,6 +194,27 @@ fn command(args: &[String]) -> Result<Command, String> {
                         .clone(),
                 );
             }
+            "--project" if project.is_none() => {
+                let value = rest.next().ok_or("--project needs a project name")?;
+                if value.trim().is_empty() {
+                    return Err("--project needs a non-empty project name".to_string());
+                }
+                project = Some(value.clone());
+            }
+            "--place" if place.is_none() => {
+                let value = rest.next().ok_or("--place needs a parent folder path")?;
+                if value.trim().is_empty() {
+                    return Err("--place needs a non-empty folder path".to_string());
+                }
+                place = Some(value.clone());
+            }
+            "--path" if path.is_none() => {
+                let value = rest.next().ok_or("--path needs a folder path")?;
+                if value.trim().is_empty() {
+                    return Err("--path needs a non-empty folder path".to_string());
+                }
+                path = Some(value.clone());
+            }
             "--stop" if stop.is_none() => {
                 stop = Some(
                     rest.next()
@@ -194,8 +226,18 @@ fn command(args: &[String]) -> Result<Command, String> {
                 if effort.is_some() {
                     return Err("--effort takes nothing but --resume".to_string());
                 }
-                if list || stop.is_some() || answer.is_some() || unqueue.is_some() {
-                    return Err("-- cannot be combined with --list, --stop, --answer, or --unqueue".to_string());
+                if list
+                    || stop.is_some()
+                    || answer.is_some()
+                    || unqueue.is_some()
+                    || project.is_some()
+                    || place.is_some()
+                    || path.is_some()
+                {
+                    return Err(
+                        "-- cannot be combined with --list, --stop, --answer, --unqueue, --project, --place, or --path"
+                            .to_string(),
+                    );
                 }
                 words.extend(rest.by_ref().cloned());
                 if words.iter().all(|word| word.trim().is_empty()) {
@@ -208,7 +250,8 @@ fn command(args: &[String]) -> Result<Command, String> {
                     message: words.join(" "),
                 });
             }
-            "--list" | "--resume" | "--model" | "--mode" | "--effort" | "--answer" | "--unqueue" | "--stop" => {
+            "--list" | "--resume" | "--model" | "--mode" | "--effort" | "--answer" | "--unqueue" | "--project"
+            | "--place" | "--path" | "--stop" => {
                 return Err(format!("{arg} is given twice"));
             }
             option if option.starts_with('-') => return Err(format!("no option {option}")),
@@ -223,6 +266,9 @@ fn command(args: &[String]) -> Result<Command, String> {
         || effort.is_some()
         || answer.is_some()
         || unqueue.is_some()
+        || project.is_some()
+        || place.is_some()
+        || path.is_some()
     {
         let alone = |what: &str| -> Result<(), String> {
             if resumed.is_none()
@@ -231,6 +277,9 @@ fn command(args: &[String]) -> Result<Command, String> {
                 && effort.is_none()
                 && answer.is_none()
                 && unqueue.is_none()
+                && project.is_none()
+                && place.is_none()
+                && path.is_none()
                 && words.is_empty()
             {
                 Ok(())
@@ -249,6 +298,32 @@ fn command(args: &[String]) -> Result<Command, String> {
         if let Some(thread) = stop {
             alone("--stop")?;
             return Ok(Command::Stop { thread });
+        }
+        if project.is_some() || place.is_some() || path.is_some() {
+            let Some(thread) = resumed else {
+                return Err("--project needs --resume ID, the thread to make a project".to_string());
+            };
+            if place.is_some() && path.is_some() {
+                return Err("use either --place or --path, not both".to_string());
+            }
+            if project.is_none() && path.is_none() {
+                return Err("--place needs --project NAME".to_string());
+            }
+            if model.is_some()
+                || mode.is_some()
+                || effort.is_some()
+                || answer.is_some()
+                || unqueue.is_some()
+                || !words.is_empty()
+            {
+                return Err("--project takes nothing but --resume and an optional --place or --path".to_string());
+            }
+            return Ok(Command::MakeProject {
+                thread,
+                name: project,
+                place,
+                path,
+            });
         }
         if let Some(level) = effort {
             let Some(thread) = resumed else {
@@ -405,6 +480,12 @@ fn main() -> ExitCode {
             answer,
         } => talk::answer(&mut lever, thread, request, answer),
         Command::Unqueue { thread, queued } => talk::unqueue(&mut lever, thread, queued),
+        Command::MakeProject {
+            thread,
+            name,
+            place,
+            path,
+        } => talk::make_project(&mut lever, thread, name.as_deref(), place.as_deref(), path.as_deref()),
         Command::DefaultMode { mode } => talk::default_mode(&mut lever, mode.as_deref()),
         Command::Lifecycle { op, thread } => talk::lifecycle(&mut lever, op, thread),
         Command::List => talk::list(&mut lever),
@@ -596,6 +677,33 @@ mod tests {
                 mode: Some("full-access".into())
             })
         );
+        assert_eq!(
+            read(&["--resume", "t-k3f9q2xz", "--project", "alpha"]),
+            Ok(Command::MakeProject {
+                thread: "t-k3f9q2xz".into(),
+                name: Some("alpha".into()),
+                place: None,
+                path: None,
+            })
+        );
+        assert_eq!(
+            read(&["--resume", "t-k3f9q2xz", "--project", "beta", "--place", "~/Code"]),
+            Ok(Command::MakeProject {
+                thread: "t-k3f9q2xz".into(),
+                name: Some("beta".into()),
+                place: Some("~/Code".into()),
+                path: None,
+            })
+        );
+        assert_eq!(
+            read(&["--resume", "t-k3f9q2xz", "--path", "~/Work/existing"]),
+            Ok(Command::MakeProject {
+                thread: "t-k3f9q2xz".into(),
+                name: None,
+                place: None,
+                path: Some("~/Work/existing".into()),
+            })
+        );
     }
 
     #[test]
@@ -681,6 +789,21 @@ mod tests {
             &["--model", "a", "--model", "b"],
             &["--stop", "t-k3f9q2xz", "--stop", "t-other"],
             &["--list", "--list"],
+            &["--project", "alpha"],
+            &["--resume", "t-k3f9q2xz", "--project"],
+            &["--resume", "t-k3f9q2xz", "--project", " "],
+            &["--resume", "t-k3f9q2xz", "--place", "~/Code"],
+            &[
+                "--resume",
+                "t-k3f9q2xz",
+                "--project",
+                "a",
+                "--place",
+                "~/Code",
+                "--path",
+                "~/x",
+            ],
+            &["--resume", "t-k3f9q2xz", "--project", "a", "hello"],
         ] {
             assert!(read(line).is_err(), "{line:?}");
         }
