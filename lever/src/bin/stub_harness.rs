@@ -186,6 +186,12 @@ struct Script {
     delete_session: bool,
     #[serde(default)]
     delete_session_error: Option<ScriptError>,
+    /// Fails the first `session/delete` for this session ID, then succeeds on retry.
+    #[serde(default)]
+    delete_fail_once_for: Option<String>,
+    /// Always fails `session/delete` for these session IDs.
+    #[serde(default)]
+    delete_fail_for: Vec<String>,
     /// Waits this long before it answers `session/delete`, and goes on with
     /// its other work meanwhile.
     #[serde(default)]
@@ -2197,6 +2203,7 @@ fn run(options: Options) -> Result<(), String> {
     let stdin = io::stdin();
     let reader = BufReader::new(stdin.lock());
     let mut workers = Vec::new();
+    let mut delete_failed_once: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -2372,7 +2379,18 @@ fn run(options: Options) -> Result<(), String> {
             } else if script.delete_session {
                 match serde_json::from_value::<agent_client_protocol_schema::v1::DeleteSessionRequest>(params) {
                     Ok(req) => {
-                        session_models.lock().unwrap().remove(req.session_id.0.as_ref());
+                        let sid = req.session_id.0.as_ref();
+                        if script.delete_fail_for.iter().any(|s| s == sid) {
+                            writer.send_error(id, AcpError::new(-32603, format!("cannot delete {sid}")));
+                            continue;
+                        }
+                        if script.delete_fail_once_for.as_deref() == Some(sid)
+                            && delete_failed_once.insert(sid.to_string())
+                        {
+                            writer.send_error(id, AcpError::new(-32603, format!("temporary error deleting {sid}")));
+                            continue;
+                        }
+                        session_models.lock().unwrap().remove(sid);
                         let delay = Duration::from_millis(script.delete_delay_ms);
                         if delay.is_zero() {
                             writer.send_result(id, json!({}));

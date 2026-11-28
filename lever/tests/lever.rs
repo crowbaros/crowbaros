@@ -12433,6 +12433,7 @@ fn chained_mcp_move_on_first_post_move_turn_preserves_handoff_and_post_turn_suba
                         }
                     ],
                     "after": [
+                        { "kind": "pause_ms", "ms": 150 },
                         { "kind": "subagent_start", "id": "ses_after_prompt", "title": "Post-turn helper" },
                         {
                             "kind": "subagent_ask",
@@ -12442,6 +12443,7 @@ fn chained_mcp_move_on_first_post_move_turn_preserves_handoff_and_post_turn_suba
                             "title": "Read file",
                             "raw_input": { "path": "/tmp/a" }
                         },
+                        { "kind": "subagent_text", "subagent": "ses_after_prompt", "text": "SUBAGENT_FINDING_42" },
                         { "kind": "subagent_end", "subagent": "ses_after_prompt", "status": "completed" }
                     ]
                 },
@@ -12509,7 +12511,223 @@ fn chained_mcp_move_on_first_post_move_turn_preserves_handoff_and_post_turn_suba
     assert!(turn3.contains(&format!("CWD={}", proj_b.display())), "{turn3}");
     assert!(turn3.contains("<thread-history>"), "{turn3}");
     assert!(turn3.contains("CHAIN_SEED_TOKEN"), "{turn3}");
+    assert!(turn3.contains("SUBAGENT_FINDING_42"), "{turn3}");
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn stopping_first_project_turn_before_output_preserves_handoff() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "check-after-stop",
+                    "steps": [{ "kind": "text", "text": "CWD={cwd}\nPROMPT={prompt}" }]
+                },
+                {
+                    "match": "cancel-before-output",
+                    "steps": [],
+                    "stall": true,
+                    "cancel_with_error": true
+                },
+                {
+                    "match": "seed-stop-handoff",
+                    "steps": [{ "kind": "text", "text": "STOP_HANDOFF_SEED" }]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    write_frame(&mut client, &json!({ "op": "send", "text": "seed-stop-handoff" })).unwrap();
+    let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 1);
+
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": tid, "name": "proj-stop" }),
+    )
+    .unwrap();
+    assert_eq!(
+        read_until(&mut client, |f| f.get("reply").is_some())["reply"],
+        "project-made"
+    );
+
+    // Turn 2 carries `<thread-history>`, emits nothing, and is cancelled via RequestCancelled.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "cancel-before-output" }),
+    )
+    .unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    // Give session/new + session/prompt a moment to reach the stalled turn.
+    std::thread::sleep(Duration::from_millis(100));
+    write_frame(&mut client, &json!({ "op": "stop", "thread": tid })).unwrap();
+    let _ = read_until(&mut client, |f| f["event"] == "stopped" && f["turn"] == 2);
+
+    // Turn 3 must STILL receive `<thread-history>` containing `STOP_HANDOFF_SEED`.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "check-after-stop" }),
+    )
+    .unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let mut turn3 = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" {
+            turn3.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["turn"] == 3 {
+            break;
+        }
+    }
+    assert!(turn3.contains("<thread-history>"), "{turn3}");
+    assert!(turn3.contains("STOP_HANDOFF_SEED"), "{turn3}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn partial_delete_retries_only_remaining_session_and_warns_on_missing_retired() {
+    let uid = unsafe { libc::geteuid() };
+
+    // Part A: retired session delete succeeds, current session delete fails once;
+    // retry must NOT send session/delete for the already-deleted retired session again.
+    {
+        let dir = TempDir::new();
+        let home = dir.0.join("lever-home");
+        std::fs::create_dir_all(&home).unwrap();
+        let script = write_script(
+            &dir.0,
+            &json!({
+                "delete_session": true,
+                "session_prefix": "ses-partial-",
+                "delete_fail_once_for": "ses-partial-2",
+                "turns": [{ "steps": [{ "kind": "text", "text": "ok" }] }]
+            }),
+        );
+        let rpc_log_path = dir.0.join("rpc.jsonl");
+        let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log_path), None);
+        let mut client = handshake(&lever.person);
+        client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+        write_frame(&mut client, &json!({ "op": "send", "text": "turn 1" })).unwrap();
+        let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+        let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 1);
+
+        write_frame(
+            &mut client,
+            &json!({ "op": "make-project", "thread": tid, "name": "proj-partial" }),
+        )
+        .unwrap();
+        assert_eq!(
+            read_until(&mut client, |f| f.get("reply").is_some())["reply"],
+            "project-made"
+        );
+
+        write_frame(&mut client, &json!({ "op": "send", "thread": tid, "text": "turn 2" })).unwrap();
+        assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+        let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 2);
+
+        // First delete fails on `ses-partial-2` after deleting `ses-partial-1`.
+        write_frame(&mut client, &json!({ "op": "delete", "thread": tid })).unwrap();
+        let err = read_until(&mut client, |f| f.get("reply").is_some());
+        assert_eq!(err["reply"], "error", "{err}");
+        assert_eq!(err["code"], "harness-error", "{err}");
+
+        // Second delete retries ONLY `ses-partial-2` and succeeds cleanly.
+        write_frame(&mut client, &json!({ "op": "delete", "thread": tid })).unwrap();
+        let ok = read_until(&mut client, |f| f["reply"] == "deleted");
+        assert!(ok["warning"].is_null(), "{ok}");
+
+        let rpc_log = std::fs::read_to_string(&rpc_log_path).unwrap();
+        let deleted_sids: Vec<String> = rpc_log
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["method"] == "session/delete")
+            .filter_map(|v| v["params"]["sessionId"].as_str().map(str::to_string))
+            .collect();
+        assert_eq!(
+            deleted_sids,
+            vec![
+                "ses-partial-1".to_string(),
+                "ses-partial-2".to_string(),
+                "ses-partial-2".to_string(),
+            ],
+            "retired session should only be deleted once across retry: {deleted_sids:?}"
+        );
+
+        lever.signal(libc::SIGTERM);
+        assert_eq!(lever.wait().code(), Some(0));
+    }
+
+    // Part B: a retired session that permanently fails deletion warns instead
+    // of blocking deletion of the current session and thread record.
+    {
+        let dir = TempDir::new();
+        let home = dir.0.join("lever-home");
+        std::fs::create_dir_all(&home).unwrap();
+        let script = write_script(
+            &dir.0,
+            &json!({
+                "delete_session": true,
+                "session_prefix": "ses-retired-gone-",
+                "delete_fail_for": ["ses-retired-gone-1"],
+                "turns": [{ "steps": [{ "kind": "text", "text": "ok" }] }]
+            }),
+        );
+        let rpc_log_path = dir.0.join("rpc.jsonl");
+        let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log_path), None);
+        let mut client = handshake(&lever.person);
+        client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+        write_frame(&mut client, &json!({ "op": "send", "text": "turn 1" })).unwrap();
+        let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+        let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 1);
+
+        write_frame(
+            &mut client,
+            &json!({ "op": "make-project", "thread": tid, "name": "proj-gone" }),
+        )
+        .unwrap();
+        assert_eq!(
+            read_until(&mut client, |f| f.get("reply").is_some())["reply"],
+            "project-made"
+        );
+
+        write_frame(&mut client, &json!({ "op": "send", "thread": tid, "text": "turn 2" })).unwrap();
+        assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+        let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 2);
+
+        write_frame(&mut client, &json!({ "op": "delete", "thread": tid })).unwrap();
+        let ok = read_until(&mut client, |f| f["reply"] == "deleted");
+        assert!(ok["warning"].as_str().is_some(), "expected warning: {ok}");
+
+        let rpc_log = std::fs::read_to_string(&rpc_log_path).unwrap();
+        let deleted_sids: Vec<String> = rpc_log
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["method"] == "session/delete")
+            .filter_map(|v| v["params"]["sessionId"].as_str().map(str::to_string))
+            .collect();
+        assert_eq!(
+            deleted_sids,
+            vec!["ses-retired-gone-1".to_string(), "ses-retired-gone-2".to_string()]
+        );
+
+        lever.signal(libc::SIGTERM);
+        assert_eq!(lever.wait().code(), Some(0));
+    }
 }

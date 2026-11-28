@@ -3420,11 +3420,14 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 }
                 if let Some(w) = model.read(cx).agent {
                     let _ = w.update(cx, |view, window, cx| {
-                        let s = &view.model.read(cx).agent_state;
-                        if s.list_view || s.thread.is_none() {
-                            view.close_project_form();
+                        let (list_view, no_thread) = {
+                            let s = &view.model.read(cx).agent_state;
+                            (s.list_view, s.thread.is_none())
+                        };
+                        if (list_view || no_thread) && view.close_project_form() {
+                            cx.notify();
                         }
-                        if is_lifecycle && s.list_view {
+                        if is_lifecycle && list_view {
                             window.focus(&view.focus);
                         }
                         if is_disconnected || is_error {

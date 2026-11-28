@@ -473,7 +473,8 @@ impl AgentSurface {
         self.input.update(cx, |input, cx| input.set_text(text, cx));
     }
 
-    pub(crate) fn close_project_form(&mut self) {
+    pub(crate) fn close_project_form(&mut self) -> bool {
+        let was_open = self.making_project || self.project_browse_open || self.project_browse_loading;
         self.making_project = false;
         self.project_browse_open = false;
         self.project_browse_loading = false;
@@ -481,6 +482,7 @@ impl AgentSurface {
         self.project_browse_parent = None;
         self.project_browse_entries.clear();
         self.project_error = None;
+        was_open
     }
 
     fn project_form_open(&self, cx: &App) -> bool {

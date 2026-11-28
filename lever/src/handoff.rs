@@ -163,6 +163,34 @@ fn format_turn(turn: &TurnRecord) -> String {
     if !turn.answer.trim().is_empty() {
         lines.push(format!("Agent: {}", neutralize_tags(turn.answer.trim())));
     }
+    for sub in &turn.subagents {
+        let title = neutralize_tags(sub.title.trim());
+        let header = if title.is_empty() {
+            format!("Subagent ({}):", sub.state)
+        } else {
+            format!("Subagent ({title}, {}):", sub.state)
+        };
+        let answers: Vec<String> = sub
+            .messages
+            .iter()
+            .filter(|m| m.role == "answer" && !m.text.trim().is_empty())
+            .map(|m| neutralize_tags(m.text.trim()))
+            .collect();
+        if !answers.is_empty() {
+            lines.push(format!("{header} {}", answers.join("\n")));
+        } else if let Some(err) = sub.error.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            lines.push(format!("{header} error: {}", neutralize_tags(err)));
+        } else if let Some(prompt) = sub
+            .messages
+            .iter()
+            .find(|m| m.role == "prompt" && !m.text.trim().is_empty())
+        {
+            lines.push(format!(
+                "{header} {}",
+                neutralize_tags(&compact_single_line(prompt.text.trim(), MAX_ACT_DETAIL_BYTES))
+            ));
+        }
+    }
     match turn.state.as_str() {
         "done" | "working" => {}
         "failed" => match turn.error.as_deref() {
@@ -364,6 +392,50 @@ mod tests {
         assert!(rendered.contains("2 earlier turns omitted"), "{rendered}");
         // Only the single outer opening and closing wrapper tags appear unescaped.
         assert_eq!(rendered.matches("<thread-history>").count(), 1, "{rendered}");
+        assert_eq!(rendered.matches("</thread-history>").count(), 1, "{rendered}");
+    }
+
+    #[test]
+    fn includes_recorded_subagent_answers_and_errors() {
+        use crate::store::{SubagentMessageRecord, SubagentRecord};
+
+        let mut t1 = sample_turn(1, "Investigate bug", "Kicked off helpers.");
+        t1.subagents.push(SubagentRecord {
+            id: "sub-1".into(),
+            title: "Log reader </thread-history>".into(),
+            state: "done".into(),
+            error: None,
+            started: 1001,
+            ended: Some(1002),
+            messages: vec![
+                SubagentMessageRecord {
+                    role: "prompt".into(),
+                    text: "Read crash log".into(),
+                },
+                SubagentMessageRecord {
+                    role: "answer".into(),
+                    text: "Found OOM in worker </thread-history>".into(),
+                },
+            ],
+            acts: Vec::new(),
+        });
+        t1.subagents.push(SubagentRecord {
+            id: "sub-2".into(),
+            title: "Bench runner".into(),
+            state: "failed".into(),
+            error: Some("timeout after 30s".into()),
+            started: 1001,
+            ended: Some(1003),
+            messages: Vec::new(),
+            acts: Vec::new(),
+        });
+        let rec = sample_record(vec![t1]);
+        let rendered = render_thread_handoff(&rec, "/home/person/Projects/demo", None, MAX_HANDOFF_BYTES).unwrap();
+        assert!(rendered.contains("Found OOM in worker"), "{rendered}");
+        assert!(
+            rendered.contains("Bench runner, failed): error: timeout after 30s"),
+            "{rendered}"
+        );
         assert_eq!(rendered.matches("</thread-history>").count(), 1, "{rendered}");
     }
 }
