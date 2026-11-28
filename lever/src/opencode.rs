@@ -977,7 +977,7 @@ mod tests {
             args: vec!["acp".into()],
             env: env(&named),
             watch_paths: Vec::new(),
-            dialect: crate::harness::HarnessDialect::OpenCodeAcp,
+            dialect: None,
         };
         let specs = watch_specs_for(&config);
         assert_eq!(specs.len(), 1);
@@ -1012,7 +1012,7 @@ mod tests {
                     ("OPENCODE_DB".into(), String::new()),
                 ],
                 watch_paths: Vec::new(),
-                dialect: crate::harness::HarnessDialect::OpenCodeAcp,
+                dialect: None,
             };
             watch_specs_for(&config)
         };
@@ -1051,7 +1051,7 @@ mod tests {
                     ("OPENCODE_DB".into(), String::new()),
                 ],
                 watch_paths: Vec::new(),
-                dialect: crate::harness::HarnessDialect::OpenCodeAcp,
+                dialect: None,
             };
             watch_specs_for(&config)
                 .into_iter()
@@ -1206,7 +1206,7 @@ mod tests {
                     ),
                 ],
                 watch_paths: Vec::new(),
-                dialect: crate::harness::HarnessDialect::OpenCodeAcp,
+                dialect: None,
             };
             struct NoopLister;
             impl SessionDiscoverer for NoopLister {

@@ -79,10 +79,13 @@ pub(super) enum PendingRpc {
         mcp_servers: Vec<McpServerSpec>,
         epoch: u64,
     },
+    /// Loads an externally-started session via `session/load` and captures its
+    /// replayed updates into a [`SessionHistory`](crate::harness::SessionHistory).
     LoadHistory {
         thread_id: String,
         session_id: String,
     },
+    /// Lists sessions on the already-running harness via paginated `session/list`.
     ListSessions {
         page: usize,
         prev_cursor: Option<String>,
@@ -105,9 +108,11 @@ pub(super) enum PendingRpc {
         session_id: String,
         effort: String,
     },
+    /// A session opened to read a Model's effort levels.
     ProbeEffortSession {
         model: String,
     },
+    /// That session, set to the Model.
     ProbeEffortModel {
         model: String,
         session_id: String,
@@ -151,6 +156,7 @@ pub struct AcpHarness {
     supports_list_sessions: bool,
     supports_close_session: bool,
     supports_delete_session: bool,
+    /// The harness says it can steer a message into a running prompt.
     supports_steering: bool,
     probing_models: bool,
     listing_sessions: bool,
@@ -159,30 +165,71 @@ pub struct AcpHarness {
     model_config_id: Option<String>,
     mode_config_id: Option<String>,
     pending: HashMap<i64, PendingRpc>,
+    /// Requests the harness asked that wait for an answer, by Lever's handle:
+    /// the harness's ID for the request, and its option for each of Lever's
+    /// answers.
     permissions: HashMap<u64, Permission>,
     next_permission: u64,
+    /// Each session's mode, as Lever's mode ID.
     session_modes: HashMap<String, String>,
+    /// Home directory of the harness process, used to resolve `~` in request
+    /// details identically to `project::resolve_project_path`.
     home: PathBuf,
+    /// Per-thread session generation bumped on `forget_session`/`detach_session`
+    /// so stale in-flight `session/new` or `session/load` replies from before a
+    /// project move are discarded and closed instead of re-binding an old folder.
     session_gen: HashMap<String, u64>,
     thread_to_session: HashMap<String, String>,
     session_to_thread: HashMap<String, String>,
+    /// Pre-move root session IDs detached from a thread, kept with the turn
+    /// number that last ran on that session until the thread is forgotten or
+    /// the session ID is deleted/reassigned, so late subagent updates from the
+    /// old session still route to the thread (direct children attach to this
+    /// turn; nested children resolve their parent subagent's recorded turn).
     retired_root_to_thread: HashMap<String, (String, Option<u64>)>,
+    /// Original turn number recorded for a subagent routed from a retired
+    /// pre-move session.
     child_retired_turn: HashMap<String, u64>,
     session_models: HashMap<String, String>,
+    /// Each session's effort selector, when its Model has effort levels.
     session_efforts: HashMap<String, EffortSelector>,
+    /// ACP configuration option ID for each session's effort selector.
     session_effort_config_ids: HashMap<String, String>,
+    /// Sessions Lever opened to read what the harness offers, and closed.
+    /// What the harness says of one after is its commands, which Lever keeps.
+    /// Bounded so long-running harnesses do not accumulate stale probe IDs.
     probe_sessions: VecDeque<String>,
     new_probe_sessions: Vec<String>,
+    /// Models whose effort levels are being read.
     probing_efforts: HashSet<String>,
     loading_sessions: HashSet<String>,
+    /// Externally-started sessions whose history is currently being replayed
+    /// during `session/load`, keyed by harness session ID.
     history_loads: HashMap<String, HistoryBuilder>,
+    /// Tool call IDs seen per thread, used only to redact harness error messages
+    /// and unrecognized updates without altering normal model output.
     thread_tool_ids: HashMap<String, HashSet<String>>,
+    /// Subagent session IDs seen per thread, used for redaction and to keep
+    /// child sessions separate from top-level threads.
     thread_subagent_ids: HashMap<String, HashSet<String>>,
+    /// Maps a harness's child session ID to the owning Lever thread ID.
     child_to_thread: HashMap<String, String>,
+    /// Last known title of each harness child session, used to strip the
+    /// harness's `"<title>: "` prefix from child acts and requests.
     child_titles: HashMap<String, String>,
+    /// Parent tool calls that launch a subagent, kept so their prompt and
+    /// description attach to the spawned child session without exposing the
+    /// wrapper tool call or session ID. Keyed by the session that made the
+    /// call and the call's ID: a call ID is unique only within its session.
     pending_subagent_calls: HashMap<(String, String), PendingSubagentCall>,
+    /// Subagents whose prompt Lever has passed on, and where it came from, so
+    /// one prompt is never shown twice.
     child_prompts: HashMap<String, PromptFrom>,
+    /// The subagent session that launched each nested child, by child.
     child_launchers: HashMap<String, String>,
+    /// Transport failure recorded when Lever cancels an endless retry loop on a
+    /// session whose Model is unreachable, turned into `TurnOutcome::Failed`
+    /// when the harness answers the cancelled prompt.
     transport_failures: HashMap<String, String>,
 }
 
@@ -689,6 +736,9 @@ impl Harness for AcpHarness {
     }
 
     fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) -> bool {
+        if !self.initialized || !self.supports_steering {
+            return false;
+        }
         let Some(method) = self.dialect.steering_method() else {
             return false;
         };

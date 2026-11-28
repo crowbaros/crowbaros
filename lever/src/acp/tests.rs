@@ -153,7 +153,7 @@ fn generic_acp_dialect_injects_no_opencode_env_or_extensions() {
         args: vec!["--acp".into()],
         env: vec![("CUSTOM".into(), "1".into())],
         watch_paths: Vec::new(),
-        dialect: HarnessDialect::GenericAcp,
+        dialect: Some(HarnessDialect::GenericAcp),
     };
     let dialect = dialect_for_config(&cfg);
     let (env_set, env_remove) = dialect.prepare_spawn_env(&cfg, HarnessLaunchOptions::default());
@@ -192,9 +192,9 @@ fn wrapper_launcher_gets_opencode_dialect_consistently_across_launch_and_discove
         name: "Custom Wrapper".into(),
         program: "/usr/local/bin/agent-wrapper".into(),
         args: vec!["acp".into()],
-        env: Vec::new(),
+        env: vec![("XDG_DATA_HOME".into(), "/tmp/fake-xdg-data".into())],
         watch_paths: Vec::new(),
-        dialect: HarnessDialect::default(),
+        dialect: None,
     };
     let dialect = dialect_for_config(&wrapper_cfg);
     let (spawn_env, _) = dialect.prepare_spawn_env(&wrapper_cfg, HarnessLaunchOptions::default());
@@ -209,6 +209,32 @@ fn wrapper_launcher_gets_opencode_dialect_consistently_across_launch_and_discove
     );
     assert_eq!(dialect.steering_method(), Some("_session/steering"));
     assert!(dialect.holds_prompt_during_subagent_request());
+
+    // Explicit OpenCode dialect selects OpenCodeSessionDiscoverer (watching OpenCode's
+    // DB and using OpenCode classification) even when the wrapper has a custom name/path.
+    let explicit_oc = HarnessConfig {
+        dialect: Some(HarnessDialect::OpenCodeAcp),
+        ..wrapper_cfg.clone()
+    };
+    let oc_disc = discoverer_for_harness(&explicit_oc).expect("explicit opencode dialect gets discoverer");
+    assert!(oc_disc.needs_classification());
+    assert!(
+        oc_disc
+            .watch_specs()
+            .iter()
+            .any(|s| s.dir == Path::new("/tmp/fake-xdg-data/opencode")),
+        "explicit opencode wrapper must watch OpenCode's DB path: {:?}",
+        oc_disc.watch_specs()
+    );
+
+    // Explicit GenericAcp opts out of OpenCode discovery even if named OpenCode.
+    let explicit_generic = HarnessConfig {
+        name: "OpenCode".into(),
+        program: "/usr/local/bin/opencode".into(),
+        dialect: Some(HarnessDialect::GenericAcp),
+        ..wrapper_cfg.clone()
+    };
+    assert!(discoverer_for_harness(&explicit_generic).is_none());
 
     // Spawning a real child via the production AcpHarnessFactory applies the same dialect.
     let mut factory = AcpHarnessFactory;
@@ -751,7 +777,7 @@ fn late_update_for_known_child_does_not_stamp_retired_turn() {
         args: Vec::new(),
         env: Vec::new(),
         watch_paths: Vec::new(),
-        dialect: HarnessDialect::OpenCodeAcp,
+        dialect: Some(HarnessDialect::OpenCodeAcp),
     };
     let mut harness = AcpHarness::spawn_with_dialect(
         &cfg,
@@ -819,7 +845,7 @@ fn render_unknown_update_skips_whitespace_trims_redacts_and_uses_stable_fallback
         args: Vec::new(),
         env: Vec::new(),
         watch_paths: Vec::new(),
-        dialect: HarnessDialect::GenericAcp,
+        dialect: Some(HarnessDialect::GenericAcp),
     };
     let mut harness =
         AcpHarness::spawn_with_dialect(&cfg, HarnessLaunchOptions::default(), Box::new(GenericAcpDialect)).unwrap();
@@ -892,7 +918,7 @@ fn generic_acp_dialect_maps_canonical_modes_and_declines_steer_cleanly() {
         args: Vec::new(),
         env: Vec::new(),
         watch_paths: Vec::new(),
-        dialect: HarnessDialect::GenericAcp,
+        dialect: Some(HarnessDialect::GenericAcp),
     };
     let mut harness =
         AcpHarness::spawn_with_dialect(&cfg, HarnessLaunchOptions::default(), Box::new(GenericAcpDialect)).unwrap();
@@ -930,6 +956,50 @@ fn generic_acp_dialect_maps_canonical_modes_and_declines_steer_cleanly() {
             .iter()
             .any(|e| matches!(e, HarnessEvent::ModeSetFailed { thread_id, turn: Some(1), .. } if thread_id == "t1")),
         "generic harness that stays in full-access must fail ask-first cleanly: {events:?}"
+    );
+
+    Box::new(harness).kill_tree();
+}
+
+#[test]
+fn child_update_with_unknown_type_still_registers_child_and_retired_turn() {
+    let cfg = HarnessConfig {
+        id: "cat-test".into(),
+        name: "cat-test".into(),
+        program: "/bin/cat".into(),
+        args: Vec::new(),
+        env: Vec::new(),
+        watch_paths: Vec::new(),
+        dialect: Some(HarnessDialect::OpenCodeAcp),
+    };
+    let mut harness = AcpHarness::spawn_with_dialect(
+        &cfg,
+        HarnessLaunchOptions::default(),
+        Box::new(OpenCodeAcpDialect::default()),
+    )
+    .unwrap();
+    assert!(harness.bind_session("t1", "ses-root-1"));
+    harness.detach_session("t1", Some(3));
+
+    // An unrecognized child notification `type` emits no event, yet still registers
+    // the child for ownership, redaction, title, and retired-turn bookkeeping.
+    let mut events = Vec::new();
+    harness.handle_child_update_notification(
+        Some(&json!({
+            "childSessionId": "ses-child-unknown",
+            "rootSessionId": "ses-root-1",
+            "parentSessionId": "ses-root-1",
+            "title": "Background helper",
+            "type": "future_kind"
+        })),
+        &mut events,
+    );
+    assert!(events.is_empty());
+    assert!(harness.is_subagent_session("ses-child-unknown"));
+    assert_eq!(harness.retired_turn_of("ses-child-unknown"), Some(3));
+    assert_eq!(
+        harness.redact_for_thread(Some("t1"), "failed in ses-child-unknown"),
+        "failed in [redacted]"
     );
 
     Box::new(harness).kill_tree();

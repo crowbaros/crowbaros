@@ -91,9 +91,14 @@ impl Service {
                     };
                 }
                 Ok(false) => {
+                    let _ = self.store.forget_queued(&queued.id);
                     return error_outcome("working", "The Agent did not take your message into its turn.");
                 }
                 Err(err) => {
+                    // Best-effort rollback so a failed fallback write never leaves
+                    // a `"steering"` row that restart recovery would turn into a
+                    // queued send after the person was told it failed.
+                    let _ = self.store.forget_queued(&queued.id);
                     store_failed(log, &err);
                     return error_outcome("storage-error", &err);
                 }

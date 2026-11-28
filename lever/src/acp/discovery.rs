@@ -224,7 +224,12 @@ impl SessionDiscoverer for AcpSessionDiscoverer {
 /// harness configured with `--harness-watch` gets the generic
 /// [`AcpSessionDiscoverer`].
 pub fn discoverer_for_harness(config: &HarnessConfig) -> Option<Box<dyn SessionDiscoverer>> {
-    if config.dialect == HarnessDialect::OpenCodeAcp && opencode::is_opencode_config(config) {
+    let use_opencode = match config.dialect {
+        Some(HarnessDialect::OpenCodeAcp) => true,
+        Some(HarnessDialect::GenericAcp) => false,
+        None => opencode::is_opencode_config(config),
+    };
+    if use_opencode {
         let specs = opencode::watch_specs_for(config);
         let lister = Box::new(AcpSessionDiscoverer::new(config.clone(), specs.clone()));
         return Some(Box::new(opencode::OpenCodeSessionDiscoverer::new(

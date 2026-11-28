@@ -27,7 +27,7 @@ fn fake_config() -> HarnessConfig {
         args: Vec::new(),
         env: Vec::new(),
         watch_paths: Vec::new(),
-        dialect: HarnessDialect::GenericAcp,
+        dialect: Some(HarnessDialect::GenericAcp),
     }
 }
 
@@ -1223,4 +1223,127 @@ fn in_process_mode_and_model_set_failures_preserve_prior_session_state() {
             .any(|r| r.peer_id == 3 && r.message["reply"] == "error")
     );
     assert_eq!(handle.session_current_model("s-1").as_deref(), Some("acme/a"));
+}
+
+#[test]
+fn in_process_declining_steer_falls_back_to_queue_and_failed_fallback_leaves_no_orphan_on_restart() {
+    let dir = TempDir::new();
+    let (mut svc, handle, mut log, db_path) = build_service(&dir, full_capabilities(), None);
+
+    let tid = svc
+        .handle_request(1, true, false, &json!({ "op": "send", "text": "first" }), &mut log)
+        .reply
+        .unwrap()["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    drive_init_and_session(&mut svc, &handle, &mut log, &tid, "s-1", "ask-first");
+    handle.take_calls();
+
+    // 1. Adapter advertises steering, but steer() declines (returns false):
+    //    Service falls back cleanly to queueing without leaving a PendingSteer.
+    handle.set_decline_steer(true);
+    let fallback = svc
+        .handle_request(
+            2,
+            true,
+            false,
+            &json!({ "op": "send", "thread": tid, "text": "queued via fallback" }),
+            &mut log,
+        )
+        .reply
+        .unwrap();
+    assert_eq!(fallback["reply"], "queued");
+
+    // 2. Now fail UPDATE on `queued` while steer() declines:
+    //    Service returns storage-error AND rolls back the unsent `"steering"` row
+    //    so reopening Store (restart recovery) does NOT resurrect it as queued.
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    db.execute_batch("DELETE FROM queued;").unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER deny_queued_update BEFORE UPDATE ON queued BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    )
+    .unwrap();
+    let failed = svc
+        .handle_request(
+            3,
+            true,
+            false,
+            &json!({ "op": "send", "thread": tid, "text": "must not resurrect" }),
+            &mut log,
+        )
+        .reply
+        .unwrap();
+    assert_eq!(failed["reply"], "error");
+    assert_eq!(failed["code"], "storage-error");
+    db.execute_batch("DROP TRIGGER deny_queued_update;").unwrap();
+
+    // Reopen SQLite as a fresh Lever startup: no orphaned row may appear.
+    let reopened = Store::open(&db_path, unix_now()).unwrap();
+    assert!(
+        reopened.queued_of(&tid, true).unwrap().is_empty(),
+        "failed steering fallback must not leave a row that restart turns into queued"
+    );
+}
+
+#[test]
+fn in_process_first_send_fails_cleanly_when_harness_cannot_honor_thread_mode() {
+    let dir = TempDir::new();
+    let (mut svc, handle, mut log, _) = build_service(&dir, full_capabilities(), None);
+
+    let tid = svc
+        .handle_request(1, true, false, &json!({ "op": "send", "text": "hello" }), &mut log)
+        .reply
+        .unwrap()["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Session opens in `full-access` while Lever's thread starts in `ask-first`.
+    handle.set_session_mode("s-1", "full-access");
+    handle.push_event(HarnessEvent::Initialized);
+    svc.on_harness_readable(&mut log);
+    handle.push_event(HarnessEvent::SessionReady {
+        thread_id: tid.clone(),
+        session_id: "s-1".into(),
+        afresh: false,
+        catalog: Some(ModelCatalog {
+            supported: true,
+            models: vec![ModelOption {
+                id: "acme/a".into(),
+                name: "A".into(),
+                provider: None,
+            }],
+            default_model: Some("acme/a".into()),
+            modes: vec!["full-access".into()],
+        }),
+        current_model: Some("acme/a".into()),
+    });
+    svc.on_harness_readable(&mut log);
+
+    // Service must ask to switch to `ask-first` before sending any prompt.
+    let calls = handle.take_calls();
+    assert!(calls.iter().any(|c| matches!(
+        c,
+        RecordedCall::SetSessionMode { mode, turn: Some(1), .. } if mode == "ask-first"
+    )));
+    assert!(
+        !calls.iter().any(|c| matches!(c, RecordedCall::SendPrompt { .. })),
+        "prompt must not be sent before the session honors ask-first"
+    );
+
+    // Harness rejects `ask-first` -> turn fails clearly and no prompt is sent.
+    handle.push_event(HarnessEvent::ModeSetFailed {
+        thread_id: tid.clone(),
+        turn: Some(1),
+        message: "The harness did not take this thread's mode.".into(),
+    });
+    let effects = svc.on_harness_readable(&mut log);
+    assert!(effects.broadcasts.iter().any(|b| b.message["event"] == "failed"));
+    assert!(
+        !handle
+            .take_calls()
+            .iter()
+            .any(|c| matches!(c, RecordedCall::SendPrompt { .. }))
+    );
 }

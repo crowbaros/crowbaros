@@ -2,7 +2,6 @@
 //! harness lifecycle (including the idle timer), active turns across concurrent
 //! threads, discovery, catalog caching, and Lever's wire messages.
 
-mod approvals;
 mod catalog;
 mod discovery;
 mod events;
@@ -11,6 +10,7 @@ mod lifecycle;
 mod mcp_tools;
 mod ops;
 mod queue;
+mod requests;
 mod subagents;
 mod turns;
 mod wire;

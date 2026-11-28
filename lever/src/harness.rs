@@ -53,8 +53,9 @@ pub struct HarnessConfig {
     /// Additional on-disk store paths to watch for sessions started outside
     /// Lever (used by tests or harnesses without built-in default paths).
     pub watch_paths: Vec<PathBuf>,
-    /// Explicit protocol dialect for this harness.
-    pub dialect: HarnessDialect,
+    /// Explicit protocol dialect for this harness, or `None` to use the
+    /// default ACP dialect (`OpenCodeAcp`) with name-based discoverer selection.
+    pub dialect: Option<HarnessDialect>,
 }
 
 /// Per-launch options passed when spawning a harness instance.

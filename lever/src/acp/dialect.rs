@@ -52,6 +52,9 @@ pub(crate) enum ChildUpdateBody<'a> {
         error: Option<String>,
     },
     Update(&'a Value),
+    /// Notification recognized for child registration/metadata bookkeeping,
+    /// carrying no status or session-update payload to emit.
+    Ignored,
 }
 
 /// Dialect-parsed envelope of a vendor child-session notification.
@@ -352,8 +355,11 @@ impl AcpDialect for OpenCodeAcpDialect {
                 };
                 ChildUpdateBody::Status { state, error }
             }
-            Some("update") => ChildUpdateBody::Update(obj.get("update")?),
-            _ => return None,
+            Some("update") => match obj.get("update") {
+                Some(update) => ChildUpdateBody::Update(update),
+                None => ChildUpdateBody::Ignored,
+            },
+            _ => ChildUpdateBody::Ignored,
         };
         Some(ChildUpdateEnvelope {
             child_session_id,
@@ -512,7 +518,7 @@ impl AcpDialect for OpenCodeAcpDialect {
 
 /// Selects the ACP dialect from `config.dialect`.
 pub(crate) fn dialect_for_config(config: &HarnessConfig) -> Box<dyn AcpDialect> {
-    match config.dialect {
+    match config.dialect.unwrap_or_default() {
         HarnessDialect::OpenCodeAcp => Box::new(OpenCodeAcpDialect::default()),
         HarnessDialect::GenericAcp => Box::new(GenericAcpDialect),
     }

@@ -139,7 +139,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
                 args: harness_args,
                 env: harness_env,
                 watch_paths: harness_watch,
-                dialect: harness_dialect.unwrap_or_default(),
+                dialect: harness_dialect,
             })
         }
         None if harness_name.is_some()
@@ -1002,5 +1002,60 @@ mod tests {
         assert!(std::os::unix::net::UnixStream::connect(&tight_occupied).is_ok());
         drop(tight_listener);
         drop(tight_unrelated);
+    }
+
+    #[test]
+    fn parse_options_handles_harness_dialect_flag() {
+        let base = |extra: &[&str]| -> Vec<String> {
+            let mut args: Vec<String> = [
+                "--state",
+                "/tmp/s",
+                "--surface-socket",
+                "/tmp/surf",
+                "--shell-uid",
+                "1000",
+                "--person-socket",
+                "/tmp/pers",
+                "--person-uid",
+                "1001",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect();
+            args.extend(extra.iter().map(|s| (*s).to_string()));
+            args
+        };
+
+        // Omitted dialect leaves HarnessConfig.dialect as None (default behavior).
+        let default_opts = parse_options(&base(&["--harness", "/bin/agent"])).unwrap();
+        assert_eq!(default_opts.harness.unwrap().dialect, None);
+
+        // Explicit opencode-acp and generic-acp both parse cleanly.
+        let oc_opts = parse_options(&base(&[
+            "--harness",
+            "/bin/agent-wrapper",
+            "--harness-dialect",
+            "opencode-acp",
+        ]))
+        .unwrap();
+        assert_eq!(oc_opts.harness.unwrap().dialect, Some(HarnessDialect::OpenCodeAcp));
+
+        let gen_opts = parse_options(&base(&["--harness", "/bin/agent", "--harness-dialect", "generic-acp"])).unwrap();
+        assert_eq!(gen_opts.harness.unwrap().dialect, Some(HarnessDialect::GenericAcp));
+
+        // Unknown value, duplicate flag, or dialect without --harness are all rejected.
+        assert!(parse_options(&base(&["--harness", "/bin/agent", "--harness-dialect", "bogus"])).is_none());
+        assert!(
+            parse_options(&base(&[
+                "--harness",
+                "/bin/agent",
+                "--harness-dialect",
+                "generic-acp",
+                "--harness-dialect",
+                "opencode-acp",
+            ]))
+            .is_none()
+        );
+        assert!(parse_options(&base(&["--harness-dialect", "generic-acp"])).is_none());
     }
 }

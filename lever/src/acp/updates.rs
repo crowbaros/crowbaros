@@ -491,6 +491,7 @@ impl AcpHarness {
             ChildUpdateBody::Update(raw_update) => {
                 self.handle_child_session_update(&thread_id, child_sid, effective_title.as_deref(), raw_update, events);
             }
+            ChildUpdateBody::Ignored => {}
         }
     }
 

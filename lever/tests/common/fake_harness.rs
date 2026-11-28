@@ -98,6 +98,7 @@ pub enum RecordedCall {
 struct Inner {
     capabilities: HarnessCapabilities,
     spawn_error: Option<String>,
+    decline_steer: bool,
     initialized: bool,
     probing_models: bool,
     listing_sessions: bool,
@@ -230,6 +231,10 @@ impl FakeHarnessHandle {
 
     pub fn set_spawn_error(&self, err: Option<String>) {
         self.inner.lock().unwrap().spawn_error = err;
+    }
+
+    pub fn set_decline_steer(&self, decline: bool) {
+        self.inner.lock().unwrap().decline_steer = decline;
     }
 
     pub fn set_session_model(&self, session_id: &str, model: &str) {
@@ -572,7 +577,7 @@ impl Harness for FakeHarness {
 
     fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) -> bool {
         let mut g = self.handle.inner.lock().unwrap();
-        if !g.initialized || !g.capabilities.supports_steering {
+        if !g.initialized || !g.capabilities.supports_steering || g.decline_steer {
             return false;
         }
         g.calls.push(RecordedCall::Steer {
