@@ -14,8 +14,8 @@ mod controller_tests;
 mod tests;
 
 pub use controller::{
-    AgentController, AgentEffect, AgentIntent, FocusTarget, ThreadAction, display_folder_path,
-    join_project_place, place_suggestions, validate_project_form,
+    AgentController, AgentEffect, AgentIntent, AgentRenderSnapshot, FocusTarget, ThreadAction,
+    display_folder_path, join_project_place, place_suggestions, validate_project_form,
 };
 pub use state::AgentState;
 pub use transport::{CommandSender, load_picks, save_picks, start_from_env};

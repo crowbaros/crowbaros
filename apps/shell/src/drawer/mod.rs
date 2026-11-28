@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! The Agent's surface (ADR 0035): purely declarative GPUI drawer view driven
-//! by `agent::AgentController`, plus the shell-side effect executor, summon
+//! The Agent's surface (ADR 0035): GPUI drawer view driven by
+//! `agent::AgentController` (with zero Lever IPC or `Model`/entity mutations
+//! during `Render::render`), plus the shell-side effect executor, summon
 //! gesture handler, and control-socket bounds tracker.
 
 mod render;
@@ -141,7 +142,7 @@ pub fn sync_agent_view(model: &Entity<Model>, cx: &App) {
         view.drawer_up = m.agent_window.is_some();
         view.mark_overlay = m.mark_overlay.is_some();
         view.mark_overlay_output = m.mark_overlay.as_ref().map(|(_, out)| out.clone());
-        view.state = m.agent.state.clone();
+        view.state = m.agent.state().clone();
         if !view.drawer_up {
             view.controls.clear();
             view.drawer_output = None;
@@ -157,12 +158,12 @@ pub fn sync_mark_overlay(model: &Entity<Model>, cx: &mut App) -> bool {
     let (want_output, existing_output, mark) = {
         let m = model.read(cx);
         let want = fullscreen_mark_overlay_output(
-            m.agent.state.mark,
+            m.agent.state().mark,
             &m.snapshot,
             m.agent_window.is_some(),
         );
         let existing = m.mark_overlay.as_ref().map(|(_, out)| out.clone());
-        (want, existing, m.agent.state.mark)
+        (want, existing, m.agent.state().mark)
     };
     let mut overlay_changed = false;
     if want_output != existing_output {
@@ -207,24 +208,112 @@ pub fn sync_mark_overlay(model: &Entity<Model>, cx: &mut App) -> bool {
     overlay_changed
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ShellEffect {
+    SendLeverCommand(agent::types::AgentCommand),
+    SavePicks {
+        model: Option<String>,
+        effort: Option<String>,
+    },
+    LaunchSignIn,
+    AgentKeyboard(bool),
+    SyncMarkOverlay,
+    SyncAgentView,
+    LogMarkChange {
+        prev: agent::Mark,
+        next: agent::Mark,
+    },
+    LogRequestAnswer(String),
+    NotifyMarkOverlay,
+    RefreshWindows,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ViewEffect {
+    SetComposerText(String),
+    SetProjectNameText(String),
+    SetProjectFolderText(String),
+    SyncComposerMenu {
+        list_open: bool,
+        rail_open: bool,
+    },
+    Focus(FocusTarget),
+    ScrollToBottom,
+    ScrollToBottomIfNearBottom,
+    ResetScroll,
+    NotifyDrawer,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RoutedEffect {
+    Shell(ShellEffect),
+    View(ViewEffect),
+}
+
+/// Exhaustively routes every `AgentEffect` to either the shell runtime or the
+/// `AgentSurface` view so adding a new effect is a compile error if unhandled.
+fn classify_effect(effect: AgentEffect) -> RoutedEffect {
+    match effect {
+        AgentEffect::SendLeverCommand(cmd) => RoutedEffect::Shell(ShellEffect::SendLeverCommand(cmd)),
+        AgentEffect::SavePicks { model, effort } => {
+            RoutedEffect::Shell(ShellEffect::SavePicks { model, effort })
+        }
+        AgentEffect::LaunchSignIn => RoutedEffect::Shell(ShellEffect::LaunchSignIn),
+        AgentEffect::AgentKeyboard(to_surface) => {
+            RoutedEffect::Shell(ShellEffect::AgentKeyboard(to_surface))
+        }
+        AgentEffect::SyncMarkOverlay => RoutedEffect::Shell(ShellEffect::SyncMarkOverlay),
+        AgentEffect::SyncAgentView => RoutedEffect::Shell(ShellEffect::SyncAgentView),
+        AgentEffect::LogMarkChange { prev, next } => {
+            RoutedEffect::Shell(ShellEffect::LogMarkChange { prev, next })
+        }
+        AgentEffect::LogRequestAnswer(answer) => {
+            RoutedEffect::Shell(ShellEffect::LogRequestAnswer(answer))
+        }
+        AgentEffect::NotifyMarkOverlay => RoutedEffect::Shell(ShellEffect::NotifyMarkOverlay),
+        AgentEffect::RefreshWindows => RoutedEffect::Shell(ShellEffect::RefreshWindows),
+        AgentEffect::SetComposerText(text) => RoutedEffect::View(ViewEffect::SetComposerText(text)),
+        AgentEffect::SetProjectNameText(text) => {
+            RoutedEffect::View(ViewEffect::SetProjectNameText(text))
+        }
+        AgentEffect::SetProjectFolderText(text) => {
+            RoutedEffect::View(ViewEffect::SetProjectFolderText(text))
+        }
+        AgentEffect::SyncComposerMenu {
+            list_open,
+            rail_open,
+        } => RoutedEffect::View(ViewEffect::SyncComposerMenu {
+            list_open,
+            rail_open,
+        }),
+        AgentEffect::Focus(target) => RoutedEffect::View(ViewEffect::Focus(target)),
+        AgentEffect::ScrollToBottom => RoutedEffect::View(ViewEffect::ScrollToBottom),
+        AgentEffect::ScrollToBottomIfNearBottom => {
+            RoutedEffect::View(ViewEffect::ScrollToBottomIfNearBottom)
+        }
+        AgentEffect::ResetScroll => RoutedEffect::View(ViewEffect::ResetScroll),
+        AgentEffect::NotifyDrawer => RoutedEffect::View(ViewEffect::NotifyDrawer),
+    }
+}
+
 /// Executes one shell-level (non-drawer-view) effect. Returns `true` when
 /// windows should be refreshed.
-fn execute_shell_effect(model: &Entity<Model>, effect: AgentEffect, cx: &mut App) -> bool {
+fn execute_shell_effect(model: &Entity<Model>, effect: ShellEffect, cx: &mut App) -> bool {
     match effect {
-        AgentEffect::SendLeverCommand(cmd) => {
+        ShellEffect::SendLeverCommand(cmd) => {
             if let Some(tx) = model.read(cx).agent_tx.clone() {
                 tx.dispatch(cmd);
             }
             false
         }
-        AgentEffect::SavePicks {
+        ShellEffect::SavePicks {
             model: pick_model,
             effort,
         } => {
             agent::save_picks(pick_model.as_deref(), effort.as_deref());
             false
         }
-        AgentEffect::LaunchSignIn => {
+        ShellEffect::LaunchSignIn => {
             let (launcher, compositor, tx) = {
                 let m = model.read(cx);
                 (
@@ -236,16 +325,16 @@ fn execute_shell_effect(model: &Entity<Model>, effect: AgentEffect, cx: &mut App
             launcher.launch_agent_sign_in(compositor, tx);
             false
         }
-        AgentEffect::AgentKeyboard(to_surface) => {
+        ShellEffect::AgentKeyboard(to_surface) => {
             model.read(cx).compositor.agent_keyboard(to_surface);
             false
         }
-        AgentEffect::SyncMarkOverlay => sync_mark_overlay(model, cx),
-        AgentEffect::SyncAgentView => {
+        ShellEffect::SyncMarkOverlay => sync_mark_overlay(model, cx),
+        ShellEffect::SyncAgentView => {
             sync_agent_view(model, cx);
             false
         }
-        AgentEffect::LogMarkChange { prev, next } => {
+        ShellEffect::LogMarkChange { prev, next } => {
             log::info!(
                 "SHELL agent-mark state={} prev={}",
                 next.label(),
@@ -253,14 +342,17 @@ fn execute_shell_effect(model: &Entity<Model>, effect: AgentEffect, cx: &mut App
             );
             false
         }
-        AgentEffect::NotifyMarkOverlay => {
+        ShellEffect::LogRequestAnswer(answer) => {
+            log::info!("SHELL agent-request answer={answer}");
+            false
+        }
+        ShellEffect::NotifyMarkOverlay => {
             if let Some((w, _)) = model.read(cx).mark_overlay {
                 let _ = w.update(cx, |_, _, cx| cx.notify());
             }
             false
         }
-        AgentEffect::RefreshWindows => true,
-        _ => false,
+        ShellEffect::RefreshWindows => true,
     }
 }
 
@@ -273,22 +365,16 @@ pub fn apply_effects_from_app(
 ) -> bool {
     let mut refresh = false;
     for effect in effects {
-        match effect {
-            AgentEffect::SetComposerText(_)
-            | AgentEffect::SetProjectNameText(_)
-            | AgentEffect::SetProjectFolderText(_)
-            | AgentEffect::SyncComposerMenu { .. }
-            | AgentEffect::Focus(_)
-            | AgentEffect::ScrollToBottom
-            | AgentEffect::ScrollToBottomIfNearBottom
-            | AgentEffect::ResetScroll
-            | AgentEffect::NotifyDrawer => {
+        match classify_effect(effect) {
+            RoutedEffect::View(view_effect) => {
                 if let Some(w) = model.read(cx).agent_window {
-                    let _ = w.update(cx, |view, w, cx| view.apply_view_effect(effect, w, cx));
+                    let _ = w.update(cx, |view, w, cx| {
+                        view.apply_view_effect(view_effect, Some(w), cx)
+                    });
                 }
             }
-            other => {
-                if execute_shell_effect(model, other, cx) {
+            RoutedEffect::Shell(shell_effect) => {
+                if execute_shell_effect(model, shell_effect, cx) {
                     refresh = true;
                 }
             }
@@ -297,9 +383,12 @@ pub fn apply_effects_from_app(
     refresh
 }
 
-/// Purely declarative GPUI view for the Agent's drawer surface.
+/// GPUI view for the Agent's drawer surface.
 /// Holds only GPUI handles, inputs, scroll/layout tracking, and subscriptions;
 /// all domain and UI state lives in `Model::agent` (`AgentController`).
+/// `Render::render` performs zero Lever IPC and zero `Model`/entity mutations
+/// (it only clears the view-local scroll flag and publishes prepaint control
+/// bounds to `agent_view`).
 pub struct AgentSurface {
     pub(crate) model: Entity<Model>,
     pub(crate) focus: FocusHandle,
@@ -347,14 +436,14 @@ impl AgentSurface {
             let effects = this
                 .model
                 .update(cx, |m, _| m.agent.handle_intent(AgentIntent::DraftChanged(text)));
-            this.apply_effects_without_window(effects, cx);
+            this.apply_effects(effects, None, cx);
         });
         let project_name_sub = cx.observe(&project_name_input, |this, name_input, cx| {
             let name = name_input.read(cx).query();
             let effects = this.model.update(cx, |m, _| {
                 m.agent.handle_intent(AgentIntent::ProjectNameChanged(name))
             });
-            this.apply_effects_without_window(effects, cx);
+            this.apply_effects(effects, None, cx);
         });
         let project_folder_sub = cx.observe(&project_folder_input, |this, folder_input, cx| {
             let folder = folder_input.read(cx).query();
@@ -362,13 +451,13 @@ impl AgentSurface {
                 m.agent
                     .handle_intent(AgentIntent::ProjectFolderChanged(folder))
             });
-            this.apply_effects_without_window(effects, cx);
+            this.apply_effects(effects, None, cx);
         });
         let tick = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let alive = this.update(cx, |this, cx| {
-                    if this.model.read(cx).agent.state.working() {
+                    if this.model.read(cx).agent.state().working() {
                         cx.notify();
                     }
                 });
@@ -424,87 +513,26 @@ impl AgentSurface {
             .model
             .update(cx, |m, _| m.agent.handle_intent(intent));
         let had_effects = !effects.is_empty();
-        let mut refresh = false;
-        for effect in effects {
-            match effect {
-                AgentEffect::SetComposerText(_)
-                | AgentEffect::SetProjectNameText(_)
-                | AgentEffect::SetProjectFolderText(_)
-                | AgentEffect::SyncComposerMenu { .. }
-                | AgentEffect::Focus(_)
-                | AgentEffect::ScrollToBottom
-                | AgentEffect::ScrollToBottomIfNearBottom
-                | AgentEffect::ResetScroll
-                | AgentEffect::NotifyDrawer => {
-                    self.apply_view_effect(effect, window, cx);
-                }
-                other => {
-                    if execute_shell_effect(&self.model, other, cx) {
-                        refresh = true;
-                    }
-                }
-            }
-        }
-        if refresh {
-            cx.refresh_windows();
-        }
+        self.apply_effects(effects, Some(window), cx);
         had_effects
     }
 
-    /// Dispatches effects produced inside entity observers where no `&mut Window`
-    /// is available (text/menu/command/notify effects never need `&mut Window`).
-    fn apply_effects_without_window(
+    /// Single exhaustive effect executor used by both windowed handlers and
+    /// entity observers (`window = None`).
+    fn apply_effects(
         &mut self,
         effects: Vec<AgentEffect>,
+        mut window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) {
         let mut refresh = false;
         for effect in effects {
-            match effect {
-                AgentEffect::SetComposerText(text) => {
-                    if self.input.read(cx).text() != text {
-                        self.input.update(cx, |input, cx| input.set_text(text, cx));
-                    }
+            match classify_effect(effect) {
+                RoutedEffect::View(view_effect) => {
+                    self.apply_view_effect(view_effect, window.as_deref_mut(), cx);
                 }
-                AgentEffect::SetProjectNameText(text) => {
-                    if self.project_name_input.read(cx).query() != text {
-                        self.project_name_input
-                            .update(cx, |input, cx| input.set_text(text, cx));
-                    }
-                }
-                AgentEffect::SetProjectFolderText(text) => {
-                    if self.project_folder_input.read(cx).query() != text {
-                        self.project_folder_input
-                            .update(cx, |input, cx| input.set_text(text, cx));
-                    }
-                }
-                AgentEffect::SyncComposerMenu {
-                    list_open,
-                    rail_open,
-                } => {
-                    self.input.update(cx, |input, _| {
-                        input.list_open = list_open;
-                        input.rail_open = rail_open;
-                    });
-                }
-                AgentEffect::ScrollToBottom => {
-                    self.scroll_to_bottom = true;
-                }
-                AgentEffect::ScrollToBottomIfNearBottom => {
-                    if self.near_bottom() {
-                        self.scroll_to_bottom = true;
-                    }
-                }
-                AgentEffect::ResetScroll => {
-                    self.scroll_to_bottom = false;
-                    self.scroll.set_offset(point(px(0.), px(0.)));
-                }
-                AgentEffect::NotifyDrawer => {
-                    cx.notify();
-                }
-                AgentEffect::Focus(_) => {}
-                other => {
-                    if execute_shell_effect(&self.model, other, cx) {
+                RoutedEffect::Shell(shell_effect) => {
+                    if execute_shell_effect(&self.model, shell_effect, cx) {
                         refresh = true;
                     }
                 }
@@ -515,31 +543,31 @@ impl AgentSurface {
         }
     }
 
-    pub(crate) fn apply_view_effect(
+    fn apply_view_effect(
         &mut self,
-        effect: AgentEffect,
-        window: &mut Window,
+        effect: ViewEffect,
+        window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) {
         match effect {
-            AgentEffect::SetComposerText(text) => {
+            ViewEffect::SetComposerText(text) => {
                 if self.input.read(cx).text() != text {
                     self.input.update(cx, |input, cx| input.set_text(text, cx));
                 }
             }
-            AgentEffect::SetProjectNameText(text) => {
+            ViewEffect::SetProjectNameText(text) => {
                 if self.project_name_input.read(cx).query() != text {
                     self.project_name_input
                         .update(cx, |input, cx| input.set_text(text, cx));
                 }
             }
-            AgentEffect::SetProjectFolderText(text) => {
+            ViewEffect::SetProjectFolderText(text) => {
                 if self.project_folder_input.read(cx).query() != text {
                     self.project_folder_input
                         .update(cx, |input, cx| input.set_text(text, cx));
                 }
             }
-            AgentEffect::SyncComposerMenu {
+            ViewEffect::SyncComposerMenu {
                 list_open,
                 rail_open,
             } => {
@@ -548,34 +576,40 @@ impl AgentSurface {
                     input.rail_open = rail_open;
                 });
             }
-            AgentEffect::Focus(target) => match target {
-                FocusTarget::Surface => window.focus(&self.focus),
-                FocusTarget::Composer => window.focus(&self.input.focus_handle(cx)),
-                FocusTarget::ProjectName => {
-                    window.focus(&self.project_name_input.focus_handle(cx))
+            ViewEffect::Focus(target) => {
+                if let Some(window) = window {
+                    match target {
+                        FocusTarget::Surface => window.focus(&self.focus),
+                        FocusTarget::Composer => window.focus(&self.input.focus_handle(cx)),
+                        FocusTarget::ProjectName => {
+                            window.focus(&self.project_name_input.focus_handle(cx))
+                        }
+                        FocusTarget::ProjectFolder => {
+                            window.focus(&self.project_folder_input.focus_handle(cx))
+                        }
+                    }
+                } else {
+                    debug_assert!(false, "Focus({target:?}) emitted without a GPUI Window");
+                    log::warn!("SHELL agent-surface dropped Focus({target:?}) without window");
                 }
-                FocusTarget::ProjectFolder => {
-                    window.focus(&self.project_folder_input.focus_handle(cx))
-                }
-            },
-            AgentEffect::ScrollToBottom => {
+            }
+            ViewEffect::ScrollToBottom => {
                 self.scroll_to_bottom = true;
                 cx.notify();
             }
-            AgentEffect::ScrollToBottomIfNearBottom => {
+            ViewEffect::ScrollToBottomIfNearBottom => {
                 if self.near_bottom() {
                     self.scroll_to_bottom = true;
                     self.scroll.scroll_to_bottom();
                 }
             }
-            AgentEffect::ResetScroll => {
+            ViewEffect::ResetScroll => {
                 self.scroll_to_bottom = false;
                 self.scroll.set_offset(point(px(0.), px(0.)));
             }
-            AgentEffect::NotifyDrawer => {
+            ViewEffect::NotifyDrawer => {
                 cx.notify();
             }
-            _ => {}
         }
     }
 
@@ -596,9 +630,7 @@ impl AgentSurface {
             m.agent_window = None;
             m.agent.handle_intent(AgentIntent::DrawerClosed)
         });
-        for effect in effects {
-            let _ = execute_shell_effect(&self.model, effect, cx);
-        }
+        self.apply_effects(effects, Some(window), cx);
         window.remove_window();
         cx.refresh_windows();
     }
@@ -641,8 +673,9 @@ fn show_agent_surface(model: &Entity<Model>, summon: &compositor::Summon, cx: &m
     }
 }
 
-/// The summon gesture: the surface comes up, takes the keyboard back, or is
-/// put away.
+/// The summon gesture: closes any active exclusive shell popover (so it cannot
+/// retain keyboard focus over the Agent's surface), then brings the surface up,
+/// takes the keyboard back, or puts it away.
 pub fn summoned(model: &Entity<Model>, summon: compositor::Summon, cx: &mut App) {
     close_active_popover(model, cx);
     let agent = model.read(cx).agent_window;
@@ -650,7 +683,7 @@ pub fn summoned(model: &Entity<Model>, summon: compositor::Summon, cx: &mut App)
     if !up {
         model.update(cx, |m, _| {
             m.agent_window = None;
-            m.agent.drawer_up = false;
+            m.agent.mark_drawer_closed_externally();
         });
     }
     match gesture_does(up, summon.keyboard) {
@@ -688,6 +721,50 @@ mod tests {
     use crate::slash::{self, MenuKind};
     use gpui::Modifiers;
     use std::collections::HashMap;
+
+    #[test]
+    fn classify_effect_routes_shell_and_view_effects_exhaustively() {
+        use super::{RoutedEffect, ShellEffect, ViewEffect, classify_effect};
+        use crate::agent::{AgentEffect, FocusTarget, Mark, types::AgentCommand};
+
+        assert!(matches!(
+            classify_effect(AgentEffect::SendLeverCommand(AgentCommand::RefreshStatus)),
+            RoutedEffect::Shell(ShellEffect::SendLeverCommand(AgentCommand::RefreshStatus))
+        ));
+        assert!(matches!(
+            classify_effect(AgentEffect::LogRequestAnswer("once".into())),
+            RoutedEffect::Shell(ShellEffect::LogRequestAnswer(a)) if a == "once"
+        ));
+        assert!(matches!(
+            classify_effect(AgentEffect::LogMarkChange {
+                prev: Mark::Idle,
+                next: Mark::Working,
+            }),
+            RoutedEffect::Shell(ShellEffect::LogMarkChange { .. })
+        ));
+        assert!(matches!(
+            classify_effect(AgentEffect::Focus(FocusTarget::Composer)),
+            RoutedEffect::View(ViewEffect::Focus(FocusTarget::Composer))
+        ));
+        assert!(matches!(
+            classify_effect(AgentEffect::ScrollToBottom),
+            RoutedEffect::View(ViewEffect::ScrollToBottom)
+        ));
+        assert!(matches!(
+            classify_effect(AgentEffect::ScrollToBottomIfNearBottom),
+            RoutedEffect::View(ViewEffect::ScrollToBottomIfNearBottom)
+        ));
+        assert!(matches!(
+            classify_effect(AgentEffect::SyncComposerMenu {
+                list_open: true,
+                rail_open: false,
+            }),
+            RoutedEffect::View(ViewEffect::SyncComposerMenu {
+                list_open: true,
+                rail_open: false,
+            })
+        ));
+    }
 
     #[test]
     fn the_summon_gesture_shows_the_agents_surface_returns_the_keyboard_or_puts_it_away() {

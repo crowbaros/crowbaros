@@ -35,10 +35,6 @@ struct Row {
 }
 
 impl Picker {
-    pub fn clear_items(&mut self) {
-        self.history.items.clear();
-    }
-
     fn rows(&self) -> Vec<Row> {
         match self.kind {
             Kind::History => self
@@ -69,11 +65,13 @@ impl Picker {
         }
     }
 
-    fn close(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+    pub fn close(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        if self.model.read(cx).is_picker_open() {
+            log::info!("SHELL picker open=false");
+        }
         self.history.items.clear();
         clear_active_popover_if(&self.model, |p| matches!(p, ActivePopover::Picker(_)), cx);
         w.remove_window();
-        log::info!("SHELL picker open=false");
     }
 
     fn step(&mut self, delta: i32, w: &mut Window, cx: &mut Context<Self>) {

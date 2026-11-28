@@ -54,10 +54,10 @@ pub type Receiver = futures::channel::mpsc::UnboundedReceiver<Event>;
 
 impl Sender {
     /// Sends an event. An error once the interface has gone.
-    pub fn send(&self, event: Event) -> Result<(), Event> {
+    pub fn send(&self, event: Event) -> Result<(), Box<Event>> {
         self.0
             .unbounded_send(event)
-            .map_err(|error| error.into_inner())
+            .map_err(|error| Box::new(error.into_inner()))
     }
 }
 

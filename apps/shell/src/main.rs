@@ -180,17 +180,17 @@ fn tick(model: &Entity<Model>, cx: &mut App) -> bool {
             m.lock_date = now.lock_date;
             refresh = true;
         }
-        if let Some(prefs) = prefs {
-            if prefs != m.preferences {
-                log::info!(
-                    "SHELL appearance theme={:?} wallpaper={:?}",
-                    prefs.theme,
-                    prefs.wallpaper
-                );
-                m.preferences = prefs;
-                refresh = true;
-                appearance_changed = true;
-            }
+        if let Some(prefs) = prefs
+            && prefs != m.preferences
+        {
+            log::info!(
+                "SHELL appearance theme={:?} wallpaper={:?}",
+                prefs.theme,
+                prefs.wallpaper
+            );
+            m.preferences = prefs;
+            refresh = true;
+            appearance_changed = true;
         }
         let timer_changed = m.timer.tick_one_second();
         let calendar_handle = match m.active_popover {
@@ -202,10 +202,10 @@ fn tick(model: &Entity<Model>, cx: &mut App) -> bool {
     if appearance_changed {
         sync_drawer_palette(model, cx);
     }
-    if timer_changed {
-        if let Some(w) = calendar_handle {
-            let _ = w.update(cx, |_, _, cx| cx.notify());
-        }
+    if timer_changed
+        && let Some(w) = calendar_handle
+    {
+        let _ = w.update(cx, |_, _, cx| cx.notify());
     }
     refresh
 }
@@ -243,7 +243,7 @@ fn main() -> anyhow::Result<()> {
     let (last_model, last_effort) = agent::load_picks();
     let agent_controller = AgentController::new(agent_configured, last_model, last_effort);
     let agent_view = Arc::new(Mutex::new(AgentViewSnapshot {
-        state: agent_controller.state.clone(),
+        state: agent_controller.state().clone(),
         ..Default::default()
     }));
 

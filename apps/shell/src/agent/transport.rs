@@ -26,25 +26,14 @@ const MAX_BACKOFF: Duration = Duration::from_secs(5);
 /// reporting `Connected` to the drawer.
 pub(super) const INIT_DEADLINE: Duration = Duration::from_secs(5);
 
-/// Narrow command port implemented by the Lever socket adapter (and test fakes).
-pub trait LeverTransport: Send + Sync {
-    fn send(&self, command: AgentCommand);
-}
-
 #[derive(Clone)]
 pub struct CommandSender {
     tx: mpsc::Sender<AgentCommand>,
 }
 
-impl LeverTransport for CommandSender {
-    fn send(&self, command: AgentCommand) {
-        let _ = self.tx.send(command);
-    }
-}
-
 impl CommandSender {
     pub fn dispatch(&self, command: AgentCommand) {
-        LeverTransport::send(self, command);
+        let _ = self.tx.send(command);
     }
 
     #[cfg(test)]

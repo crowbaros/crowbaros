@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! Purely declarative GPUI rendering for [`AgentSurface`].
-//! Performs zero Lever IPC and zero `Model` mutations during paint.
+//! GPUI rendering for [`AgentSurface`] from an [`AgentRenderSnapshot`].
+//! Performs zero Lever IPC and zero `Model`/entity mutations during paint
+//! (only clears the view-local scroll flag and publishes prepaint control
+//! bounds to `agent_view`).
 
 use gpui::{prelude::*, *};
 
@@ -10,8 +12,8 @@ use super::{
 };
 use crate::{
     agent::{
-        self, AgentController, AgentIntent, ThreadAction, display_folder_path, join_project_place,
-        place_suggestions, validate_project_form,
+        self, AgentIntent, AgentRenderSnapshot, ThreadAction, display_folder_path,
+        join_project_place, place_suggestions, validate_project_form,
     },
     appearance::Palette,
     chrome, composer, markdown,
@@ -310,7 +312,7 @@ impl AgentSurface {
 
     fn act_row(
         &self,
-        controller: &AgentController,
+        controller: &AgentRenderSnapshot,
         turn_state: &agent::TurnState,
         act: &agent::Act,
         p: Palette,
@@ -412,7 +414,7 @@ impl AgentSurface {
 
     fn subagent_section(
         &self,
-        controller: &AgentController,
+        controller: &AgentRenderSnapshot,
         turn: &agent::Turn,
         sub: &agent::Subagent,
         p: Palette,
@@ -612,7 +614,7 @@ impl AgentSurface {
 
     fn list_panel(
         &self,
-        controller: &AgentController,
+        controller: &AgentRenderSnapshot,
         menu: &Menu,
         p: Palette,
         cx: &mut Context<Self>,
@@ -1133,7 +1135,7 @@ impl Render for AgentSurface {
             (
                 m.palette(),
                 chrome::bar_mark_asset(&m.preferences),
-                m.agent.clone(),
+                m.agent.render_snapshot(),
                 m.agent_view.clone(),
             )
         };
@@ -1141,10 +1143,10 @@ impl Render for AgentSurface {
         let state = &controller.state;
         let show_stop = state.can_stop();
         let needs_choice = state.needs_model_choice();
-        let draft = controller.current_draft().to_string();
+        let draft = controller.draft.clone();
         let now = agent::unix_now();
         let can_send = state.can_send() && !draft.trim().is_empty();
-        let menu = controller.menu();
+        let menu = controller.menu.as_ref();
 
         let header_sub = if !state.configured || !state.connected {
             "Offline".into()
@@ -1170,7 +1172,7 @@ impl Render for AgentSurface {
             .gap(px(18.))
             .bg(rgb(p.canvas));
 
-        let showing_project_form = controller.project_form_open();
+        let showing_project_form = controller.project_form_open;
         if controller.confirm_delete {
             body = body
                 .child(
@@ -2035,10 +2037,10 @@ impl Render for AgentSurface {
                 let (needs_choice, form_open, list_view, confirm_delete) = {
                     let a = &this.model.read(cx).agent;
                     (
-                        a.state.needs_model_choice(),
+                        a.state().needs_model_choice(),
                         a.project_form_open(),
-                        a.state.list_view,
-                        a.confirm_delete,
+                        a.state().list_view,
+                        a.confirm_delete(),
                     )
                 };
                 if needs_choice {
@@ -2351,7 +2353,7 @@ impl Render for AgentSurface {
                         .gap(px(8.))
                         .border_t_1()
                         .border_color(rgb(p.line))
-                        .when_some(menu.as_ref(), |d, menu| {
+                        .when_some(menu, |d, menu| {
                             d.child(self.list_panel(&controller, menu, p, cx))
                         })
                         .child(
@@ -2427,7 +2429,7 @@ impl Render for AgentSurface {
                 let frame = self.frame.clone();
                 let left = self.left;
                 let output = self.output.clone();
-                let list = controller.list_snapshot(menu.as_ref());
+                let list = controller.list_snapshot.clone();
                 canvas(
                     move |_, _, _| {
                         let controls = controls_on_display(&frame.borrow(), left);

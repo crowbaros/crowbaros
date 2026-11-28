@@ -61,7 +61,7 @@ impl LauncherClient {
         self.request_bounded(request, DEFAULT_MAX_REPLY_BYTES)
     }
 
-    pub(crate) fn request_bounded(&self, request: Value, max_bytes: usize) -> Result<Value> {
+    fn request_bounded(&self, request: Value, max_bytes: usize) -> Result<Value> {
         let path = self.socket.as_deref().context("No launcher service")?;
         let mut stream = UnixStream::connect(path)?;
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -107,6 +107,29 @@ impl LauncherClient {
     pub fn themes(&self) -> Result<ThemeCatalog> {
         let reply = self.request_bounded(json!({ "op": "themes" }), THEMES_MAX_REPLY_BYTES)?;
         Ok(serde_json::from_value(reply)?)
+    }
+
+    /// Reads the person's custom wallpaper header metadata through the launcher.
+    pub fn wallpaper_info(&self) -> Result<Option<crowbar_theme::wallpaper::Info>> {
+        let reply = self.request(json!({ "op": "wallpaper_info" }))?;
+        Ok(serde_json::from_value(
+            reply
+                .get("wallpaper")
+                .context("Missing wallpaper preference")?
+                .clone(),
+        )?)
+    }
+
+    /// Reads the person's base64-encoded custom wallpaper payload for `revision`.
+    pub fn wallpaper_data(&self, revision: &str) -> Result<String> {
+        let reply = self.request_bounded(
+            json!({ "op": "wallpaper_data", "revision": revision }),
+            crowbar_theme::wallpaper::MAX_DATA_REPLY_BYTES,
+        )?;
+        Ok(reply["data"]
+            .as_str()
+            .context("Missing wallpaper pixels")?
+            .to_string())
     }
 
     /// Applies an installed theme (and optional named background).
@@ -457,5 +480,67 @@ mod tests {
         );
 
         peer.join().unwrap();
+    }
+
+    #[test]
+    fn launcher_client_wallpaper_info_and_data_use_typed_wire_ops() {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let base = std::env::temp_dir();
+        let root = if base.as_os_str().len() > 48 {
+            PathBuf::from("/tmp")
+        } else {
+            base
+        };
+        let dir = root.join(format!(
+            "crowbaros-launcher-wp-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("launcher.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+
+        let bytes = crowbar_theme::wallpaper::encode(1, 1, [9; 16], &[1, 2, 3, 255]).unwrap();
+        let (info, _) = crowbar_theme::wallpaper::decode(&bytes).unwrap();
+        let expected_info = info.clone();
+        let expected_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &bytes,
+        );
+        let server_b64 = expected_b64.clone();
+
+        let peer = std::thread::spawn(move || {
+            let mut ops = Vec::new();
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let req: Value = serde_json::from_str(&line).unwrap();
+                let op = req["op"].as_str().unwrap().to_string();
+                let reply = match op.as_str() {
+                    "wallpaper_info" => json!({"ok": true, "wallpaper": info}),
+                    "wallpaper_data" => {
+                        assert_eq!(req["revision"], info.revision);
+                        json!({"ok": true, "data": server_b64})
+                    }
+                    other => panic!("unexpected op {other}"),
+                };
+                ops.push(op);
+                let mut raw = serde_json::to_vec(&reply).unwrap();
+                raw.push(b'\n');
+                (&stream).write_all(&raw).unwrap();
+            }
+            let _ = std::fs::remove_dir_all(dir);
+            ops
+        });
+
+        let client = LauncherClient::with_socket(path);
+        let got_info = client.wallpaper_info().unwrap().unwrap();
+        assert_eq!(got_info, expected_info);
+        let got_data = client.wallpaper_data(&got_info.revision).unwrap();
+        assert_eq!(got_data, expected_b64);
+        assert_eq!(peer.join().unwrap(), ["wallpaper_info", "wallpaper_data"]);
     }
 }

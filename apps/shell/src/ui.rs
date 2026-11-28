@@ -165,36 +165,53 @@ pub enum ActivePopover {
 }
 
 impl ActivePopover {
-    pub fn close(self, cx: &mut App) {
+    /// Closes the popover window through its own view `close` method, returning
+    /// `true` if the window handle was still live.
+    pub fn close(self, cx: &mut App) -> bool {
         match self {
-            ActivePopover::Launcher(w) => {
-                let _ = w.update(cx, |view, w, cx| view.close(w, cx));
-            }
+            ActivePopover::Launcher(w) => w.update(cx, |view, w, cx| view.close(w, cx)).is_ok(),
             ActivePopover::QuickSettings(w) => {
-                let _ = w.update(cx, |view, w, cx| view.close(w, cx));
+                w.update(cx, |view, w, cx| view.close(w, cx)).is_ok()
             }
-            ActivePopover::Calendar(w) => {
-                let _ = w.update(cx, |view, w, cx| view.close(w, cx));
-            }
+            ActivePopover::Calendar(w) => w.update(cx, |view, w, cx| view.close(w, cx)).is_ok(),
             ActivePopover::ThemeSwitcher(w) => {
-                let _ = w.update(cx, |view, w, cx| view.close(w, cx));
+                w.update(cx, |view, w, cx| view.close(w, cx)).is_ok()
             }
-            ActivePopover::Picker(w) => {
-                let _ = w.update(cx, |view, w, _| {
-                    view.clear_items();
-                    w.remove_window();
-                });
-                log::info!("SHELL picker open=false");
-            }
+            ActivePopover::Picker(w) => w.update(cx, |view, w, cx| view.close(w, cx)).is_ok(),
         }
+    }
+
+    fn same_kind(self, other: Self) -> bool {
+        std::mem::discriminant(&self) == std::mem::discriminant(&other)
+    }
+}
+
+/// Closes an active popover slot without clearing it before the view's own
+/// `close` runs (so views that guard their `open=false` log on `is_*_open()`
+/// still observe the open handle). If the window handle was already gone,
+/// clears the stale slot.
+fn close_popover_slot<C, T: Copy>(
+    cx: &mut C,
+    read: impl FnOnce(&C) -> Option<T>,
+    close: impl FnOnce(T, &mut C) -> bool,
+    clear_if: impl FnOnce(T, &mut C),
+) {
+    let Some(popover) = read(cx) else {
+        return;
+    };
+    if !close(popover, cx) {
+        clear_if(popover, cx);
     }
 }
 
 /// Closes whichever modal popover is currently open, if any.
 pub fn close_active_popover(model: &Entity<Model>, cx: &mut App) {
-    if let Some(popover) = model.update(cx, |m, _| m.active_popover.take()) {
-        popover.close(cx);
-    }
+    close_popover_slot(
+        cx,
+        |cx| model.read(cx).active_popover,
+        |popover, cx| popover.close(cx),
+        |popover, cx| clear_active_popover_if(model, |p| p.same_kind(popover), cx),
+    );
 }
 
 /// Clears `active_popover` only when the stored handle still matches `predicate`.
@@ -263,5 +280,55 @@ impl Model {
 
     pub fn is_theme_switcher_open(&self) -> bool {
         matches!(self.active_popover, Some(ActivePopover::ThemeSwitcher(_)))
+    }
+
+    pub fn is_picker_open(&self) -> bool {
+        matches!(self.active_popover, Some(ActivePopover::Picker(_)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::close_popover_slot;
+
+    #[test]
+    fn close_popover_slot_keeps_slot_visible_during_view_close_and_clears_stale_handles() {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Kind {
+            Calendar,
+            QuickSettings,
+        }
+
+        // Live popover: view's close sees the slot still open, logs once, and clears it.
+        let mut slot = Some(Kind::Calendar);
+        let mut logged = 0usize;
+        close_popover_slot(
+            &mut slot,
+            |s| *s,
+            |kind, s| {
+                if *s == Some(kind) {
+                    logged += 1;
+                }
+                *s = None;
+                true
+            },
+            |_, _| panic!("live close should not fall back to stale clear"),
+        );
+        assert_eq!(logged, 1);
+        assert_eq!(slot, None);
+
+        // Stale handle (view already gone): close returns false, coordinator clears slot.
+        let mut slot = Some(Kind::QuickSettings);
+        close_popover_slot(
+            &mut slot,
+            |s| *s,
+            |_, _| false,
+            |kind, s| {
+                if *s == Some(kind) {
+                    *s = None;
+                }
+            },
+        );
+        assert_eq!(slot, None);
     }
 }

@@ -152,7 +152,7 @@ impl Render for MarkOverlay {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let m = self.model.read(cx);
         let p = m.palette();
-        let pill = render_mark_pill(m.agent.state.mark, p);
+        let pill = render_mark_pill(m.agent.state().mark, p);
         div()
             .size_full()
             .flex()
@@ -384,7 +384,7 @@ impl Render for Bar {
                     .items_center()
                     .justify_end()
                     .gap(px(4.))
-                    .when_some(render_mark_pill(m.agent.state.mark, p), |d, pill| {
+                    .when_some(render_mark_pill(m.agent.state().mark, p), |d, pill| {
                         d.child(pill)
                     })
                     .child(

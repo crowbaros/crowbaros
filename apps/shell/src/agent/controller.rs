@@ -5,8 +5,9 @@
 //! reconciliation, the "Make this a project" form, slash-menu highlight and
 //! fetch guards, `catalog_epoch` invalidation, onboarding focus transitions,
 //! and Mark transitions behind a pure `handle_intent` / `handle_event` ->
-//! `Vec<AgentEffect>` seam. `AgentSurface::render` becomes purely declarative
-//! with zero IPC, and the entire Agent UX is unit-testable without GPUI.
+//! `Vec<AgentEffect>` seam. `AgentSurface::render` performs zero Lever IPC and
+//! zero `Model`/entity mutations during paint, and the Agent UX is
+//! unit-testable in-process without GPUI.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -18,7 +19,7 @@ use super::types::{
 };
 use crate::slash::{self, Menu, MenuKind, Resolve, Run, Take, Wants};
 
-/// User actions triggered from the Agent drawer's controls and shortcuts.
+/// Actions triggered by the person from the Agent drawer's controls and shortcuts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ThreadAction {
     List,
@@ -59,7 +60,7 @@ pub enum FocusTarget {
     ProjectFolder,
 }
 
-/// All user/shell intents handled by [`AgentController`].
+/// All intents from the person or shell handled by [`AgentController`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentIntent {
     DrawerOpened,
@@ -113,6 +114,7 @@ pub enum AgentEffect {
         prev: Mark,
         next: Mark,
     },
+    LogRequestAnswer(String),
     NotifyDrawer,
     NotifyMarkOverlay,
     RefreshWindows,
@@ -176,22 +178,42 @@ pub struct PlaceSuggestion {
     pub value: String,
 }
 
-/// Deep in-process MVU controller owning all Agent domain and drawer UI state.
+/// Narrow read-only projection of [`AgentController`] for one `AgentSurface`
+/// render pass, omitting saved drafts, in-flight submission tracking, and
+/// slash-menu fetch guards.
 #[derive(Clone, Debug)]
-pub struct AgentController {
+pub struct AgentRenderSnapshot {
     pub state: AgentState,
-    pub drawer_up: bool,
-    pub drafts: HashMap<String, String>,
-    current_draft: String,
-    submitted: Option<(String, String)>,
+    pub draft: String,
+    pub menu: Option<Menu>,
+    pub list_snapshot: Option<ListSnapshot>,
+    pub highlight: usize,
     pub confirm_delete: bool,
     pub project: ProjectFormState,
+    pub project_form_open: bool,
     pub expanded_acts: HashSet<String>,
     pub whole_acts: HashSet<String>,
     pub expanded_context: HashSet<u64>,
     pub opened_turns: HashSet<u64>,
     pub expanded_subagents: HashSet<String>,
-    pub highlight: usize,
+}
+
+/// Deep in-process MVU controller owning all Agent domain and drawer UI state.
+#[derive(Debug)]
+pub struct AgentController {
+    state: AgentState,
+    drawer_up: bool,
+    drafts: HashMap<String, String>,
+    current_draft: String,
+    submitted: Option<(String, String)>,
+    confirm_delete: bool,
+    project: ProjectFormState,
+    expanded_acts: HashSet<String>,
+    whole_acts: HashSet<String>,
+    expanded_context: HashSet<u64>,
+    opened_turns: HashSet<u64>,
+    expanded_subagents: HashSet<String>,
+    highlight: usize,
     list_for: String,
     dismissed: Option<String>,
     said_of: Option<String>,
@@ -244,12 +266,65 @@ impl AgentController {
         }
     }
 
+    pub fn state(&self) -> &AgentState {
+        &self.state
+    }
+
+    #[cfg(test)]
+    pub fn drawer_up(&self) -> bool {
+        self.drawer_up
+    }
+
+    #[cfg(test)]
+    pub fn draft_for(&self, key: &str) -> Option<&str> {
+        self.drafts.get(key).map(String::as_str)
+    }
+
+    #[cfg(test)]
+    pub fn project(&self) -> &ProjectFormState {
+        &self.project
+    }
+
+    pub fn confirm_delete(&self) -> bool {
+        self.confirm_delete
+    }
+
+    #[cfg(test)]
     pub fn current_draft(&self) -> &str {
         &self.current_draft
     }
 
     pub fn project_form_open(&self) -> bool {
         self.project.making && self.state.thread.is_some() && !self.state.list_view
+    }
+
+    /// Reconciles controller state when GPUI reports the drawer window closed
+    /// externally before a summon gesture.
+    pub fn mark_drawer_closed_externally(&mut self) {
+        self.drawer_up = false;
+        self.reset_ephemeral_drawer_ui();
+    }
+
+    /// Builds a narrow read-only snapshot for a single `AgentSurface::render`
+    /// frame without cloning saved drafts, submission tracking, or fetch guards.
+    pub fn render_snapshot(&self) -> AgentRenderSnapshot {
+        let menu = self.menu();
+        let list_snapshot = self.list_snapshot(menu.as_ref());
+        AgentRenderSnapshot {
+            state: self.state.clone(),
+            draft: self.current_draft.clone(),
+            menu,
+            list_snapshot,
+            highlight: self.highlight,
+            confirm_delete: self.confirm_delete,
+            project: self.project.clone(),
+            project_form_open: self.project_form_open(),
+            expanded_acts: self.expanded_acts.clone(),
+            whole_acts: self.whole_acts.clone(),
+            expanded_context: self.expanded_context.clone(),
+            opened_turns: self.opened_turns.clone(),
+            expanded_subagents: self.expanded_subagents.clone(),
+        }
     }
 
     /// Pure read-only calculation of the open slash menu, if any.
@@ -284,6 +359,7 @@ impl AgentController {
     /// Resets transient per-drawer-session UI state while preserving `state`,
     /// `drafts`, and `submitted`.
     fn reset_ephemeral_drawer_ui(&mut self) {
+        self.current_draft.clear();
         self.confirm_delete = false;
         self.project = ProjectFormState::default();
         self.expanded_acts.clear();
@@ -385,10 +461,8 @@ impl AgentController {
             if is_lifecycle && self.state.list_view {
                 effects.push(AgentEffect::Focus(FocusTarget::Surface));
             }
-            if is_disconnected || is_error {
-                if self.on_agent_error() {
-                    notify_drawer = true;
-                }
+            if (is_disconnected || is_error) && self.on_agent_error() {
+                notify_drawer = true;
             }
             if is_project_made && self.project.making {
                 self.project.close();
@@ -396,11 +470,11 @@ impl AgentController {
                 effects.push(AgentEffect::SyncAgentView);
                 notify_drawer = true;
             }
-            if let Some(listing) = dirs_listing {
-                if self.on_dirs_listed(listing) {
-                    effects.push(AgentEffect::SyncAgentView);
-                    notify_drawer = true;
-                }
+            if let Some(listing) = dirs_listing
+                && self.on_dirs_listed(listing)
+            {
+                effects.push(AgentEffect::SyncAgentView);
+                notify_drawer = true;
             }
         }
 
@@ -419,6 +493,9 @@ impl AgentController {
                     &submitted_text,
                     open_input,
                 ) {
+                    if self.dismissed.as_deref().is_some_and(|closed| closed != next) {
+                        self.dismissed = None;
+                    }
                     self.current_draft = next.clone();
                     effects.push(AgentEffect::SetComposerText(next));
                 }
@@ -438,16 +515,14 @@ impl AgentController {
 
         if mark_changed {
             effects.push(AgentEffect::RefreshWindows);
-        } else if changed || notify_drawer {
-            if self.drawer_up {
-                effects.push(AgentEffect::NotifyDrawer);
-            }
+        } else if (changed || notify_drawer) && self.drawer_up {
+            effects.push(AgentEffect::NotifyDrawer);
         }
 
         effects
     }
 
-    /// Handles a user or shell intent.
+    /// Handles an intent from the person or shell.
     pub fn handle_intent(&mut self, intent: AgentIntent) -> Vec<AgentEffect> {
         let mut effects = Vec::new();
         match intent {
@@ -578,7 +653,9 @@ impl AgentController {
                 if let Some(menu) = self.menu() {
                     self.take(&menu, &mut effects);
                 }
-                effects.push(AgentEffect::Focus(FocusTarget::Composer));
+                if !effects.iter().any(|e| matches!(e, AgentEffect::Focus(_))) {
+                    effects.push(AgentEffect::Focus(FocusTarget::Composer));
+                }
             }
             AgentIntent::HoverMenuRow(at) => {
                 if self.highlight != at {
@@ -642,11 +719,19 @@ impl AgentController {
             }
             AgentIntent::ModelPickerSignIn => {
                 self.set_composer_text("", &mut effects);
-                self.apply_action(ThreadAction::SignIn, &mut effects);
+                if !self.apply_action(ThreadAction::SignIn, &mut effects) {
+                    self.reconcile_ui(&mut effects);
+                    effects.push(AgentEffect::SyncAgentView);
+                    effects.push(AgentEffect::NotifyDrawer);
+                }
             }
             AgentIntent::ModelPickerFreeModels(enabled) => {
                 self.set_composer_text("", &mut effects);
-                self.apply_action(ThreadAction::ChooseFreeModels(enabled), &mut effects);
+                if !self.apply_action(ThreadAction::ChooseFreeModels(enabled), &mut effects) {
+                    self.reconcile_ui(&mut effects);
+                    effects.push(AgentEffect::SyncAgentView);
+                    effects.push(AgentEffect::NotifyDrawer);
+                }
             }
             AgentIntent::SignInLaunchResult(result) => {
                 if let Err(error) = result {
@@ -676,7 +761,15 @@ impl AgentController {
                 self.drafts.insert(key, text.clone());
             }
         }
-        effects.push(AgentEffect::SetComposerText(text));
+        if let Some(prev) = effects
+            .iter_mut()
+            .rev()
+            .find(|e| matches!(e, AgentEffect::SetComposerText(_)))
+        {
+            *prev = AgentEffect::SetComposerText(text);
+        } else {
+            effects.push(AgentEffect::SetComposerText(text));
+        }
     }
 
     fn on_dirs_listed(&mut self, listing: DirListing) -> bool {
@@ -834,7 +927,9 @@ impl AgentController {
         });
     }
 
-    fn apply_action(&mut self, action: ThreadAction, effects: &mut Vec<AgentEffect>) {
+    /// Applies a `ThreadAction`. Returns `true` when it ran reconciliation and
+    /// drawer notification, or `false` if it returned early without doing so.
+    fn apply_action(&mut self, action: ThreadAction, effects: &mut Vec<AgentEffect>) -> bool {
         let allowed_while_busy = matches!(
             action,
             ThreadAction::Act(_)
@@ -849,7 +944,7 @@ impl AgentController {
                 | ThreadAction::CancelMakeProject
         );
         if (self.state.sending || self.state.loading) && !allowed_while_busy {
-            return;
+            return false;
         }
         match action {
             ThreadAction::List => {
@@ -861,7 +956,7 @@ impl AgentController {
             }
             ThreadAction::New | ThreadAction::Open(_) => {
                 if !self.state.connected {
-                    return;
+                    return false;
                 }
                 self.confirm_delete = false;
                 self.project.close();
@@ -897,7 +992,7 @@ impl AgentController {
                     && self.state.connected
                     && !self.state.mode_locked();
                 if !can_open {
-                    return;
+                    return false;
                 }
                 self.confirm_delete = false;
                 self.project.close();
@@ -978,7 +1073,7 @@ impl AgentController {
                         self.project.error = Some(why);
                         effects.push(AgentEffect::SyncAgentView);
                         effects.push(AgentEffect::NotifyDrawer);
-                        return;
+                        return true;
                     }
                 };
                 self.project.error = None;
@@ -1089,6 +1184,7 @@ impl AgentController {
         self.reconcile_ui(effects);
         effects.push(AgentEffect::SyncAgentView);
         effects.push(AgentEffect::NotifyDrawer);
+        true
     }
 
     fn refuse(&mut self, why: String, effects: &mut Vec<AgentEffect>) {
@@ -1203,31 +1299,36 @@ impl AgentController {
             }
             Run::SetFreeModels(enabled) => {
                 self.set_composer_text("", effects);
-                self.apply_action(ThreadAction::ChooseFreeModels(enabled), effects);
-                return;
+                if self.apply_action(ThreadAction::ChooseFreeModels(enabled), effects) {
+                    return;
+                }
             }
             Run::SignIn => {
                 self.set_composer_text("", effects);
-                self.apply_action(ThreadAction::SignIn, effects);
-                return;
+                if self.apply_action(ThreadAction::SignIn, effects) {
+                    return;
+                }
             }
             Run::New => {
                 self.set_composer_text("", effects);
                 self.state.error = None;
-                self.apply_action(ThreadAction::New, effects);
-                return;
+                if self.apply_action(ThreadAction::New, effects) {
+                    return;
+                }
             }
             Run::Threads => {
                 self.set_composer_text("", effects);
                 self.state.error = None;
-                self.apply_action(ThreadAction::List, effects);
-                return;
+                if self.apply_action(ThreadAction::List, effects) {
+                    return;
+                }
             }
             Run::MakeProject => {
                 self.set_composer_text("", effects);
                 self.state.error = None;
-                self.apply_action(ThreadAction::AskMakeProject, effects);
-                return;
+                if self.apply_action(ThreadAction::AskMakeProject, effects) {
+                    return;
+                }
             }
             Run::Stop => {
                 self.set_composer_text("", effects);
@@ -1237,14 +1338,16 @@ impl AgentController {
             Run::Archive => {
                 self.set_composer_text("", effects);
                 self.state.error = None;
-                self.apply_action(ThreadAction::Archive, effects);
-                return;
+                if self.apply_action(ThreadAction::Archive, effects) {
+                    return;
+                }
             }
             Run::Delete => {
                 self.set_composer_text("", effects);
                 self.state.error = None;
-                self.apply_action(ThreadAction::AskDelete, effects);
-                return;
+                if self.apply_action(ThreadAction::AskDelete, effects) {
+                    return;
+                }
             }
         }
         self.reconcile_ui(effects);
@@ -1314,7 +1417,7 @@ impl AgentController {
         let text = trimmed.to_string();
         let key = thread.clone().unwrap_or_default();
         self.submitted = Some((key, query));
-        self.dismissed = None;
+        self.reconcile_ui(effects);
         effects.push(AgentEffect::SyncAgentView);
         effects.push(AgentEffect::SendLeverCommand(AgentCommand::Send {
             thread,
@@ -1330,7 +1433,7 @@ impl AgentController {
         if let Some(thread) = self.state.begin_answer(&request, &answer)
             && self.state.configured
         {
-            log::info!("SHELL agent-request answer={answer}");
+            effects.push(AgentEffect::LogRequestAnswer(answer.clone()));
             effects.push(AgentEffect::SendLeverCommand(AgentCommand::Answer {
                 thread,
                 request,
@@ -1469,12 +1572,15 @@ pub fn browse_start_path(folder: &str) -> Option<String> {
     (!folder.trim().is_empty()).then(|| folder.trim_start().to_string())
 }
 
+/// Validated `(name, place, path)` arguments for Lever's `make-project` command.
+pub type ProjectFormResult = Result<(Option<String>, Option<String>, Option<String>), String>;
+
 /// Validates the inline "Make this a project" form and returns `(name, place, path)` for Lever.
 pub fn validate_project_form(
     name: &str,
     folder: &str,
     place: Option<&str>,
-) -> Result<(Option<String>, Option<String>, Option<String>), String> {
+) -> ProjectFormResult {
     let name = name.trim();
     if let Some(place) = place {
         if name.is_empty() {
