@@ -3235,6 +3235,86 @@ impl HistoryBuilder {
                     });
                 }
             }
+            // A harness that tells of its subagents as ACP does, rather
+            // than through OpenCode's launcher calls, replays them so too.
+            Ok(SessionUpdate::SubagentUpdate(sub)) => {
+                let child_sid = sub.session_id.0.as_ref().to_string();
+                if child_sid.is_empty() {
+                    return;
+                }
+                let title = match (sub.title, sub.description) {
+                    (MaybeUndefined::Value(t), _) if !t.trim().is_empty() => Some(t.trim().to_string()),
+                    (_, MaybeUndefined::Value(d)) if !d.trim().is_empty() => Some(d.trim().to_string()),
+                    _ => None,
+                };
+                // The session ended before it was read: a subagent it left
+                // working is done, as its acts are.
+                let ended = match sub.state {
+                    MaybeUndefined::Value(StateUpdate::Idle(idle)) => Some(match idle.stop_reason {
+                        Some(IdleStopReason::Cancelled) => ("stopped", None),
+                        Some(IdleStopReason::Refusal) => ("failed", Some("The subagent refused to continue.")),
+                        Some(IdleStopReason::MaxTokens) => ("failed", Some("The subagent reached its token limit.")),
+                        Some(IdleStopReason::MaxTurnRequests) => {
+                            ("failed", Some("The subagent reached its request limit."))
+                        }
+                        Some(IdleStopReason::Error(_)) => ("failed", Some("The subagent failed.")),
+                        _ => ("done", None),
+                    }),
+                    _ => None,
+                };
+                if let Some(existing) = self
+                    .turns
+                    .iter_mut()
+                    .flat_map(|turn| turn.subagents.iter_mut())
+                    .find(|existing| existing.harness_session_id == child_sid)
+                {
+                    if let Some(title) = title {
+                        existing.title = title;
+                    }
+                    if let Some((state, error)) = ended {
+                        existing.state = state.to_string();
+                        existing.error = error.map(str::to_string);
+                    }
+                    return;
+                }
+                self.subagent_ids.push(child_sid.clone());
+                let (state, error) = ended.unwrap_or(("done", None));
+                let (_, turn) = self.current_turn_mut();
+                turn.subagents.push(ImportedSubagent {
+                    harness_session_id: child_sid,
+                    title: title.unwrap_or_else(|| "Subagent".to_string()),
+                    state: state.to_string(),
+                    error: error.map(str::to_string),
+                    prompt: None,
+                });
+            }
+            // What the session asked of one of its subagents is that
+            // subagent's prompt.
+            Ok(SessionUpdate::SessionMessage(msg)) => {
+                let MaybeUndefined::Value(recipient) = msg.recipient_session_id else {
+                    return;
+                };
+                let text = match msg.content {
+                    MaybeUndefined::Value(blocks) => blocks
+                        .iter()
+                        .filter_map(content_block_text)
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    _ => String::new(),
+                };
+                if text.is_empty() {
+                    return;
+                }
+                if let Some(sub) = self
+                    .turns
+                    .iter_mut()
+                    .flat_map(|turn| turn.subagents.iter_mut())
+                    .find(|sub| sub.harness_session_id == recipient.0.as_ref())
+                    && sub.prompt.is_none()
+                {
+                    sub.prompt = Some(text);
+                }
+            }
             Ok(SessionUpdate::SessionInfoUpdate(info)) => {
                 if let MaybeUndefined::Value(title) = info.title {
                     let clean = title.trim();

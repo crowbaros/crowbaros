@@ -10117,6 +10117,202 @@ fn external_session_sent_directly_before_resume_imports_history_first() {
     assert_eq!(lever.wait().code(), Some(0));
 }
 
+/// Lever with discovery, and one hand-started session listed as a thread
+/// whose history the harness takes `load_delay_ms` to read. Returns Lever,
+/// the thread, and the harness's RPC log.
+fn one_discovered_thread(dir: &Path, extra_script: Value, history: Value) -> (RunningLever, String, PathBuf) {
+    let store_dir = dir.join("harness-store");
+    std::fs::create_dir_all(&store_dir).unwrap();
+    let sessions_file = store_dir.join("sessions.json");
+    let rpc_log = dir.join("rpc.jsonl");
+    let mut script = json!({
+        "list_sessions": true,
+        "sessions_file": sessions_file.to_str().unwrap(),
+    });
+    script
+        .as_object_mut()
+        .unwrap()
+        .extend(extra_script.as_object().unwrap().clone());
+    let script = write_script(dir, &script);
+    let lever = start_lever_with_discovery(dir, &script, Some(&rpc_log), &store_dir);
+    let mut watcher = handshake(&lever.surface);
+    watcher.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut watcher, &json!({ "op": "list", "watch": true })).unwrap();
+    assert_eq!(read_frame(&mut watcher).unwrap()["reply"], "list");
+    write_sessions_file(
+        &sessions_file,
+        &json!([{
+            "session_id": "ses_hand_1",
+            "cwd": "/tmp",
+            "title": "Started by hand",
+            "updated_at": "2026-04-10T12:00:00Z",
+            "history": history
+        }]),
+    );
+    let pushed = read_until(&mut watcher, |f| {
+        f["event"] == "threads" && f["threads"].as_array().is_some_and(|t| t.len() == 1)
+    });
+    let tid = pushed["threads"][0]["thread"].as_str().unwrap().to_string();
+    (lever, tid, rpc_log)
+}
+
+#[test]
+fn a_send_to_an_unopened_thread_still_goes_when_its_client_leaves_while_history_is_read() {
+    let dir = TempDir::new();
+    let (mut lever, tid, _) = one_discovered_thread(
+        &dir.0,
+        json!({
+            "load_delay_ms": 400,
+            "turns": [{ "match": "sent then left", "steps": [{ "kind": "text", "text": "Went anyway." }] }]
+        }),
+        json!([
+            { "kind": "user_text", "text": "First in terminal" },
+            { "kind": "text", "text": "First answer." }
+        ]),
+    );
+
+    // The client sends while the history is still being read, and leaves.
+    let mut leaving = handshake(&lever.person);
+    write_frame(
+        &mut leaving,
+        &json!({ "op": "send", "thread": tid, "text": "sent then left" }),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    drop(leaving);
+
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let record = loop {
+        let record = resume(&mut peer, &tid);
+        if record["turns"].as_array().is_some_and(|t| t.len() == 2) && record["turns"][1]["state"] == "done" {
+            break record;
+        }
+        assert!(Instant::now() < deadline, "the message never went: {record}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(record["turns"][0]["message"], "First in terminal");
+    assert_eq!(record["turns"][1]["message"], "sent then left");
+    assert_eq!(record["turns"][1]["answer"], "Went anyway.");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn a_stop_while_an_unopened_threads_history_is_read_drops_the_message_waiting_on_it() {
+    let dir = TempDir::new();
+    let (mut lever, tid, rpc_log) = one_discovered_thread(
+        &dir.0,
+        json!({
+            "load_delay_ms": 400,
+            "turns": [{ "steps": [{ "kind": "text", "text": "Must not run." }] }]
+        }),
+        json!([
+            { "kind": "user_text", "text": "First in terminal" },
+            { "kind": "text", "text": "First answer." }
+        ]),
+    );
+
+    let mut sender = handshake(&lever.person);
+    sender.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(
+        &mut sender,
+        &json!({ "op": "send", "thread": tid, "text": "then stopped" }),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    let mut stopper = handshake(&lever.person);
+    stopper.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut stopper, &json!({ "op": "stop", "thread": tid })).unwrap();
+    assert_eq!(read_frame(&mut stopper).unwrap()["reply"], "ok");
+
+    // Once the history is read, the message is answered, and not sent.
+    let reply = read_until(&mut sender, |f| f.get("reply").is_some());
+    assert_eq!(reply["reply"], "error", "{reply}");
+    assert_eq!(reply["code"], "working", "{reply}");
+
+    let record = resume(&mut stopper, &tid);
+    let turns = record["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 1, "{record}");
+    assert_eq!(turns[0]["message"], "First in terminal");
+    let rpc = std::fs::read_to_string(&rpc_log).unwrap();
+    assert!(
+        !rpc.contains("\"method\":\"session/prompt\""),
+        "a stopped message reached the harness:\n{rpc}"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn opening_a_thread_reads_the_subagents_an_acp_harness_replays() {
+    let dir = TempDir::new();
+    let (mut lever, tid, _) = one_discovered_thread(
+        &dir.0,
+        json!({}),
+        json!([
+            { "kind": "user_text", "text": "Use two helpers" },
+            { "kind": "unknown", "update": {
+                "sessionUpdate": "subagent_update",
+                "sessionId": "ses_hand_child_1",
+                "title": "Reader",
+                "state": { "state": "running" }
+            } },
+            { "kind": "unknown", "update": {
+                "sessionUpdate": "session_message",
+                "messageId": "msg-child-1",
+                "senderSessionId": "ses_hand_1",
+                "recipientSessionId": "ses_hand_child_1",
+                "content": [{ "type": "text", "text": "Read the docs" }]
+            } },
+            { "kind": "unknown", "update": {
+                "sessionUpdate": "subagent_update",
+                "sessionId": "ses_hand_child_2",
+                "title": "Writer",
+                "state": { "state": "running" }
+            } },
+            { "kind": "unknown", "update": {
+                "sessionUpdate": "subagent_update",
+                "sessionId": "ses_hand_child_1",
+                "state": { "state": "idle", "stopReason": "end_turn" }
+            } },
+            { "kind": "unknown", "update": {
+                "sessionUpdate": "subagent_update",
+                "sessionId": "ses_hand_child_2",
+                "state": { "state": "idle", "stopReason": "error", "error": { "code": -32000, "message": "ses_hand_child_2 broke" } }
+            } },
+            { "kind": "text", "text": "Both reported." }
+        ]),
+    );
+
+    let mut peer = handshake(&lever.person);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let record = resume(&mut peer, &tid);
+    let blob = serde_json::to_string(&record).unwrap();
+    assert!(
+        !blob.contains("ses_hand"),
+        "a harness session ID crossed Lever's socket: {blob}"
+    );
+    let turns = record["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 1, "{record}");
+    assert_eq!(turns[0]["answer"], "Both reported.");
+    let subagents = turns[0]["subagents"].as_array().unwrap();
+    assert_eq!(subagents.len(), 2, "{record}");
+    assert_eq!(subagents[0]["title"], "Reader");
+    assert_eq!(subagents[0]["state"], "done");
+    assert_eq!(subagents[0]["messages"][0]["role"], "prompt");
+    assert_eq!(subagents[0]["messages"][0]["text"], "Read the docs");
+    assert_eq!(subagents[1]["title"], "Writer");
+    assert_eq!(subagents[1]["state"], "failed");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
 #[test]
 fn lever_started_session_and_its_subagent_are_never_duplicated_by_discovery() {
     let dir = TempDir::new();

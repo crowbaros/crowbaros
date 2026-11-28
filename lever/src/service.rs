@@ -277,11 +277,18 @@ struct PendingDelete {
     dispatched: bool,
 }
 
+/// A `send` to an unopened discovered thread, carried out once the thread's
+/// history is read. It is carried out even if its peer has gone, as any
+/// complete request is: peer IDs are never used again, so its reply reaches
+/// no one.
 struct PendingSend {
     peer_id: u64,
     is_person: bool,
     thread_id: String,
     value: Value,
+    /// The person stopped the thread before it went: it is answered
+    /// `working` and not sent.
+    stopped: bool,
 }
 
 pub struct Service {
@@ -1307,7 +1314,6 @@ impl Service {
         self.pending_models.retain(|&id| id != peer_id);
         self.pending_efforts.retain(|(id, _)| *id != peer_id);
         self.pending_resumes.retain(|(id, _)| *id != peer_id);
-        self.pending_sends.retain(|p| p.peer_id != peer_id);
         self.pending_set_models.retain_mut(|p| {
             if p.peer_id == Some(peer_id) {
                 if p.in_flight_on_session {
@@ -1908,6 +1914,17 @@ impl Service {
         }
         self.pending_sends = remaining_sends;
         for item in ready_sends {
+            if item.stopped {
+                effects.replies.push(PeerReply {
+                    peer_id: item.peer_id,
+                    message: error_json(
+                        "working",
+                        "The thread was stopped before this message was sent. Send it again.",
+                    ),
+                    subscribe: None,
+                });
+                continue;
+            }
             let outcome = self.send_message(item.peer_id, item.is_person, &item.value, None, log);
             effects.broadcasts.extend(outcome.broadcasts);
             if let Some(reply) = outcome.reply {
@@ -2522,6 +2539,7 @@ impl Service {
                             is_person,
                             thread_id: tid.to_string(),
                             value: value.clone(),
+                            stopped: false,
                         });
                         return RequestOutcome {
                             reply: None,
@@ -3239,6 +3257,12 @@ impl Service {
         // nothing runs after the person said stop.
         broadcasts.extend(self.drop_queued(thread_id, None, log));
         for pending in &mut self.pending_steers {
+            if pending.thread_id == thread_id {
+                pending.stopped = true;
+            }
+        }
+        // So is a message that waits for the thread's history to be read.
+        for pending in &mut self.pending_sends {
             if pending.thread_id == thread_id {
                 pending.stopped = true;
             }

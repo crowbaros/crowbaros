@@ -870,7 +870,9 @@ as `stopped`, or as `failed` if the harness failed instead. A harness that has
 not ended the turn after `--stop-timeout-ms` is stopped, as
 [the harness](#the-harness) says. Stop withdraws every request of the thread
 that waits, whether or not a turn is working, and with `turn`, only that
-turn's. A thread with no turn working is answered `ok` too.
+turn's. A message sent to a thread whose history Lever is still reading from
+the harness is not sent after a Stop: it is answered `working` once the
+history is read. A thread with no turn working is answered `ok` too.
 
 Request:
 
