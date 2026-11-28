@@ -1,0 +1,217 @@
+[06:10:08] guest$ sv restart crowbar-shell
+[06:10:09] ok: run: crowbar-shell: (pid 3933) 0s
+[06:10:09] guest$ getent passwd 1003
+[06:10:09] crowbar:x:1003:1003::/home/crowbar:/bin/bash
+[06:10:09] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nullkeel-dark
+[06:10:09] Applied Nullkeel Dark
+[06:10:10] guest$ cd /home/crowbar && setsid -f chpst -u "crowbar:$(id -Gn crowbar | tr " " :)" env -i HOME=/home/crowbar PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1003 WAYLAND_DISPLAY=wayland-0 env CROWBAR_CALC_CHECK=1 crowbaros-calc >/tmp/clipboard-calc.log 2>&1 </dev/null
+[06:10:10] 
+[06:10:13] guest$ cat /tmp/clipboard-calc.log
+[06:10:13] CALC mode=Standard width=64 result=111
+[06:10:17] guest$ cat /tmp/clipboard-calc.log
+[06:10:17] CALC mode=Standard width=64 result=111
+CALC mode=Standard width=64 result=222
+[06:10:19] PASS: history deduplicates consecutive copies
+[06:10:20] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:10:20] MTEx
+[06:10:21] PASS: Enter restores the selected earlier text to Wayland
+[06:10:24] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:10:24] MjIy
+[06:10:25] PASS: history filters copied text and restores it
+[06:10:30] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:10:30] 4oCU
+[06:10:31] PASS: character name search copies the em dash
+[06:10:34] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:10:34] 4oCZ
+[06:10:35] PASS: character arrows move beyond the first page
+[06:10:39] PASS: the requested emoji family renders Thinking face in dark — 456 colored glyph pixels
+[06:10:46] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:10:46] 8J+agA==
+[06:10:47] PASS: emoji search copies a complete glyph
+[06:10:57] PASS: Clear removes clipboard history in dark
+[06:11:00] guest$ cat /tmp/clipboard-calc.log
+[06:11:00] CALC mode=Standard width=64 result=111
+CALC mode=Standard width=64 result=222
+CALC mode=Standard width=64 result=333
+[06:11:03] PASS: lock clears clipboard history
+[06:11:04] PASS: both picker chords are refused while locked
+[06:11:07] PASS: unlock does not recapture the old clipboard
+[06:11:13] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nullkeel-light
+[06:11:13] Applied Nullkeel Light
+[06:11:14] guest$ cd /home/crowbar && setsid -f chpst -u "crowbar:$(id -Gn crowbar | tr " " :)" env -i HOME=/home/crowbar PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1003 WAYLAND_DISPLAY=wayland-0 env CROWBAR_CALC_CHECK=1 crowbaros-calc >/tmp/clipboard-calc.log 2>&1 </dev/null
+[06:11:14] 
+[06:11:17] guest$ cat /tmp/clipboard-calc.log
+[06:11:17] CALC mode=Standard width=64 result=111
+[06:11:21] guest$ cat /tmp/clipboard-calc.log
+[06:11:21] CALC mode=Standard width=64 result=111
+CALC mode=Standard width=64 result=222
+[06:11:22] PASS: history deduplicates consecutive copies
+[06:11:24] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:11:24] MTEx
+[06:11:25] PASS: Enter restores the selected earlier text to Wayland
+[06:11:28] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:11:28] MjIy
+[06:11:29] PASS: history filters copied text and restores it
+[06:11:34] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:11:34] 4oCU
+[06:11:35] PASS: character name search copies the em dash
+[06:11:38] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:11:38] 4oCZ
+[06:11:39] PASS: character arrows move beyond the first page
+[06:11:44] PASS: the requested emoji family renders Thinking face in light — 481 colored glyph pixels
+[06:11:51] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:11:51] 8J+agA==
+[06:11:52] PASS: emoji search copies a complete glyph
+[06:12:02] PASS: Clear removes clipboard history in light
+[06:12:05] guest$ cat /tmp/clipboard-calc.log
+[06:12:05] CALC mode=Standard width=64 result=111
+CALC mode=Standard width=64 result=222
+CALC mode=Standard width=64 result=333
+[06:12:08] PASS: lock clears clipboard history
+[06:12:10] PASS: both picker chords are refused while locked
+[06:12:13] PASS: unlock does not recapture the old clipboard
+[06:12:20] guest$ chpst -u crowbar:crowbar python3 -c 'import json, socket; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('"'"'/run/crowbar-displays/socket'"'"'); s.sendall("{\"op\": \"configure_output\", \"name\": \"Virtual-1\", \"scale\": 240}\n".encode()); print(s.makefile('"'"'rb'"'"').readline().decode())'
+[06:12:20] {"reply":"ok"}
+[06:12:26] guest$ chpst -u crowbar:crowbar python3 -c 'import json, socket; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('"'"'/run/crowbar-displays/socket'"'"'); s.sendall("{\"op\": \"configure_output\", \"name\": \"Virtual-1\", \"scale\": 120}\n".encode()); print(s.makefile('"'"'rb'"'"').readline().decode())'
+[06:12:26] {"reply":"ok"}
+[06:12:27] guest$ chpst -u crowbar:crowbar python3 -c 'import os,subprocess
+subprocess.run(['"'"'wl-copy'"'"','"'"'--type'"'"','"'"'text/plain;charset=utf-8'"'"'], input='"'"'Review clipboard bounds before opening the pull request.'"'"'.encode(), env=dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"', WAYLAND_DISPLAY='"'"'wayland-0'"'"'), check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'
+[06:12:28] 
+[06:12:28] guest$ chpst -u crowbar:crowbar python3 -c 'import os,subprocess
+subprocess.run(['"'"'wl-copy'"'"','"'"'--type'"'"','"'"'text/plain;charset=utf-8'"'"'], input='"'"'Design review — keep the search field focused.\nReturn to the note after copying.'"'"'.encode(), env=dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"', WAYLAND_DISPLAY='"'"'wayland-0'"'"'), check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'
+[06:12:28] 
+[06:12:28] guest$ chpst -u crowbar:crowbar python3 -c 'import os,subprocess
+subprocess.run(['"'"'wl-copy'"'"','"'"'--type'"'"','"'"'text/plain;charset=utf-8'"'"'], input='"'"'A longer note: every history item stays in memory, the oldest items make room for new copies, and lock clears the list before the desktop is shown again.'"'"'.encode(), env=dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"', WAYLAND_DISPLAY='"'"'wayland-0'"'"'), check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'
+[06:12:29] 
+[06:12:29] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nullkeel-dark
+[06:12:29] Applied Nullkeel Dark
+[06:12:31] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nullkeel-light
+[06:12:31] Applied Nullkeel Light
+[06:12:34] guest$ cp /etc/sv/crowbar-shell/run /tmp/picker-shell-run.original
+[06:12:34] 
+[06:12:34] guest$ python3 -c 'from pathlib import Path; p=Path('"'"'/etc/sv/crowbar-shell/run'"'"'); p.write_text(p.read_text().replace('"'"'/usr/local/bin/crowbar-shell-connect'"'"','"'"'python3 /tmp/picker-fault-proxy.py'"'"'))'
+[06:12:34] 
+[06:12:34] guest$ sv restart crowbar-shell
+[06:12:34] ok: run: crowbar-shell: (pid 4878) 0s
+[06:12:35] guest$ chpst -u crowbar:crowbar python3 -c 'import os,subprocess
+subprocess.run(['"'"'wl-copy'"'"','"'"'--type'"'"','"'"'text/plain;charset=utf-8'"'"'], input='"'"'Review the clipboard limits before opening the pull request.'"'"'.encode(), env=dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"', WAYLAND_DISPLAY='"'"'wayland-0'"'"'), check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'
+[06:12:35] 
+[06:12:36] guest$ chpst -u crowbar:crowbar python3 -c 'import os,subprocess
+subprocess.run(['"'"'wl-copy'"'"','"'"'--type'"'"','"'"'text/plain;charset=utf-8'"'"'], input='"'"'Keep the earlier note until an update is confirmed.'"'"'.encode(), env=dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"', WAYLAND_DISPLAY='"'"'wayland-0'"'"'), check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'
+[06:12:36] 
+[06:12:37] guest$ python3 -c 'from pathlib import Path; Path('"'"'/tmp/picker-fault'"'"').write_text('"'"'clipboard_history'"'"')'
+[06:12:37] 
+[06:12:37] guest$ chpst -u crowbar:crowbar python3 -c 'import os,subprocess
+subprocess.run(['"'"'wl-copy'"'"','"'"'--type'"'"','"'"'text/plain;charset=utf-8'"'"'], input='"'"'A new copy while history is already open.'"'"'.encode(), env=dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"', WAYLAND_DISPLAY='"'"'wayland-0'"'"'), check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'
+[06:12:50] Traceback (most recent call last):
+  File "<string>", line 2, in <module>
+    subprocess.run(['wl-copy','--type','text/plain;charset=utf-8'], input='A new copy while history is already open.'.encode(), env=dict(os.environ, HOME='/home/crowbar', XDG_RUNTIME_DIR='/run/user/1003', WAYLAND_DISPLAY='wayland-0'), check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 557, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 1221, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 2179, in _communicate
+    self.wait(timeout=self._remaining_time(endtime))
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 1279, in wait
+    return self._wait(timeout=timeout)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 2076, in _wait
+    raise TimeoutExpired(self.args, timeout)
+subprocess.TimeoutExpired: Command '['wl-copy', '--type', 'text/plain;charset=utf-8']' timed out after 12 seconds
+[06:12:50] guest$ cp /tmp/picker-shell-run.original /etc/sv/crowbar-shell/run; rm -f /tmp/picker-fault; sv restart crowbar-shell
+[06:12:50] ok: run: crowbar-shell: (pid 5061) 1s
+Traceback (most recent call last):
+  File "<checkout>/.lab/clipboard-command.py", line 10, in <module>
+    exec(Path(sys.argv[1]).read_text())
+    ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 15, in <module>
+  File "<string>", line 24, in <module>
+  File "<string>", line 11, in copy
+  File "<checkout>/lab/void/desktop_check.py", line 152, in python
+    return self.run(prefix + 'python3 -c ' + shlex.quote(code))
+           ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<checkout>/lab/void/desktop_check.py", line 147, in run
+    raise RuntimeError(f'guest command exited {result.returncode}: {command}')
+RuntimeError: guest command exited 1: chpst -u crowbar:crowbar python3 -c 'import os,subprocess
+subprocess.run(['"'"'wl-copy'"'"','"'"'--type'"'"','"'"'text/plain;charset=utf-8'"'"'], input='"'"'A new copy while history is already open.'"'"'.encode(), env=dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"', WAYLAND_DISPLAY='"'"'wayland-0'"'"'), check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'

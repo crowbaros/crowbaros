@@ -579,6 +579,10 @@ impl State {
     }
 
     fn close_control(&mut self, id: u64) {
+        if self.clipboard.owner == Some(id) {
+            self.clear_clipboard_history();
+            self.clipboard.owner = None;
+        }
         if let Some(connection) = self.controls.connections.remove(&id) {
             self.event_loop.remove(connection.stream.as_fd());
             if let Some((_, timer)) = connection.held {
@@ -609,6 +613,15 @@ impl State {
         };
         let result = match op.as_str() {
             "snapshot" => only(&[], &request).map(|()| self.snapshot_reply()),
+            "clipboard_start" => only(&[], &request).map(|()| {
+                self.clipboard_start(id);
+                ok_reply()
+            }),
+            "clipboard_history" => only(&[], &request).map(|()| self.clipboard_history()),
+            "clipboard_clear" => only(&[], &request).map(|()| {
+                self.clear_clipboard_history();
+                ok_reply()
+            }),
             "focus_workspace" => only(&["id"], &request).and_then(|()| match request.get("id") {
                 Some(Value::Number(id)) if (1..=i64::from(WORKSPACES)).contains(id) => {
                     self.show_workspace(*id as u32);

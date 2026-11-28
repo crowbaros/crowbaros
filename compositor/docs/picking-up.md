@@ -7,6 +7,11 @@ The shell can now apply frame and background colors through `set_theme`
 geometry and lock colors remain fixed. Theme Studio and the shell switcher
 use this alongside Base’s bounded wallpaper transfer.
 
+The shell also owns a bounded, volatile clipboard history through its
+control connection ([ADR 0039](../../docs/adr/0039-the-shell-keeps-a-bounded-clipboard-history.md)).
+Super+V and Super+. open its history and character overlays. Lock clears
+history and cancels pending capture; the Agent channel has no history API.
+
 ## Where it paused
 
 Fulcrum runs CrowbarOS's desktop on Base's image. It has two kinds of client, the shell and the person's apps ([ADR 0032](../../docs/adr/0032-fulcrum-serves-the-shell-and-the-persons-apps.md)), each at a socket of its own that takes one user ID. Copy and paste, the primary selection, and drag and drop work between the shell and every app, and a new window takes the keyboard, as on any desktop. The desktop starts locked, the person's password unlocks it through Base's helper, and a compositor restart comes back locked. CrowbarOS's desktop check shows each of these on a copy of Base's image, booted under UEFI.

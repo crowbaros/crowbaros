@@ -63,6 +63,7 @@ impl TextInput {
             max_len,
         }
     }
+    pub fn is_composing(&self) -> bool { self.marked_range.is_some() }
     pub fn query(&self) -> String {
         self.content.to_string()
     }

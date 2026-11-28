@@ -125,5 +125,17 @@ Wayland event handler accumulates bare axes and routes each frame through that
 decision. Viewer's desktop check scrolls to a thumbnail outside the initial
 page cache to verify delivery in a real window.
 
-All six patches serve the GPUI apps that take the shell's prepared source
+All seven patches serve the GPUI apps that take the shell's prepared source
 through their `[patch.crates-io]`.
+
+
+## Emoji families
+
+`gpui-0.2.2-emoji-families.patch` keeps Noto Color Emoji when explicitly
+requested. GPUI's Linux font loader rejects faces without a Latin `m` and
+removes them from its database. An emoji-only family is valid without that
+glyph; removing it also breaks subsequent ordinary text fallback. The patch
+uses GPUI's existing known-emoji predicate and keeps the guard for other
+fonts. The desktop check opens the Thinking face result and asserts colored
+glyph pixels, then copies emoji and displays them again in history. The
+pixel assertion fails with zero colored pixels without this patch.

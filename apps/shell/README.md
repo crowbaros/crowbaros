@@ -277,3 +277,36 @@ with swatches, the active theme’s backgrounds, Next background, and Create
 theme… . Escape or a click outside dismisses it; Tab and Enter operate its
 controls. Theme metadata and bounded wallpaper pixels come from Base’s
 launcher as the person, without granting the shell access to their home.
+
+## Clipboard history and characters
+
+On Fulcrum, **Super+V** toggles clipboard history and **Super+.** toggles the
+character and emoji picker. Both start with the search field focused. Type
+to filter, use Up/Down to choose, and Enter to copy and return to the earlier
+app. Escape or the same chord closes the overlay. Copying does not paste
+into the app. Tab reaches **Clear** in history; Enter or Space activates it.
+
+History is memory-only: at most 50 text items, 8 KiB per item, and 64 KiB
+total. Consecutive duplicates count once. Oversized, empty, and non-UTF-8
+copies are skipped, as are images, file lists, primary selection, and drags.
+**Clear**, lock, and the end of the shell session discard history and any
+unfinished capture. The current Wayland selection is separate; clearing
+history does not clear an app's clipboard. Neither overlay opens while locked.
+
+The character catalogue includes common emoji, typography, arrows, math,
+and currencies. Search matches names, categories, keywords, and the glyph
+itself. Base supplies Noto Color Emoji for emoji coverage. The picker uses
+`input::TextInput`, including its IME path; Enter during composition does not
+copy a result. It follows the active desktop palette.
+
+Fulcrum captures text without blocking the shell's UI or moving focus,
+under [ADR 0039](../../docs/adr/0039-the-shell-keeps-a-bounded-clipboard-history.md).
+Its shell-only channel never exposes history to the Agent. Contents do not
+enter snapshots, logs, or preferences. The shell holds display text only
+while the overlay is open.
+
+`cargo test --locked` checks symbol search; Fulcrum's tests check the bounds,
+clearing, stalled sources, lock and channel authority. The full
+`lab/void/desktop_check.py` exercises real Wayland copies, history restore,
+character search, focus, toggles, Clear, and lock in Dark and Light, saving
+`clipboard-*` and `characters-*` captures alongside its log and results.

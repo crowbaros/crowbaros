@@ -70,6 +70,8 @@ pub enum Event {
     Wallpaper(Option<crate::wallpaper::Wallpaper>),
     Themes(crate::themes::Catalog),
     Toggle,
+    Picker(crate::clipboard_picker::Kind),
+    ClipboardChanged,
     /// The person made the summon gesture.
     Summon(Summon),
     /// A hardware volume, mute, or brightness key was pressed.
@@ -117,6 +119,8 @@ pub fn channel() -> (Sender, Receiver) {
 /// What the shell asks of the compositor it runs under: the windows and
 /// workspaces, and the two focus requests.
 pub trait Adapter: Send + Sync {
+    fn clipboard_start(&self) -> Result<()> { Ok(()) }
+    fn clipboard_history(&self, _clear: bool) -> Result<Vec<String>> { bail!("Clipboard history needs Fulcrum") }
     fn set_theme(&self, _colors: &crowbar_theme::ThemeColors) -> Result<()> { Ok(()) }
     fn snapshot(&self) -> Result<Snapshot>;
     fn focus_workspace(&self, id: i32) -> Result<()>;
@@ -207,6 +211,9 @@ fn shell_event(message: &serde_json::Value) -> Option<Event> {
         None
     };
     match message["event"].as_str()? {
+        "clipboard_changed" => Some(Event::ClipboardChanged),
+        "clipboard" => Some(Event::Picker(crate::clipboard_picker::Kind::History)),
+        "characters" => Some(Event::Picker(crate::clipboard_picker::Kind::Characters)),
         "launcher" => Some(Event::Toggle),
         "locked" => Some(Event::Lock(true)),
         "unlocked" => Some(Event::Lock(false)),
@@ -597,6 +604,15 @@ impl Channel {
 }
 
 impl Adapter for Compositor {
+    fn clipboard_start(&self) -> Result<()> {
+        self.request(serde_json::json!({"op":"clipboard_start"})).map(drop)
+    }
+    fn clipboard_history(&self, clear: bool) -> Result<Vec<String>> {
+        if clear { self.request(serde_json::json!({"op":"clipboard_clear"}))?; }
+        let reply = self.request(serde_json::json!({"op":"clipboard_history"}))?;
+        Ok(serde_json::from_value(reply["items"].clone())?)
+    }
+
     fn set_theme(&self, colors: &crowbar_theme::ThemeColors) -> Result<()> {
         self.request(serde_json::json!({"op":"set_theme", "focused":crowbar_theme::hex(colors.focus),
             "unfocused":crowbar_theme::hex(colors.line), "background":crowbar_theme::hex(colors.canvas)})).map(drop)
@@ -752,8 +768,10 @@ fn connection() -> Result<&'static dyn Adapter> {
 /// its control channel. Call before starting any thread or program, so that
 /// no child inherits the descriptor.
 pub fn connect() {
-    let _ = connection();
+    if let Err(error) = connection().and_then(|c| c.clipboard_start()) { log::warn!("Starting clipboard history: {error}"); }
 }
+
+pub fn clipboard_history(clear: bool) -> Result<Vec<String>> { connection()?.clipboard_history(clear) }
 
 pub fn set_theme(colors: &crowbar_theme::ThemeColors) -> Result<()> {
     connection()?.set_theme(colors)
@@ -1376,6 +1394,14 @@ mod tests {
 
     /// The lock screen sends the unlock helper the password alone, and says
     /// why it did not unlock.
+    #[test]
+    fn clipboard_events_open_the_right_picker_without_carrying_contents() {
+        use crate::clipboard_picker::Kind;
+        assert!(matches!(shell_event(&serde_json::json!({"event":"clipboard"})), Some(Event::Picker(Kind::History))));
+        assert!(matches!(shell_event(&serde_json::json!({"event":"characters"})), Some(Event::Picker(Kind::Characters))));
+        assert!(matches!(shell_event(&serde_json::json!({"event":"clipboard_changed"})), Some(Event::ClipboardChanged)));
+    }
+
     #[test]
     fn the_unlock_helper_hears_the_password_and_its_answer_is_said() {
         for (reply, expected) in [

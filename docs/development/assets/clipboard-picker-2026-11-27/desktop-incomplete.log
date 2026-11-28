@@ -1,0 +1,2519 @@
+[06:21:09] Evidence and new guest disk: <checkout>/.lab/void-desktop-checks/20261127T232109-r3hq44_1
+[06:21:09] Building the image with Base's build; its output goes to <checkout>/.lab/void-desktop-checks/20261127T232109-r3hq44_1/build.log
+[06:22:13] PASS: the session starts locked, behind the lock screen
+[06:22:13] guest$ date +%S
+[06:22:13] 12
+[06:22:16] guest$ grep -c 'commits so far' /var/log/crowbar-compositor.log || true
+[06:22:16] 1
+[06:22:28] guest$ grep -c 'commits so far' /var/log/crowbar-compositor.log || true
+[06:22:28] 1
+[06:22:28] PASS: a still desktop, locked at boot, commits nothing and draws nothing — 0 reports in 12 s
+[06:22:28] guest$ cat /etc/os-release
+[06:22:29] NAME="Void"
+ID="void"
+PRETTY_NAME="Void Linux"
+HOME_URL="https://voidlinux.org/"
+DOCUMENTATION_URL="https://docs.voidlinux.org/"
+LOGO="void-logo"
+ANSI_COLOR="0;38;2;71;128;97"
+
+DISTRIB_ID="void"
+[06:22:29] PASS: Void Linux
+[06:22:29] guest$ uname -r; grep -o 'kernel [^)]*' /boot/grub/grub.cfg
+[06:22:29] 6.18.65_1
+kernel 6.18.65_1
+[06:22:29] PASS: kernel matches the boot menu
+[06:22:29] guest$ findmnt -no SOURCE,FSTYPE,OPTIONS /
+[06:22:29] /dev/vda2 btrfs rw,relatime,discard=async,space_cache=v2,subvolid=5,subvol=/
+[06:22:29] PASS: root is the labelled Btrfs
+[06:22:29] guest$ test -d /sys/firmware/efi && echo efi
+[06:22:29] efi
+[06:22:29] PASS: booted with UEFI
+[06:22:29] guest$ hostname
+[06:22:29] crowbaros
+[06:22:29] PASS: hostname
+[06:22:29] guest$ cat /proc/1/comm
+[06:22:29] runit
+[06:22:29] PASS: runit is PID 1
+[06:22:29] guest$ sv status /var/service/*
+[06:22:29] run: /var/service/agetty-tty1: (pid 573) 25s
+run: /var/service/agetty-tty3: (pid 578) 25s
+run: /var/service/agetty-tty4: (pid 571) 25s
+run: /var/service/agetty-tty5: (pid 572) 25s
+run: /var/service/agetty-tty6: (pid 579) 25s
+run: /var/service/agetty-ttyS0: (pid 588) 25s
+run: /var/service/bluetoothd: (pid 615) 25s; run: log: (pid 614) 25s
+run: /var/service/crowbar-compositor: (pid 633) 25s
+run: /var/service/crowbar-ctrl-alt-del: (pid 621) 25s
+run: /var/service/crowbar-launcher: (pid 626) 25s
+run: /var/service/crowbar-lever: (pid 632) 25s
+run: /var/service/crowbar-monitor-status: (pid 610) 25s
+run: /var/service/crowbar-pipewire: (pid 611) 25s
+run: /var/service/crowbar-shell: (pid 639) 25s
+run: /var/service/crowbar-unlock: (pid 627) 25s
+run: /var/service/dbus: (pid 592) 25s; run: log: (pid 591) 25s
+run: /var/service/dhcpcd: (pid 575) 25s; run: log: (pid 574) 25s
+run: /var/service/iwd: (pid 594) 25s; run: log: (pid 593) 25s
+run: /var/service/nanoklogd: (pid 595) 25s
+run: /var/service/seatd: (pid 609) 25s; run: log: (pid 607) 25s
+run: /var/service/socklog-unix: (pid 590) 25s; run: log: (pid 589) 25s
+run: /var/service/sshd: (pid 587) 25s; run: log: (pid 586) 25s
+run: /var/service/udevd: (pid 577) 25s; run: log: (pid 576) 25s
+[06:22:29] PASS: services are up
+[06:22:29] guest$ p=$(basename "$(readlink -f "$(findmnt -no SOURCE / | sed 's/\[.*//')")"); d=$(basename "$(readlink -f /sys/class/block/$p/..)"); cat /sys/class/block/$d/size /sys/class/block/$p/start /sys/class/block/$p/size; btrfs filesystem show --raw / | awk '/devid/ {print $4}'
+[06:22:29] 25165824
+133120
+25032671
+12816723968
+[06:22:29] PASS: the root fills a disk larger than the image
+[06:22:29] guest$ lsinitrd /boot/initramfs-$(uname -r).img 2>/dev/null | grep -o 'kernel/x86/microcode/[A-Za-z]*.bin' | sort -u
+[06:22:39] kernel/x86/microcode/AuthenticAMD.bin
+kernel/x86/microcode/GenuineIntel.bin
+[06:22:39] PASS: the image loads both vendors' microcode early
+[06:22:39] guest$ su -s /bin/sh -c 'id -nG; iwctl device list' "$(getent passwd 1003 | cut -d: -f1)"
+[06:22:39] crowbar wheel audio netdev bluetooth socklog
+                                    Devices[1;90m                                    [0m
+[90m--------------------------------------------------------------------------------
+[0m[1;90m  Name                  Address               Powered     Adapter     Mode      
+[0m[90m--------------------------------------------------------------------------------
+[0m
+[06:22:39] PASS: the person may join Wi-Fi with iwctl
+[06:22:39] guest$ sshd -T | grep -iE '^(passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) '
+[06:22:39] PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+[06:22:39] PASS: SSH takes keys and no passwords
+[06:22:39] guest$ getent passwd 1003 | cut -d: -f1,6,7; stat -c '%U %a' "$(getent passwd 1003 | cut -d: -f6)"
+[06:22:39] crowbar:/home/crowbar:/bin/bash
+crowbar 700
+[06:22:39] PASS: the person's account has a home and a login shell
+[06:22:39] guest(crowbar)$ id -u
+[06:22:40] 1003
+[06:22:40] PASS: the person's account takes the build's key over SSH
+[06:22:40] guest$ m=crowbar-check-$$; logger -t crowbar-check "$m-service"; echo "$m-kernel" > /dev/kmsg; for i in $(seq 50); do grep -rqs "$m-service" /var/log/socklog && grep -qs "$m-kernel" /var/log/socklog/kernel/current && break; sleep 0.2; done; grep -rhs "$m-" /var/log/socklog | sed 's/.*crowbar-check-[0-9]*-//' | sort -u
+[06:22:50] kernel
+service
+[06:22:50] PASS: the system's log keeps services' and the kernel's messages
+[06:22:50] guest(crowbar)$ id -nG; command -v reboot poweroff; sudo -n -l /usr/bin/reboot; sudo -n -l /usr/bin/poweroff
+[06:22:50] crowbar wheel audio netdev bluetooth socklog
+/usr/local/bin/reboot
+/usr/local/bin/poweroff
+/usr/bin/reboot
+/usr/bin/poweroff
+[06:22:50] PASS: the person may reboot and power off from the terminal
+[06:22:50] guest$ c=crowbar-compositor; b=$(pgrep -u $c | xargs); sv restart $c >/dev/null; echo "restart $?"; for i in $(seq 50); do a=$(pgrep -u $c | xargs); [ -n "$a" ] && [ "$a" != "$b" ] && break; sleep 0.2; done; sleep 2; echo "before $b"; echo "after $a"; echo "later $(pgrep -u $c | xargs)"
+[06:22:53] restart 0
+before 690
+after 1301
+later 1301
+[06:22:53] PASS: the compositor's service restarts
+[06:22:53] guest$ for i in $(seq 150); do o=$(sv status /var/service/seatd /var/service/crowbar-compositor /var/service/crowbar-shell /var/service/crowbar-launcher /var/service/crowbar-unlock /var/service/crowbar-lever /var/service/crowbar-pipewire /var/service/crowbar-monitor-status); p=$(echo "$o" | sed -n 's|^run: /var/service/crowbar-shell: (pid \([0-9]*\)).*|\1|p'); e=$(readlink "/proc/$p/exe" 2>/dev/null); echo "$o" | grep -Evq '^run: [^ ]+ \(pid [0-9]+\) ([3-9]|[0-9]{2,})s' || [ "$e" != /usr/local/bin/crowbaros-shell ] || break; sleep 0.2; done; echo "$o"; echo "shell $e"
+[06:22:53] run: /var/service/seatd: (pid 609) 49s; run: log: (pid 607) 49s
+run: /var/service/crowbar-compositor: (pid 1290) 3s
+run: /var/service/crowbar-shell: (pid 1302) 3s
+run: /var/service/crowbar-launcher: (pid 626) 49s
+run: /var/service/crowbar-unlock: (pid 627) 49s
+run: /var/service/crowbar-lever: (pid 632) 49s
+run: /var/service/crowbar-pipewire: (pid 611) 49s
+run: /var/service/crowbar-monitor-status: (pid 610) 49s
+shell /usr/local/bin/crowbaros-shell
+[06:22:53] PASS: the desktop's services stay up
+[06:22:53] guest$ /usr/local/bin/crowbar-unlock lock; echo "exit $?"
+[06:22:53] exit 0
+[06:22:53] PASS: the compositor answers the unlock helper's lock
+[06:22:53] guest$ probe() { chpst -u "$2" python3 -c '
+import socket, struct, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(3)
+def recv_exact(n):
+    buf = b""
+    while len(buf) < n and (more := s.recv(n - len(buf))):
+        buf += more
+    return buf
+try:
+    s.connect(sys.argv[1])
+    vframe = bytes.fromhex(sys.argv[2])
+    s.sendall(vframe)
+    vreply = recv_exact(len(vframe))
+    if not vreply:
+        print("refused")
+        sys.exit(0)
+    s.sendall(bytes.fromhex(sys.argv[3]))
+    hdr = recv_exact(4)
+    if len(hdr) < 4:
+        print("short")
+        sys.exit(0)
+    (length,) = struct.unpack(">I", hdr)
+    body = recv_exact(length)
+    print("ok", vreply.hex(), body.decode())
+except (ConnectionResetError, BrokenPipeError):
+    print("refused")
+except OSError as error:
+    print("error:", error.strerror or error)
+' "$1" 0000000d7b2276657273696f6e223a317d 0000000f7b226f70223a22737461747573227d 2>&1; }; u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); t=$(($(date +%s) + 30)); until s=$(probe /run/crowbar-lever/surface crowbar-shell); case "$s" in 'ok 0000000d7b2276657273696f6e223a317d '*) true;; *) false;; esac; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; echo "shell $s"; echo "root $(probe /run/crowbar-lever/surface root)"; echo "person $(probe /run/crowbar-lever/surface "$u")"; echo "group $(probe /run/crowbar-lever/surface crowbar-compositor:crowbar-shell)"; echo "other $(probe /run/crowbar-lever/surface crowbar-compositor)"; stat -c 'directory %u %g %a' /run/crowbar-lever; stat -c 'socket %u %g %a' /run/crowbar-lever/surface; echo "shell-account $(id -u crowbar-shell) $(id -g crowbar-shell)"
+[06:22:53] shell ok 0000000d7b2276657273696f6e223a317d {"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[{"id":"harness-1","name":"OpenCode"}],"free_hosted_models":false,"models_chosen":false,"default_mode":"ask-first"}
+root refused
+person refused
+group refused
+other error: Permission denied
+directory 1003 1001 2750
+socket 1003 1001 660
+shell-account 1001 1001
+[06:22:53] PASS: Lever answers the shell's account on its surface socket, and no other
+[06:22:53] guest$ probe() { chpst -u "$2" python3 -c '
+import socket, struct, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(3)
+def recv_exact(n):
+    buf = b""
+    while len(buf) < n and (more := s.recv(n - len(buf))):
+        buf += more
+    return buf
+try:
+    s.connect(sys.argv[1])
+    vframe = bytes.fromhex(sys.argv[2])
+    s.sendall(vframe)
+    vreply = recv_exact(len(vframe))
+    if not vreply:
+        print("refused")
+        sys.exit(0)
+    s.sendall(bytes.fromhex(sys.argv[3]))
+    hdr = recv_exact(4)
+    if len(hdr) < 4:
+        print("short")
+        sys.exit(0)
+    (length,) = struct.unpack(">I", hdr)
+    body = recv_exact(length)
+    print("ok", vreply.hex(), body.decode())
+except (ConnectionResetError, BrokenPipeError):
+    print("refused")
+except OSError as error:
+    print("error:", error.strerror or error)
+' "$1" 0000000d7b2276657273696f6e223a317d 0000000f7b226f70223a22737461747573227d 2>&1; }; u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); echo "person $(probe /run/user/1003/crowbar-lever/person "$u")"; echo "root $(probe /run/user/1003/crowbar-lever/person root)"; echo "shell $(probe /run/user/1003/crowbar-lever/person crowbar-shell)"; stat -c 'directory %u %a' /run/user/1003/crowbar-lever; stat -c 'socket %u %a' /run/user/1003/crowbar-lever/person
+[06:22:53] person ok 0000000d7b2276657273696f6e223a317d {"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[{"id":"harness-1","name":"OpenCode"}],"free_hosted_models":false,"models_chosen":false,"default_mode":"ask-first"}
+root refused
+shell error: Permission denied
+directory 1003 700
+socket 1003 600
+[06:22:53] PASS: Lever answers the person's account on its person socket, and no other
+[06:22:53] guest$ pid() { sv status /var/service/crowbar-lever | sed -n 's|^run: [^ ]* (pid \([0-9]*\)).*|\1|p'; }; u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); t=$(($(date +%s) + 30)); until o=$(sv status /var/service/crowbar-lever); echo "$o" | grep -Eq '^run: [^ ]+ \(pid [0-9]+\) ([3-9]|[0-9]{2,})s'; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; p=$(pid); echo "service $o"; awk '/^Uid:/{u=$2} /^Gid:/{g=$2} /^Groups:/{$1=""; gr=$0} END{print "process", u, g, gr}' "/proc/$p/status"; echo "person $(id -u "$u") $(id -g "$u") $(id -G "$u")"; echo "program $(readlink "/proc/$p/exe")"; echo "cwd $(readlink "/proc/$p/cwd")"; echo "home $h"; tr '\0' '\n' < "/proc/$p/environ" | sed 's/^/env /'; stat -c 'state %a %u %n' "$h/.local/state/crowbaros/lever" "$h/.local/state/crowbaros/lever"/*
+[06:22:54] service run: /var/service/crowbar-lever: (pid 632) 49s
+process 1003 1003  4 12 992 994 998 1003
+person 1003 1003 1003 4 12 998 994 992
+program /usr/local/bin/crowbar-lever
+cwd /home/crowbar
+home /home/crowbar
+env BROWSER=chromium
+env CROWBAR_DISPLAY_SOCKET=/run/crowbar-displays/socket
+env CROWBAR_SESSION=crowbaros
+env HOME=/home/crowbar
+env LANG=en_US.UTF-8
+env LOGNAME=crowbar
+env PATH=/home/crowbar/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin
+env RUST_LOG=info
+env SHELL=/bin/bash
+env USER=crowbar
+env WAYLAND_DISPLAY=wayland-0
+env XCURSOR_SIZE=24
+env XCURSOR_THEME=Vanilla-DMZ
+env XDG_CURRENT_DESKTOP=CrowbarOS
+env XDG_RUNTIME_DIR=/run/user/1003
+env XDG_SESSION_TYPE=wayland
+state 700 1003 /home/crowbar/.local/state/crowbaros/lever
+state 600 1003 /home/crowbar/.local/state/crowbaros/lever/lever.log
+state 600 1003 /home/crowbar/.local/state/crowbaros/lever/lever.sqlite
+state 600 1003 /home/crowbar/.local/state/crowbaros/lever/lever.sqlite-shm
+state 600 1003 /home/crowbar/.local/state/crowbaros/lever/lever.sqlite-wal
+state 600 1003 /home/crowbar/.local/state/crowbaros/lever/running
+state 600 1003 /home/crowbar/.local/state/crowbaros/lever/tools.sock
+[06:22:54] PASS: Lever runs as the person, in an app's environment, with its state theirs alone
+[06:22:54] guest$ probe() { chpst -u "$2" python3 -c '
+import socket, struct, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(3)
+def recv_exact(n):
+    buf = b""
+    while len(buf) < n and (more := s.recv(n - len(buf))):
+        buf += more
+    return buf
+try:
+    s.connect(sys.argv[1])
+    vframe = bytes.fromhex(sys.argv[2])
+    s.sendall(vframe)
+    vreply = recv_exact(len(vframe))
+    if not vreply:
+        print("refused")
+        sys.exit(0)
+    s.sendall(bytes.fromhex(sys.argv[3]))
+    hdr = recv_exact(4)
+    if len(hdr) < 4:
+        print("short")
+        sys.exit(0)
+    (length,) = struct.unpack(">I", hdr)
+    body = recv_exact(length)
+    print("ok", vreply.hex(), body.decode())
+except (ConnectionResetError, BrokenPipeError):
+    print("refused")
+except OSError as error:
+    print("error:", error.strerror or error)
+' "$1" 0000000d7b2276657273696f6e223a317d 0000000f7b226f70223a22737461747573227d 2>&1; }; pid() { sv status /var/service/crowbar-lever | sed -n 's|^run: [^ ]* (pid \([0-9]*\)).*|\1|p'; }; u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); b=$(pid); kill -KILL "$b"; s=; t=$(($(date +%s) + 30)); until a=$(pid); [ -n "$a" ] && [ "$a" != "$b" ] && s=$(probe /run/crowbar-lever/surface crowbar-shell) && case "$s" in 'ok 0000000d7b2276657273696f6e223a317d '*) true;; *) false;; esac; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; echo "before $b"; echo "after $a"; echo "shell $s"; echo "logged $(grep -c "restart: the Lever before this one, process $b, ended without stopping" "$h/.local/state/crowbaros/lever/lever.log")"
+[06:22:54] before 632
+after 1463
+shell ok 0000000d7b2276657273696f6e223a317d {"reply":"status","version":"0.1.0","harness_started":false,"harnesses":[{"id":"harness-1","name":"OpenCode"}],"free_hosted_models":false,"models_chosen":false,"default_mode":"ask-first"}
+logged 1
+[06:22:54] PASS: Lever's service starts it again after a kill, and its log records the restart
+[06:22:54] guest$ pid() { sv status /var/service/crowbar-lever | sed -n 's|^run: [^ ]* (pid \([0-9]*\)).*|\1|p'; }; awk '/^VmRSS:/ {print $2}' "/proc/$(pid)/status"
+[06:22:54] 6204
+[06:22:54] PASS: the idle Lever holds less than 50 MiB of memory
+[06:22:54] guest$ u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); out=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent --list 2>&1'); rc=$?; echo "exit $rc"; printf '%s\n' "$out"
+[06:22:54] exit 0
+No threads yet.
+[06:22:54] PASS: crowbar-agent reaches Lever as the person
+[06:22:54] guest$ u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); t=$(($(date +%s) + 30)); until [ -S /run/user/1003/pipewire-0 ] && [ -S /run/user/1003/pulse/native ] && su -s /bin/sh "$u" -c 'XDG_RUNTIME_DIR=/run/user/1003 wpctl status' 2>/dev/null | grep -q WirePlumber; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; [ -S /run/user/1003/pulse/native ] && echo 'pulse-socket yes' || echo 'pulse-socket no'; su -s /bin/sh "$u" -c 'XDG_RUNTIME_DIR=/run/user/1003 wpctl status'
+[06:22:54] pulse-socket yes
+PipeWire 'pipewire-0' [1.6.12, crowbar@crowbaros, cookie:2365607537]
+ └─ Clients:
+        31. pipewire                            [1.6.12, crowbar@crowbaros, pid:761]
+        33. WirePlumber                         [1.6.12, crowbar@crowbaros, pid:759]
+        46. WirePlumber [client]                [1.6.12, crowbar@crowbaros, pid:759]
+        53. wpctl                               [1.6.12, crowbar@crowbaros, pid:1529]
+
+Audio
+ ├─ Devices:
+ │  
+ ├─ Sinks:
+ │  *   32. Dummy Output                        [vol: 1.00]
+ │  
+ ├─ Sources:
+ │  
+ ├─ Filters:
+ │  
+ └─ Streams:
+
+Video
+ ├─ Devices:
+ │  
+ ├─ Sinks:
+ │  
+ ├─ Sources:
+ │  
+ ├─ Filters:
+ │  
+ └─ Streams:
+
+Settings
+ └─ Default Configured Devices:
+E 06:22:53.675554             mod.rt ../src/modules/module-rt.c:295:pw_rtkit_bus_get: Failed to connect to session bus: Unable to autolaunch a dbus-daemon without a $DISPLAY for X11
+W 06:22:53.676475             mod.rt ../src/modules/module-rt.c:331:translate_error: RTKit error: org.freedesktop.DBus.Error.ServiceUnknown
+W 06:22:53.676493             mod.rt ../src/modules/module-rt.c:995:do_rtkit_setup: RTKit does not give us MaxRealtimePriority, using 1
+W 06:22:53.676637             mod.rt ../src/modules/module-rt.c:331:translate_error: RTKit error: org.freedesktop.DBus.Error.ServiceUnknown
+W 06:22:53.676644             mod.rt ../src/modules/module-rt.c:1000:do_rtkit_setup: RTKit does not give us MinNiceLevel, using 0
+[06:22:54] PASS: PipeWire and WirePlumber serve a working audio graph for the person
+[06:22:54] guest$ t=$(($(date +%s) + 30)); until dbus-send --system --print-reply --dest=org.bluez / org.freedesktop.DBus.ObjectManager.GetManagedObjects >/dev/null 2>&1; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; sv status /var/service/bluetoothd; out=$(dbus-send --system --print-reply --dest=org.bluez / org.freedesktop.DBus.ObjectManager.GetManagedObjects 2>&1); rc=$?; echo "dbus-exit $rc"; printf '%s\n' "$out"
+[06:22:54] run: /var/service/bluetoothd: (pid 615) 50s; run: log: (pid 614) 50s
+dbus-exit 0
+method return time=1795846973.803398 sender=:1.9 -> destination=:1.14 serial=21 reply_serial=2
+   array [
+      dict entry(
+         object path "/org/bluez"
+         array [
+            dict entry(
+               string "org.freedesktop.DBus.Introspectable"
+               array [
+               ]
+            )
+            dict entry(
+               string "org.bluez.AgentManager1"
+               array [
+               ]
+            )
+            dict entry(
+               string "org.bluez.ProfileManager1"
+               array [
+               ]
+            )
+         ]
+      )
+   ]
+[06:22:54] PASS: bluetoothd is supervised and reachable over system D-Bus
+[06:22:54] guest$ u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); echo "video $(su -s /bin/sh "$u" -c 'xdg-mime query default video/mp4')"; echo "audio $(su -s /bin/sh "$u" -c 'xdg-mime query default audio/mpeg')"; echo "mpv $(su -s /bin/sh "$u" -c 'mpv --version | head -n 1')"; test -f /etc/mpv/mpv.conf && echo 'conf yes' || echo 'conf no'; ldd /usr/bin/mpv
+[06:22:55] video mpv.desktop
+audio mpv.desktop
+mpv mpv v0.42.0 Copyright © 2000-2026 mpv/MPlayer/mplayer2 projects
+conf yes
+	linux-vdso.so.1 (0x00007f0e0a2a2000)
+	libass.so.9 => /usr/lib/libass.so.9 (0x00007f0e0a252000)
+	libavcodec.so.60 => /usr/lib/libavcodec.so.60 (0x00007f0e08800000)
+	libavfilter.so.9 => /usr/lib/libavfilter.so.9 (0x00007f0e08200000)
+	libavformat.so.60 => /usr/lib/libavformat.so.60 (0x00007f0e07e00000)
+	libavutil.so.58 => /usr/lib/libavutil.so.58 (0x00007f0e06c00000)
+	libplacebo.so.387 => /usr/lib/libplacebo.so.387 (0x00007f0e080d0000)
+	libswresample.so.4 => /usr/lib/libswresample.so.4 (0x00007f0e0a22f000)
+	libswscale.so.7 => /usr/lib/libswscale.so.7 (0x00007f0e0a192000)
+	libcurl.so.4 => /usr/lib/libcurl.so.4 (0x00007f0e09cfc000)
+	libcdio_paranoia.so.2 => /usr/lib/libcdio_paranoia.so.2 (0x00007f0e0a189000)
+	libcdio_cdda.so.2 => /usr/lib/libcdio_cdda.so.2 (0x00007f0e0a17f000)
+	libcdio.so.21 => /usr/lib/libcdio.so.21 (0x00007f0e0a153000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f0e08712000)
+	libdvdread.so.8 => /usr/lib/libdvdread.so.8 (0x00007f0e0a12e000)
+	libdvdnav.so.4 => /usr/lib/libdvdnav.so.4 (0x00007f0e080b8000)
+	libmujs.so.1.2.0 => /usr/lib/libmujs.so.1.2.0 (0x00007f0e07db3000)
+	liblcms2.so.2 => /usr/lib/liblcms2.so.2 (0x00007f0e07d4c000)
+	libarchive.so.13 => /usr/lib/libarchive.so.13 (0x00007f0e06b36000)
+	libavdevice.so.60 => /usr/lib/libavdevice.so.60 (0x00007f0e08092000)
+	libbluray.so.4 => /usr/lib/libbluray.so.4 (0x00007f0e06aea000)
+	libluajit-5.1.so.2 => /usr/lib/libluajit-5.1.so.2 (0x00007f0e06a56000)
+	librubberband.so.3 => /usr/lib/librubberband.so.3 (0x00007f0e069eb000)
+	libuchardet.so.0 => /usr/lib/libuchardet.so.0 (0x00007f0e069b8000)
+	libXfixes.so.3 => /usr/lib/libXfixes.so.3 (0x00007f0e09cf4000)
+	libX11.so.6 => /usr/lib/libX11.so.6 (0x00007f0e06870000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007f0e07d32000)
+	libasound.so.2 => /usr/lib/libasound.so.2 (0x00007f0e0674a000)
+	libjack.so.0 => /usr/lib/libjack.so.0 (0x00007f0e066f8000)
+	libpipewire-0.3.so.0 => /usr/lib/libpipewire-0.3.so.0 (0x00007f0e0660f000)
+	libpulse.so.0 => /usr/lib/libpulse.so.0 (0x00007f0e065d9000)
+	libsndio.so.7 => /usr/lib/libsndio.so.7 (0x00007f0e065c4000)
+	libdrm.so.2 => /usr/lib/libdrm.so.2 (0x00007f0e065ad000)
+	libdisplay-info.so.3 => /usr/lib/libdisplay-info.so.3 (0x00007f0e06574000)
+	libgbm.so.1 => /usr/lib/libgbm.so.1 (0x00007f0e0870c000)
+	libjpeg.so.8 => /usr/lib/libjpeg.so.8 (0x00007f0e064d1000)
+	libwayland-client.so.0 => /usr/lib/libwayland-client.so.0 (0x00007f0e064be000)
+	libwayland-cursor.so.0 => /usr/lib/libwayland-cursor.so.0 (0x00007f0e08700000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007f0e06457000)
+	libXss.so.1 => /usr/lib/libXss.so.1 (0x00007f0e0808d000)
+	libXext.so.6 => /usr/lib/libXext.so.6 (0x00007f0e06442000)
+	libXpresent.so.1 => /usr/lib/libXpresent.so.1 (0x00007f0e08088000)
+	libXrandr.so.2 => /usr/lib/libXrandr.so.2 (0x00007f0e06435000)
+	libXv.so.1 => /usr/lib/libXv.so.1 (0x00007f0e07d2b000)
+	libEGL.so.1 => /usr/lib/libEGL.so.1 (0x00007f0e06424000)
+	libwayland-egl.so.1 => /usr/lib/libwayland-egl.so.1 (0x00007f0e0641f000)
+	libvulkan.so.1 => /usr/lib/libvulkan.so.1 (0x00007f0e0638c000)
+	libva-drm.so.2 => /usr/lib/libva-drm.so.2 (0x00007f0e06387000)
+	libva.so.2 => /usr/lib/libva.so.2 (0x00007f0e0634e000)
+	libva-wayland.so.2 => /usr/lib/libva-wayland.so.2 (0x00007f0e06347000)
+	libva-x11.so.2 => /usr/lib/libva-x11.so.2 (0x00007f0e0633f000)
+	libvdpau.so.1 => /usr/lib/libvdpau.so.1 (0x00007f0e06339000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f0e0614f000)
+	libfribidi.so.0 => /usr/lib/libfribidi.so.0 (0x00007f0e0612e000)
+	libharfbuzz.so.0 => /usr/lib/libharfbuzz.so.0 (0x00007f0e05fcd000)
+	libfontconfig.so.1 => /usr/lib/libfontconfig.so.1 (0x00007f0e05f56000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007f0e05e8c000)
+	libvpx.so.12 => /usr/lib/libvpx.so.12 (0x00007f0e05c00000)
+	libwebpmux.so.3 => /usr/lib/libwebpmux.so.3 (0x00007f0e05e7f000)
+	liblzma.so.5 => /usr/lib/liblzma.so.5 (0x00007f0e05e4e000)
+	libcelt0.so.2 => /usr/lib/libcelt0.so.2 (0x00007f0e05be5000)
+	libdav1d.so.7 => /usr/lib/libdav1d.so.7 (0x00007f0e059ff000)
+	libaom.so.3 => /usr/lib/libaom.so.3 (0x00007f0e05400000)
+	libjxl.so.0.12 => /usr/lib/libjxl.so.0.12 (0x00007f0e05000000)
+	libjxl_threads.so.0.12 => /usr/lib/libjxl_threads.so.0.12 (0x00007f0e05e46000)
+	libmp3lame.so.0 => /usr/lib/libmp3lame.so.0 (0x00007f0e059af000)
+	libopus.so.0 => /usr/lib/libopus.so.0 (0x00007f0e04a00000)
+	libspeex.so.1 => /usr/lib/libspeex.so.1 (0x00007f0e0598f000)
+	libSvtAv1Enc.so.4 => /usr/lib/libSvtAv1Enc.so.4 (0x00007f0e04400000)
+	libtheoraenc.so.2 => /usr/lib/libtheoraenc.so.2 (0x00007f0e04fc3000)
+	libtheoradec.so.2 => /usr/lib/libtheoradec.so.2 (0x00007f0e04fa9000)
+	libvorbis.so.0 => /usr/lib/libvorbis.so.0 (0x00007f0e04f7b000)
+	libvorbisenc.so.2 => /usr/lib/libvorbisenc.so.2 (0x00007f0e04ed0000)
+	libwebp.so.7 => /usr/lib/libwebp.so.7 (0x00007f0e0438a000)
+	libx264.so.165 => /usr/lib/libx264.so.165 (0x00007f0e04000000)
+	libx265.so.216 => /usr/lib/libx265.so.216 (0x00007f0e02e00000)
+	libxvidcore.so.4 => /usr/lib/libxvidcore.so.4 (0x00007f0e03eed000)
+	libvpl.so.2 => /usr/lib/libvpl.so.2 (0x00007f0e04327000)
+	libpostproc.so.57 => /usr/lib/libpostproc.so.57 (0x00007f0e04ebb000)
+	libbs2b.so.0 => /usr/lib/libbs2b.so.0 (0x00007f0e05983000)
+	libvmaf.so.3 => /usr/lib/libvmaf.so.3 (0x00007f0e02cf7000)
+	libvidstab.so.1.1 => /usr/lib/libvidstab.so.1.1 (0x00007f0e049ec000)
+	libOpenCL.so.1 => /usr/lib/libOpenCL.so.1 (0x00007f0e049b1000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007f0e04314000)
+	libopenmpt.so.0 => /usr/lib/libopenmpt.so.0 (0x00007f0e02a00000)
+	libgnutls.so.30 => /usr/lib/libgnutls.so.30 (0x00007f0e02600000)
+	librist.so.4 => /usr/lib/librist.so.4 (0x00007f0e03ea5000)
+	librtmp.so.1 => /usr/lib/librtmp.so.1 (0x00007f0e042f5000)
+	libsrt.so.1.5 => /usr/lib/libsrt.so.1.5 (0x00007f0e02901000)
+	libshaderc_shared.so.1 => /usr/lib/libshaderc_shared.so.1 (0x00007f0e042d8000)
+	libstdc++.so.6 => /usr/lib/libstdc++.so.6 (0x00007f0e02200000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f0e03e78000)
+	libsoxr.so.0 => /usr/lib/libsoxr.so.0 (0x00007f0e0287f000)
+	libnghttp3.so.9 => /usr/lib/libnghttp3.so.9 (0x00007f0e03e51000)
+	libngtcp2_crypto_ossl.so.0 => /usr/lib/libngtcp2_crypto_ossl.so.0 (0x00007f0e04eae000)
+	libngtcp2.so.16 => /usr/lib/libngtcp2.so.16 (0x00007f0e025a8000)
+	libnghttp2.so.14 => /usr/lib/libnghttp2.so.14 (0x00007f0e02cc8000)
+	libidn2.so.0 => /usr/lib/libidn2.so.0 (0x00007f0e0254f000)
+	libssh2.so.1 => /usr/lib/libssh2.so.1 (0x00007f0e021b8000)
+	libpsl.so.5 => /usr/lib/libpsl.so.5 (0x00007f0e02869000)
+	libssl.so.3 => /usr/lib/libssl.so.3 (0x00007f0e020b4000)
+	libcrypto.so.3 => /usr/lib/libcrypto.so.3 (0x00007f0e01a00000)
+	libzstd.so.1 => /usr/lib/libzstd.so.1 (0x00007f0e01950000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f0e0a2a4000)
+	libdvdcss.so.2 => /usr/lib/libdvdcss.so.2 (0x00007f0e049a5000)
+	libacl.so.1 => /usr/lib/libacl.so.1 (0x00007f0e0285d000)
+	liblz4.so.1 => /usr/lib/liblz4.so.1 (0x00007f0e02526000)
+	libxcb.so.1 => /usr/lib/libxcb.so.1 (0x00007f0e02089000)
+	libxcb-shm.so.0 => /usr/lib/libxcb-shm.so.0 (0x00007f0e053fb000)
+	libxcb-shape.so.0 => /usr/lib/libxcb-shape.so.0 (0x00007f0e042d3000)
+	libxcb-xfixes.so.0 => /usr/lib/libxcb-xfixes.so.0 (0x00007f0e03e48000)
+	libSDL2-2.0.so.0 => /usr/lib/libSDL2-2.0.so.0 (0x00007f0e01762000)
+	libv4l2.so.0 => /usr/lib/libv4l2.so.0 (0x00007f0e02517000)
+	libxml2.so.2 => /usr/lib/libxml2.so.2 (0x00007f0e015f7000)
+	libfftw3.so.3 => /usr/lib/libfftw3.so.3 (0x00007f0e01470000)
+	libdb-5.3.so => /usr/lib/libdb-5.3.so (0x00007f0e012b0000)
+	libsamplerate.so.0 => /usr/lib/libsamplerate.so.0 (0x00007f0e01142000)
+	libpulsecommon-16.1.so => /usr/lib64/pulseaudio/libpulsecommon-16.1.so (0x00007f0e0202f000)
+	libdbus-1.so.3 => /usr/lib/libdbus-1.so.3 (0x00007f0e010f0000)
+	libexpat.so.1 => /usr/lib/libexpat.so.1 (0x00007f0e010bf000)
+	libffi.so.7 => /usr/lib/libffi.so.7 (0x00007f0e02023000)
+	libXrender.so.1 => /usr/lib/libXrender.so.1 (0x00007f0e02016000)
+	libGLdispatch.so.0 => /usr/lib/libGLdispatch.so.0 (0x00007f0e01008000)
+	libX11-xcb.so.1 => /usr/lib/libX11-xcb.so.1 (0x00007f0e02cc3000)
+	libxcb-dri3.so.0 => /usr/lib/libxcb-dri3.so.0 (0x00007f0e02856000)
+	libdl.so.2 => /usr/lib/libdl.so.2 (0x00007f0e02512000)
+	libpthread.so.0 => /usr/lib/libpthread.so.0 (0x00007f0e0250d000)
+	libglib-2.0.so.0 => /usr/lib/libglib-2.0.so.0 (0x00007f0e00eb2000)
+	libgraphite2.so.3 => /usr/lib/libgraphite2.so.3 (0x00007f0e00e88000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007f0e00e50000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007f0e00e42000)
+	libjxl_cms.so.0.12 => /usr/lib/libjxl_cms.so.0.12 (0x00007f0e00e2c000)
+	libhwy.so.1 => /usr/lib/libhwy.so.1 (0x00007f0e00e1d000)
+	libbrotlienc.so.1 => /usr/lib/libbrotlienc.so.1 (0x00007f0e00d72000)
+	libmpg123.so.0 => /usr/lib/libmpg123.so.0 (0x00007f0e00d28000)
+	libogg.so.0 => /usr/lib/libogg.so.0 (0x00007f0e00d1e000)
+	libsharpyuv.so.0 => /usr/lib/libsharpyuv.so.0 (0x00007f0e00d15000)
+	libgomp.so.1 => /usr/lib/libgomp.so.1 (0x00007f0e00cc2000)
+	libvorbisfile.so.3 => /usr/lib/libvorbisfile.so.3 (0x00007f0e00cb7000)
+	libp11-kit.so.0 => /usr/lib/libp11-kit.so.0 (0x00007f0e00af2000)
+	libunistring.so.2 => /usr/lib/libunistring.so.2 (0x00007f0e00945000)
+	libtasn1.so.6 => /usr/lib/libtasn1.so.6 (0x00007f0e0092f000)
+	libhogweed.so.6 => /usr/lib/libhogweed.so.6 (0x00007f0e008e4000)
+	libnettle.so.8 => /usr/lib/libnettle.so.8 (0x00007f0e0088e000)
+	libgmp.so.10 => /usr/lib/libgmp.so.10 (0x00007f0e0080f000)
+	libmbedcrypto.so.16 => /usr/lib/libmbedcrypto.so.16 (0x00007f0e00775000)
+	libglslang.so.16 => /usr/lib/libglslang.so.16 (0x00007f0dff600000)
+	libXau.so.6 => /usr/lib/libXau.so.6 (0x00007f0e00770000)
+	libXdmcp.so.6 => /usr/lib/libXdmcp.so.6 (0x00007f0e00768000)
+	libXcursor.so.1 => /usr/lib/libXcursor.so.1 (0x00007f0e0075b000)
+	libXi.so.6 => /usr/lib/libXi.so.6 (0x00007f0e00747000)
+	libdecor-0.so.0 => /usr/lib/libdecor-0.so.0 (0x00007f0e0073c000)
+	libv4lconvert.so.0 => /usr/lib/libv4lconvert.so.0 (0x00007f0e006c1000)
+	libicuuc.so.78 => /usr/lib/libicuuc.so.78 (0x00007f0dff200000)
+	libsndfile.so.1 => /usr/lib/libsndfile.so.1 (0x00007f0e00634000)
+	libasyncns.so.0 => /usr/lib/libasyncns.so.0 (0x00007f0dfee00000)
+	libpcre2-8.so.0 => /usr/lib/libpcre2-8.so.0 (0x00007f0dff54f000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007f0e00611000)
+	libicudata.so.78 => /usr/lib/libicudata.so.78 (0x00007f0e0060c000)
+	libFLAC.so.14 => /usr/lib/libFLAC.so.14 (0x00007f0dff4e6000)
+	libresolv.so.2 => /usr/lib/libresolv.so.2 (0x00007f0e005fb000)
+[06:22:55] PASS: mpv runs cleanly as the person and handles video and audio MIME defaults
+[06:22:55] guest$ echo "opencode-path $(command -v opencode)"; echo "opencode-version $(opencode --version)"; echo "rg-path $(command -v rg)"; echo "git-path $(command -v git)"
+[06:22:55] opencode-path /usr/local/bin/opencode
+opencode-version opencode v2.4.1
+rg-path /usr/bin/rg
+git-path /usr/bin/git
+[06:22:55] PASS: OpenCode, ripgrep, and git are on PATH
+[06:22:55] guest$ u=$(getent passwd 1003 | cut -d: -f1); h=$(getent passwd 1003 | cut -d: -f6); probe() { chpst -u "$2" python3 -c '
+import socket, struct, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(3)
+def recv_exact(n):
+    buf = b""
+    while len(buf) < n and (more := s.recv(n - len(buf))):
+        buf += more
+    return buf
+try:
+    s.connect(sys.argv[1])
+    vframe = bytes.fromhex(sys.argv[2])
+    s.sendall(vframe)
+    vreply = recv_exact(len(vframe))
+    if not vreply:
+        print("refused")
+        sys.exit(0)
+    s.sendall(bytes.fromhex(sys.argv[3]))
+    hdr = recv_exact(4)
+    if len(hdr) < 4:
+        print("short")
+        sys.exit(0)
+    (length,) = struct.unpack(">I", hdr)
+    body = recv_exact(length)
+    print("ok", vreply.hex(), body.decode())
+except (ConnectionResetError, BrokenPipeError):
+    print("refused")
+except OSError as error:
+    print("error:", error.strerror or error)
+' "$1" 0000000d7b2276657273696f6e223a317d 0000000f7b226f70223a22737461747573227d 2>&1; }; echo "person $u";
+cd "$h";
+if pgrep -x opencode >/dev/null 2>&1; then echo "idle-before running"; else echo "idle-before none"; fi;
+tmp=$(mktemp -d /tmp/crowbar-stub-check.XXXXXX);
+orig_run="$tmp/lever-run.orig";
+cp /etc/sv/crowbar-lever/run "$orig_run";
+stub_pid="";
+cleanup() {
+  [ -n "$stub_pid" ] && kill "$stub_pid" 2>/dev/null || true;
+  sv stop /var/service/crowbar-lever >/dev/null 2>&1 || true;
+  pkill -x opencode 2>/dev/null || true;
+  cp "$orig_run" /etc/sv/crowbar-lever/run;
+  chmod 755 /etc/sv/crowbar-lever/run;
+  rm -rf "$h/.config/opencode" "$h/.local/share/opencode" "$h/.local/state/crowbaros/lever" "$tmp";
+  sv start /var/service/crowbar-lever >/dev/null 2>&1 || true;
+};
+trap cleanup EXIT;
+sed 's|--harness-name OpenCode|--harness-name OpenCode --harness-env OPENCODE_DISABLE_MODELS_FETCH=1|' "$orig_run" > /etc/sv/crowbar-lever/run;
+grep -q 'OPENCODE_DISABLE_MODELS_FETCH=1' /etc/sv/crowbar-lever/run || { echo "harness-env-missing"; exit 1; };
+chmod 755 /etc/sv/crowbar-lever/run;
+sv restart /var/service/crowbar-lever >/dev/null;
+t=$(($(date +%s) + 30)); until s=$(probe /run/user/1003/crowbar-lever/person "$u"); case "$s" in 'ok 0000000d7b2276657273696f6e223a317d '*) true;; *) false;; esac; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; refused_err=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent "hello" >/dev/null' 2>&1); rc=$?;
+echo "refused-rc $rc";
+echo "refused-err $(printf '%s' "$refused_err" | tr '\n' ' ')";
+cat > "$tmp/script.json" <<'SCRIPT'
+{
+  "models": ["stub-1", "stub-2"],
+  "rules": [
+    {
+      "match": "run-whoami",
+      "reasoning": "Checking whoami.",
+      "tool_call": {
+        "name": "shell",
+        "arguments": {"command": "id -un && id -u", "description": "Check current user"}
+      },
+      "after_tool": "Command ran on {model} as: {tool_output}"
+    },
+    {
+      "match": "hello",
+      "reply": "Hello from {model}!"
+    }
+  ],
+  "default_reply": "Stub ({model}): {prompt}"
+}
+SCRIPT
+python3 /usr/local/lib/crowbar-lab/stub-model.py --script "$tmp/script.json" --port-file "$tmp/port" --log "$tmp/stub.jsonl" >/dev/null 2>&1 &
+stub_pid=$!;
+t=$(($(date +%s) + 15)); until [ -s "$tmp/port" ]; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; port=$(cat "$tmp/port");
+install -d -o "$u" -g "$u" -m 700 "$h/.config/opencode";
+cat > "$h/.config/opencode/opencode.json" <<CFG
+{
+  "provider": {
+    "stub": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Stub",
+      "options": {
+        "baseURL": "http://127.0.0.1:$port/v1",
+        "apiKey": "stub-key"
+      },
+      "models": {
+        "stub-1": {"name": "Stub One"},
+        "stub-2": {"name": "Stub Two"}
+      }
+    }
+  },
+  "model": "stub/stub-1",
+  "enabled_providers": ["stub"]
+}
+CFG
+chown "$u:$u" "$h/.config/opencode/opencode.json";
+cfg_before=$(sha256sum "$h/.config/opencode/opencode.json" | awk '{print $1}');
+sv restart /var/service/crowbar-lever >/dev/null;
+t=$(($(date +%s) + 30)); until s=$(probe /run/user/1003/crowbar-lever/person "$u"); case "$s" in 'ok 0000000d7b2276657273696f6e223a317d '*) true;; *) false;; esac; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; models_out=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent models' 2>&1); rc=$?;
+echo "models-rc $rc";
+printf '%s\n' "$models_out" | sed 's/^/models-out /';
+hello_out=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent "hello"' 2>"$tmp/hello.err"); rc=$?;
+echo "hello-rc $rc";
+printf '%s\n' "$hello_out" | sed 's/^/hello-out /';
+[ "$rc" -ne 0 ] && printf '%s\n' "$(cat "$tmp/hello.err")" | sed 's/^/hello-err /';
+tid=$(su -s /bin/sh "$u" -c '/usr/local/bin/crowbar-agent --list' | awk 'NR==1{print $1}');
+su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' --model stub/stub-2" >/dev/null 2>&1;
+echo "set-model-rc $?";
+: >"$tmp/cmd.err";
+timeout 90 su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' 'please run-whoami'" >"$tmp/cmd.out" 2>"$tmp/cmd.err" &
+cmd_pid=$!;
+t=$(($(date +%s) + 45)); until grep -q 'Answer with:' "$tmp/cmd.err"; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done;
+echo "request-asked $(grep '^\[request\] Run:' "$tmp/cmd.err" | head -1)";
+rid=$(grep 'Answer with:' "$tmp/cmd.err" | head -1 | awk '{for (i = 1; i < NF; i++) if ($i == "--answer") print $(i + 1)}');
+su -s /bin/sh "$u" -c "/usr/local/bin/crowbar-agent --resume '$tid' --answer '$rid' once" >/dev/null 2>&1;
+echo "answer-rc $?";
+wait "$cmd_pid"; rc=$?;
+cmd_out=$(cat "$tmp/cmd.out");
+echo "cmd-rc $rc";
+printf '%s\n' "$cmd_out" | sed 's/^/cmd-out /';
+[ "$rc" -ne 0 ] && printf '%s\n' "$(cat "$tmp/cmd.err")" | sed 's/^/cmd-err /';
+oc_rss=$(ps -C opencode -o rss= 2>/dev/null | awk '{s+=$1; n+=1} END{printf "%d %d", n+0, s+0}');
+echo "opencode-working $oc_rss";
+cfg_after=$(sha256sum "$h/.config/opencode/opencode.json" | awk '{print $1}');
+if [ "$cfg_before" = "$cfg_after" ]; then echo "config-unchanged yes"; else echo "config-unchanged no"; fi;
+trap - EXIT;
+cleanup;
+t=$(($(date +%s) + 30)); until s=$(probe /run/user/1003/crowbar-lever/person "$u"); case "$s" in 'ok 0000000d7b2276657273696f6e223a317d '*) true;; *) false;; esac; do [ "$(date +%s)" -ge "$t" ] && break; sleep 0.2; done; if pgrep -x opencode >/dev/null 2>&1; then echo "idle-after running"; else echo "idle-after none"; fi;
+
+[06:23:04] person crowbar
+idle-before none
+refused-rc 1
+refused-err crowbar-agent: The Agent gave no answer: No Model is available. Run `crowbar-agent free-models on` or `crowbar-agent login`.
+models-rc 0
+models-out stub/stub-1  Stub One  (default)
+models-out stub/stub-2  Stub Two
+hello-rc 0
+hello-out Hello from stub-1!
+set-model-rc 0
+request-asked [request] Run: id -un && id -u
+answer-rc 0
+cmd-rc 0
+cmd-out Command ran on stub-2 as: crowbar
+cmd-out 1003
+opencode-working 2 491152
+config-unchanged yes
+idle-after none
+[06:23:04] PASS: OpenCode answers through Lever against the stub Model, asks before a command, and runs it as the person once answered
+[06:23:04] guest$ for p in /usr/local/lib/crowbar-agent /usr/share/licenses/crowbar-agent /usr/bin/node /usr/local/bin/node /etc/sv/crowbar-agent /var/service/crowbar-agent /run/crowbar-agent; do [ -e "$p" ] || [ -L "$p" ] && echo "path $p"; done; for c in node npm npx; do found=$(command -v "$c" 2>/dev/null || true); [ -n "$found" ] && echo "cmd $c $found"; done; pkgs=$(xbps-query -l) || exit 1; printf '%s\n' "$pkgs" | awk '$2 ~ /^nodejs([0-9]|-)/ {print "pkg " $2}'; echo clean
+[06:23:04] clean
+[06:23:04] PASS: the image holds no Harness, no Node.js, and no crowbar-agent service
+[06:23:04] guest$ ip -4 -o addr show scope global
+[06:23:04] 2: eth0    inet 10.0.2.15/24 brd 10.0.2.255 scope global dynamic noprefixroute eth0\       valid_lft 86347sec preferred_lft 75547sec
+[06:23:04] PASS: network has an address
+[06:23:04] guest$ stat -c '%G %n' /usr/bin/wall /var/db/dhcpcd
+[06:23:04] tty /usr/bin/wall
+_dhcpcd /var/db/dhcpcd
+[06:23:04] PASS: packages keep their groups
+[06:23:04] guest$ cat /proc/cmdline
+[06:23:05] BOOT_IMAGE=/boot/vmlinuz-6.18.65_1 root=LABEL=crowbaros-root rw rootfstype=btrfs loglevel=4 console=tty0 console=ttyS0,115200 nvidia-drm.modeset=1 nvidia-drm.fbdev=1
+[06:23:05] PASS: kernel command line carries NVIDIA's settings
+[06:23:05] guest$ modinfo -n nvidia; cut -d' ' -f1 /proc/modules
+[06:23:05] /lib/modules/6.18.65_1/kernel/drivers/video/nvidia.ko
+bnep
+snd_seq_dummy
+snd_hrtimer
+ccm
+algif_aead
+des3_ede_x86_64
+des_generic
+libdes
+algif_skcipher
+cfg80211
+cmac
+md4
+8021q
+algif_hash
+garp
+mrp
+stp
+llc
+af_alg
+intel_rapl_msr
+ppdev
+intel_rapl_common
+intel_uncore_frequency_common
+intel_pmc_core
+pmt_telemetry
+pmt_discovery
+pmt_class
+intel_pmc_ssram_telemetry
+intel_vsec
+kvm_intel
+kvm
+iTCO_wdt
+intel_pmc_bxt
+irqbypass
+iTCO_vendor_support
+virtio_net
+joydev
+input_leds
+evdev
+mac_hid
+parport_pc
+net_failover
+virtio_input
+intel_agp
+failover
+intel_gtt
+i2c_i801
+parport
+lpc_ich
+i2c_smbus
+agpgart
+i2c_mux
+pcspkr
+tiny_power_button
+snd_seq
+snd_seq_device
+snd_timer
+snd
+soundcore
+vhost_vsock
+vmw_vsock_virtio_transport_common
+vsock
+vhost_net
+vhost
+vhost_iotlb
+tap
+hci_vhci
+bluetooth
+rfkill
+ecdh_generic
+ecc
+crc16
+vfio_iommu_type1
+vfio
+iommufd
+uhid
+hid
+dm_mod
+uinput
+userio
+ppp_generic
+slhc
+tun
+loop
+nvram
+cuse
+fuse
+crc32c_cryptoapi
+btrfs
+sr_mod
+virtio_gpu
+cdrom
+blake2b_generic
+xor
+virtio_dma_buf
+drm_client_lib
+drm_shmem_helper
+drm_kms_helper
+ahci
+raid6_pq
+libahci
+drm
+libata
+virtio_blk
+scsi_mod
+psmouse
+virtio_pci
+virtio_pci_legacy_dev
+polyval_clmulni
+ghash_clmulni_intel
+serio_raw
+virtio_pci_modern_dev
+scsi_common
+aesni_intel
+virtio
+virtio_ring
+qemu_fw_cfg
+button
+[06:23:05] PASS: NVIDIA's module is built, and not loaded without an NVIDIA card
+[06:23:05] guest$ modprobe -c | grep '^options nvidia '; findmnt -no FSTYPE -T /var/tmp
+[06:23:05] options nvidia NVreg_PreserveVideoMemoryAllocations=1 NVreg_TemporaryFilePath=/var/tmp
+btrfs
+[06:23:05] PASS: NVIDIA's module saves video memory to the disk across suspend
+[06:23:05] guest$ dmesg --level=emerg,alert,crit
+[06:23:05] PASS: no failed kernel messages
+[06:23:05] guest$ sv status seatd bluetoothd crowbar-compositor crowbar-shell crowbar-launcher crowbar-unlock crowbar-lever crowbar-pipewire
+[06:23:05] run: seatd: (pid 609) 61s; run: log: (pid 607) 61s
+run: bluetoothd: (pid 615) 61s; run: log: (pid 614) 61s
+run: crowbar-compositor: (pid 1290) 15s
+run: crowbar-shell: (pid 1302) 15s
+run: crowbar-launcher: (pid 626) 61s
+run: crowbar-unlock: (pid 627) 61s
+run: crowbar-lever: (pid 1854) 1s
+run: crowbar-pipewire: (pid 611) 61s
+[06:23:05] PASS: seatd, bluetoothd, and six desktop services supervised
+[06:23:05] guest$ sha256sum /usr/local/bin/crowbar-compositor /usr/local/bin/crowbar-probe /usr/local/bin/crowbaros-shell /usr/local/bin/crowbaros-files /usr/local/bin/crowbaros-editor /usr/local/bin/crowbaros-monitor /usr/local/bin/crowbaros-viewer /usr/local/bin/crowbaros-calc /usr/local/bin/crowbaros-theme-studio /usr/local/bin/crowbaros-studio-settings /usr/local/bin/crowbar-helpers /usr/local/bin/crowbar-lever /usr/local/bin/crowbar-agent
+[06:23:06] e88d7325197bd793e2d86fa2b711183fb44d0581b2fe316eb44bbf2621e558d8  /usr/local/bin/crowbar-compositor
+fc50e31705d60ee2aefe676dad4746536fe4188a31d7d50cd1abf474f4960b97  /usr/local/bin/crowbar-probe
+7aa299771e87f282ae849eb5ba37741ae7c71370e9c007a8b6c2261a2c4e45f4  /usr/local/bin/crowbaros-shell
+4c2bfafd6d41fa61a13a4a6e013c51a9839833ad597fae8a012a4241e0ed13a5  /usr/local/bin/crowbaros-files
+54b0ac83cb587c9bed2060ab4ff748e06bae8ea7389d2243741f887d896d3de0  /usr/local/bin/crowbaros-editor
+4e2dd5ea17f19eec49f76f11602d9ea52a16cd6142fc4a11b1e55a830c3d4343  /usr/local/bin/crowbaros-monitor
+8a4d047cf5ab48e51c6136719858f31505a3c0e4a661668ff236029705eb6244  /usr/local/bin/crowbaros-viewer
+8aed17d1a82bc1db31c1b72fbb6017341daeda646d39cad7fe43a76197a85e57  /usr/local/bin/crowbaros-calc
+8c494b1cca5e58a843d223d83f423571289cfd51733dfbb9339ce61f680286c0  /usr/local/bin/crowbaros-theme-studio
+23c35ef67ce9541a86004f3774751f4c19c988c37b9485854777dc7981dc5a15  /usr/local/bin/crowbaros-studio-settings
+5e27cdcabb1b2b2c90832fdf905fa680f55fccfa65ab0d3b325b1aa9089fa54d  /usr/local/bin/crowbar-helpers
+086b0083b1774b5a5d0b7574369f18c1668a169440b1fbf49e798e772dcbc08e  /usr/local/bin/crowbar-lever
+a016dfd70455ee67996788f659feba38e0a6378d9553a08631275775170dfa42  /usr/local/bin/crowbar-agent
+[06:23:06] PASS: guest binaries match this build
+[06:23:06] guest$ ldd /usr/local/bin/crowbar-compositor
+[06:23:07] 	linux-vdso.so.1 (0x00007fbb87e08000)
+	libinput.so.10 => /usr/lib/libinput.so.10 (0x00007fbb87c3d000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007fbb87bd6000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007fbb87ba9000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007fbb87abb000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007fbb878d1000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007fbb87e0a000)
+	libmtdev.so.1 => /usr/lib/libmtdev.so.1 (0x00007fbb878ca000)
+	libudev.so.1 => /usr/lib/libudev.so.1 (0x00007fbb878a0000)
+	libevdev.so.2 => /usr/lib/libevdev.so.2 (0x00007fbb87882000)
+	libwacom.so.9 => /usr/lib/libwacom.so.9 (0x00007fbb87871000)
+	liblua5.4.so.5.4 => /usr/lib/liblua5.4.so.5.4 (0x00007fbb8782a000)
+	libgudev-1.0.so.0 => /usr/lib/libgudev-1.0.so.0 (0x00007fbb8781d000)
+	libgobject-2.0.so.0 => /usr/lib/libgobject-2.0.so.0 (0x00007fbb877b7000)
+	libglib-2.0.so.0 => /usr/lib/libglib-2.0.so.0 (0x00007fbb87661000)
+	libffi.so.7 => /usr/lib/libffi.so.7 (0x00007fbb87655000)
+	libpcre2-8.so.0 => /usr/lib/libpcre2-8.so.0 (0x00007fbb875a4000)
+[06:23:07] PASS: crowbar-compositor linked libraries resolve
+[06:23:07] guest$ ldd /usr/local/bin/crowbar-probe
+[06:23:07] 	linux-vdso.so.1 (0x00007fe8fb30f000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007fe8fb240000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007fe8fb056000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007fe8fb311000)
+[06:23:07] PASS: crowbar-probe linked libraries resolve
+[06:23:07] guest$ ldd /usr/local/bin/crowbaros-shell
+[06:23:07] 	linux-vdso.so.1 (0x00007fe19e81f000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007fe19e745000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007fe19e6de000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007fe19e6b1000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007fe19cf12000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007fe19cd28000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007fe19e821000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007fe19cd0e000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007fe19ccfb000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007fe19ccc3000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007fe19ccb5000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007fe19cc92000)
+[06:23:07] PASS: crowbaros-shell linked libraries resolve
+[06:23:07] guest$ ldd /usr/local/bin/crowbaros-files
+[06:23:07] 	linux-vdso.so.1 (0x00007faee04cb000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007faee03f1000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007faeded99000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007faeded6c000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007faedec7e000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007faedea94000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007faee04cd000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007faedea7a000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007faedea65000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007faedea2d000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007faedea1f000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007faede9fc000)
+[06:23:07] PASS: crowbaros-files linked libraries resolve
+[06:23:07] guest$ ldd /usr/local/bin/crowbaros-editor
+[06:23:07] 	linux-vdso.so.1 (0x00007fe55e98a000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007fe55e8b0000)
+	libxcb.so.1 => /usr/lib/libxcb.so.1 (0x00007fe55e885000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007fe55e81e000)
+	libxkbcommon-x11.so.0 => /usr/lib/libxkbcommon-x11.so.0 (0x00007fe55e814000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007fe55e7e7000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007fe55a312000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007fe55a128000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007fe55e98c000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007fe55e7cb000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007fe55e7b8000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007fe55a0f0000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007fe55e7aa000)
+	libXau.so.6 => /usr/lib/libXau.so.6 (0x00007fe55e7a5000)
+	libXdmcp.so.6 => /usr/lib/libXdmcp.so.6 (0x00007fe55e79b000)
+	libxcb-xkb.so.1 => /usr/lib/libxcb-xkb.so.1 (0x00007fe55a0d1000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007fe55a0ae000)
+[06:23:07] PASS: crowbaros-editor linked libraries resolve
+[06:23:07] guest$ ldd /usr/local/bin/crowbaros-monitor
+[06:23:07] 	linux-vdso.so.1 (0x00007f9200ac9000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007f92009ef000)
+	libxcb.so.1 => /usr/lib/libxcb.so.1 (0x00007f92009c4000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007f920095d000)
+	libxkbcommon-x11.so.0 => /usr/lib/libxkbcommon-x11.so.0 (0x00007f9200953000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f9200926000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f91fed12000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f91feb28000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f9200acb000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007f920090a000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007f92008f7000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007f91feaf0000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007f92008e9000)
+	libXau.so.6 => /usr/lib/libXau.so.6 (0x00007f92008e4000)
+	libXdmcp.so.6 => /usr/lib/libXdmcp.so.6 (0x00007f92008da000)
+	libxcb-xkb.so.1 => /usr/lib/libxcb-xkb.so.1 (0x00007f91fead1000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007f91feaae000)
+[06:23:07] PASS: crowbaros-monitor linked libraries resolve
+[06:23:07] guest$ ldd /usr/local/bin/crowbaros-viewer
+[06:23:07] 	linux-vdso.so.1 (0x00007f197f588000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007f197f4ae000)
+	libxcb.so.1 => /usr/lib/libxcb.so.1 (0x00007f197f483000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007f197d399000)
+	libxkbcommon-x11.so.0 => /usr/lib/libxkbcommon-x11.so.0 (0x00007f197f479000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f197f44c000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f197d2ab000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f197d0c1000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f197f58a000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007f197f430000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007f197d0ae000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007f197d076000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007f197d068000)
+	libXau.so.6 => /usr/lib/libXau.so.6 (0x00007f197f42b000)
+	libXdmcp.so.6 => /usr/lib/libXdmcp.so.6 (0x00007f197d060000)
+	libxcb-xkb.so.1 => /usr/lib/libxcb-xkb.so.1 (0x00007f197d041000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007f197d01e000)
+[06:23:07] PASS: crowbaros-viewer linked libraries resolve
+[06:23:07] guest$ ldd /usr/local/bin/crowbaros-calc
+[06:23:07] 	linux-vdso.so.1 (0x00007fc38575f000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007fc385685000)
+	libxcb.so.1 => /usr/lib/libxcb.so.1 (0x00007fc383bd5000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007fc383b6e000)
+	libxkbcommon-x11.so.0 => /usr/lib/libxkbcommon-x11.so.0 (0x00007fc38567b000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007fc383b41000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007fc383a53000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007fc383869000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007fc385761000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007fc38565f000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007fc383856000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007fc38381e000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007fc383810000)
+	libXau.so.6 => /usr/lib/libXau.so.6 (0x00007fc38380b000)
+	libXdmcp.so.6 => /usr/lib/libXdmcp.so.6 (0x00007fc383803000)
+	libxcb-xkb.so.1 => /usr/lib/libxcb-xkb.so.1 (0x00007fc3837e4000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007fc3837c1000)
+[06:23:07] PASS: crowbaros-calc linked libraries resolve
+[06:23:07] guest$ ldd /usr/local/bin/crowbaros-theme-studio
+[06:23:07] 	linux-vdso.so.1 (0x00007f10eb999000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007f10e9d36000)
+	libxcb.so.1 => /usr/lib/libxcb.so.1 (0x00007f10eb95e000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007f10e9ccf000)
+	libxkbcommon-x11.so.0 => /usr/lib/libxkbcommon-x11.so.0 (0x00007f10eb954000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f10e9ca2000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f10e9bb4000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f10e99ca000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f10eb99b000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007f10e99b0000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007f10eb93f000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007f10e9978000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007f10e996a000)
+	libXau.so.6 => /usr/lib/libXau.so.6 (0x00007f10e9965000)
+	libXdmcp.so.6 => /usr/lib/libXdmcp.so.6 (0x00007f10e995d000)
+	libxcb-xkb.so.1 => /usr/lib/libxcb-xkb.so.1 (0x00007f10e993e000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007f10e991b000)
+[06:23:07] PASS: crowbaros-theme-studio linked libraries resolve
+[06:23:07] guest$ ldd /usr/local/bin/crowbaros-studio-settings
+[06:23:08] 	linux-vdso.so.1 (0x00007f94e55f1000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007f94e5517000)
+	libxkbcommon.so.0 => /usr/lib/libxkbcommon.so.0 (0x00007f94e54b0000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f94e5483000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f94e3d12000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f94e3b28000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f94e55f3000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007f94e5469000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007f94e5454000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007f94e3af0000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007f94e5446000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007f94e3acd000)
+[06:23:08] PASS: crowbaros-studio-settings linked libraries resolve
+[06:23:08] guest$ ldd /usr/local/bin/crowbar-helpers
+[06:23:08] 	linux-vdso.so.1 (0x00007f2f431b7000)
+	libcrypt.so.2 => /usr/lib/libcrypt.so.2 (0x00007f2f4316b000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f2f4313e000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f2f43050000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f2f42c16000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f2f431b9000)
+[06:23:08] PASS: crowbar-helpers linked libraries resolve
+[06:23:08] guest$ ldd /usr/local/bin/crowbar-lever
+[06:23:08] 	linux-vdso.so.1 (0x00007fa191727000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007fa1916ea000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007fa1915fc000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007fa190e16000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007fa191729000)
+[06:23:08] PASS: crowbar-lever linked libraries resolve
+[06:23:08] guest$ ldd /usr/local/bin/crowbar-agent
+[06:23:08] 	linux-vdso.so.1 (0x00007f50c9ece000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f50c9dde000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f50c9bf4000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f50c9ed0000)
+[06:23:08] PASS: crowbar-agent linked libraries resolve
+[06:23:12] PASS: the lock screen takes a password with no chord first, and a wrong one leaves the session locked
+[06:23:12] guest$ chpst -u crowbar-shell:crowbar-shell python3 -c '
+import socket, struct, sys
+def send(message):
+    s.sendall(struct.pack(">I", len(message)) + message)
+def read():
+    length = f.read(4)
+    if len(length) < 4:
+        raise EOFError
+    message = f.read(struct.unpack(">I", length)[0])
+    if len(message) < struct.unpack(">I", length)[0]:
+        raise EOFError
+    return message
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+try:
+    s.connect(sys.argv[1])
+    f = s.makefile("rb")
+    send(b'"'"'{"version":1}'"'"')
+    if read() != b'"'"'{"version":1}'"'"':
+        raise EOFError
+    send(sys.argv[2].encode())
+    while (message := read()).startswith(b'"'"'{"event":'"'"'):
+        pass
+    print(message.decode(errors="replace"))
+except (OSError, EOFError):
+    pass
+' /run/crowbar-trusted/compositor/control '{"op":"unlock"}'
+[06:23:12] {"reply":"error","message":"the shell's word is not enough: the unlock authority unlocks"}
+[06:23:13] PASS: the shell's own word does not unlock — {"reply":"error","message":"the shell's word is not enough: the unlock authority unlocks"}
+[06:23:15] PASS: the person's password unlocks the session
+[06:23:16] guest$ getent passwd 1003
+[06:23:16] crowbar:x:1003:1003::/home/crowbar:/bin/bash
+[06:23:16] guest$ su -s /bin/sh crowbar -c 'xdg-mime query default text/plain'
+[06:23:16] com.crowbaros.Editor.desktop
+[06:23:16] PASS: Editor handles plain text in dark — com.crowbaros.Editor.desktop
+[06:23:16] guest$ chpst -u crowbar:crowbar python3 -c '
+import tempfile
+with tempfile.NamedTemporaryFile(mode='"'"'w'"'"', suffix='"'"'.txt'"'"', delete=False) as note:
+    note.write('"'"'Notes from the desktop'"'"')
+    print(note.name)
+'
+[06:23:16] /tmp/tmpltlvi6tw.txt
+[06:23:17] guest$ cd /home/crowbar && setsid -f chpst -u "crowbar:$(id -Gn crowbar | tr " " :)" env -i HOME=/home/crowbar PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1003 WAYLAND_DISPLAY=wayland-0 xdg-open /tmp/tmpltlvi6tw.txt >/tmp/editor-open.log 2>&1 </dev/null
+[06:23:17] 
+[06:23:22] guest$ cat /tmp/tmpltlvi6tw.txt
+[06:23:22] saved note
+[06:23:23] PASS: Editor opens, edits, saves and closes a file in dark
+[06:23:23] guest$ logger -t monitor-check 'Monitor log visibility check'
+[06:23:24] 
+[06:23:24] guest$ tail -30 /var/log/socklog/everything/current
+[06:23:24] 2026-11-28T06:22:03.60799 daemon.notice: Nov 28 06:22:03 iwd: station: Network configuration is disabled.
+2026-11-28T06:22:03.92164 daemon.info: Nov 28 06:22:03 bluetoothd[615]: Bluetooth daemon 5.88
+2026-11-28T06:22:03.92178 daemon.notice: Nov 28 06:22:03 bluetoothd: bluetoothd[615]: Bluetooth daemon 5.88
+2026-11-28T06:22:03.92312 daemon.info: Nov 28 06:22:03 bluetoothd[615]: Starting SDP server
+2026-11-28T06:22:03.92316 daemon.notice: Nov 28 06:22:03 bluetoothd: bluetoothd[615]: Starting SDP server
+2026-11-28T06:22:03.92934 kern.info: [    2.672725] Bluetooth: BNEP (Ethernet Emulation) ver 1.3
+2026-11-28T06:22:03.92938 kern.info: [    2.672732] Bluetooth: BNEP filters: protocol multicast
+2026-11-28T06:22:03.92939 kern.info: [    2.672739] Bluetooth: BNEP socket layer initialized
+2026-11-28T06:22:03.93013 daemon.info: Nov 28 06:22:03 bluetoothd[615]: Bluetooth management interface 1.23 initialized
+2026-11-28T06:22:03.93016 daemon.notice: Nov 28 06:22:03 bluetoothd: bluetoothd[615]: Bluetooth management interface 1.23 initialized
+2026-11-28T06:22:04.91698 daemon.info: Nov 28 06:22:04 dhcpcd[575]: eth0: soliciting a DHCP lease
+2026-11-28T06:22:04.92272 daemon.info: Nov 28 06:22:04 dhcpcd[575]: eth0: offered 10.0.2.15 from 10.0.2.2
+2026-11-28T06:22:04.92651 daemon.info: Nov 28 06:22:04 dhcpcd[575]: eth0: probing address 10.0.2.15/24
+2026-11-28T06:22:05.38900 daemon.info: Nov 28 06:22:05 dhcpcd[575]: eth0: soliciting an IPv6 router
+2026-11-28T06:22:05.38903 daemon.info: Nov 28 06:22:05 dhcpcd[575]: eth0: Router Advertisement from fe80::2
+2026-11-28T06:22:05.38904 daemon.info: Nov 28 06:22:05 dhcpcd[575]: eth0: adding address fec0::e99f:ab13:e7b8:b46b/64
+2026-11-28T06:22:05.38905 daemon.info: Nov 28 06:22:05 dhcpcd[575]: eth0: adding route to fec0::/64
+2026-11-28T06:22:05.38907 daemon.info: Nov 28 06:22:05 dhcpcd[575]: eth0: adding default route via fe80::2
+2026-11-28T06:22:09.96238 daemon.info: Nov 28 06:22:09 dhcpcd[575]: eth0: leased 10.0.2.15 for 86400 seconds
+2026-11-28T06:22:09.96245 daemon.info: Nov 28 06:22:09 dhcpcd[575]: eth0: adding route to 10.0.2.0/24
+2026-11-28T06:22:09.96247 daemon.info: Nov 28 06:22:09 dhcpcd[575]: eth0: adding default route via 10.0.2.2
+2026-11-28T06:22:39.08067 user.notice: Nov 28 06:22:39 crowbar-check: crowbar-check-1104-service
+2026-11-28T06:22:39.08138 user.warn: [   37.825161] crowbar-check-1104-kernel
+2026-11-28T06:22:49.68101 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.197 [INFO] [seatd/client.c:480] Client disconnected
+2026-11-28T06:22:49.77094 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.287 [INFO] [seatd/seat.c:158] No clients on seat0 to activate
+2026-11-28T06:22:49.77219 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.288 [INFO] [seatd/seat.c:297] Removed client 2 from seat0
+2026-11-28T06:22:49.77222 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.288 [INFO] [seatd/server.c:145] New client connected (pid: 1301, uid: 1000, gid: 1000)
+2026-11-28T06:22:49.77225 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.288 [INFO] [seatd/seat.c:248] Added client 2 to seat0
+2026-11-28T06:22:49.77226 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.288 [INFO] [seatd/seat.c:584] Opened client 2 on seat0
+2026-11-28T06:23:22.92038 user.notice: Nov 28 06:23:22 monitor-check: Monitor log visibility check
+[06:23:24] guest$ su -s /bin/sh crowbar -c 'crowbaros-monitor --sample'
+[06:23:24] {"cpu":{"cpu":null,"cpu0":null,"cpu1":null,"cpu2":null,"cpu3":null},"memory":{"total":4102148096,"used":578842624,"swap_total":0,"swap_used":0},"disk_read":null,"disk_write":null,"net_read":null,"net_write":null,"gpus":[{"name":"card0","utilization":null,"used":null,"total":null}],"processes":[{"pid":1,"name":"runit","state":"S","uid":0,"user":"root","ticks":15,"start":7,"rss":495616,"cpu":null},{"pid":2,"name":"kthreadd","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":3,"name":"pool_workqueue_release","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":4,"name":"kworker/R-rcu_gp","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":5,"name":"kworker/R-sync_wq","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":6,"name":"kworker/R-kvfree_rcu_reclaim","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":7,"name":"kworker/R-slub_flushwq","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":8,"name":"kworker/R-netns","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":9,"name":"kworker/R-quota_events_unbound","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":10,"name":"kworker/0:0-events","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":11,"name":"kworker/0:1-events","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":12,"name":"kworker/0:0H-events_highpri","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":13,"name":"kworker/u16:0-btrfs-endio","state":"I","uid":0,"user":"root","ticks":4,"start":7,"rss":0,"cpu":null},{"pid":14,"name":"kworker/R-mm_percpu_wq","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":15,"name":"kworker/u16:1-btrfs-endio","state":"I","uid":0,"user":"root","ticks":38,"start":7,"rss":0,"cpu":null},{"pid":16,"name":"ksoftirqd/0","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":17,"name":"rcu_preempt","state":"I","uid":0,"user":"root","ticks":4,"start":7,"rss":0,"cpu":null},{"pid":18,"name":"rcu_exp_par_gp_kthread_worker/0","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":19,"name":"rcu_exp_gp_kthread_worker","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":20,"name":"migration/0","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":21,"name":"idle_inject/0","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":22,"name":"cpuhp/0","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":23,"name":"cpuhp/1","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":24,"name":"idle_inject/1","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":25,"name":"migration/1","state":"S","uid":0,"user":"root","ticks":7,"start":7,"rss":0,"cpu":null},{"pid":26,"name":"ksoftirqd/1","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":27,"name":"kworker/1:0-events","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":28,"name":"kworker/1:0H-events_highpri","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":29,"name":"cpuhp/2","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":30,"name":"idle_inject/2","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":31,"name":"migration/2","state":"S","uid":0,"user":"root","ticks":7,"start":7,"rss":0,"cpu":null},{"pid":32,"name":"ksoftirqd/2","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":33,"name":"kworker/2:0-slub_flushwq","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":34,"name":"kworker/2:0H-events_highpri","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":35,"name":"cpuhp/3","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":36,"name":"idle_inject/3","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":37,"name":"migration/3","state":"S","uid":0,"user":"root","ticks":7,"start":7,"rss":0,"cpu":null},{"pid":38,"name":"ksoftirqd/3","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":39,"name":"kworker/3:0-slub_flushwq","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":40,"name":"kworker/3:0H-kblockd","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":41,"name":"kdevtmpfs","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":42,"name":"kworker/R-inet_frag_wq","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":43,"name":"rcu_tasks_kthread","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":44,"name":"rcu_tasks_rude_kthread","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":45,"name":"rcu_tasks_trace_kthread","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":46,"name":"kauditd","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":47,"name":"khungtaskd","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":48,"name":"oom_reaper","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":49,"name":"kworker/u16:2-btrfs-endio-write","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":50,"name":"kworker/R-writeback","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":51,"name":"kcompactd0","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":52,"name":"ksmd","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":53,"name":"khugepaged","state":"S","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":54,"name":"kworker/R-kblockd","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":55,"name":"kworker/R-blkcg_punt_bio","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":56,"name":"kworker/R-kintegrityd","state":"I","uid":0,"user":"root","ticks":0,"start":7,"rss":0,"cpu":null},{"pid":57,"name":"irq/9-acpi","state":"S","uid":0,"user":"root","ticks":0,"start":8,"rss":0,"cpu":null},{"pid":58,"name":"kworker/3:1-events","state":"I","uid":0,"user":"root","ticks":1,"start":8,"rss":0,"cpu":null},{"pid":59,"name":"kworker/2:1-mm_percpu_wq","state":"I","uid":0,"user":"root","ticks":0,"start":8,"rss":0,"cpu":null},{"pid":60,"name":"kworker/1:1-mm_percpu_wq","state":"I","uid":0,"user":"root","ticks":1,"start":10,"rss":0,"cpu":null},{"pid":61,"name":"kworker/R-edac-poller","state":"I","uid":0,"user":"root","ticks":0,"start":12,"rss":0,"cpu":null},{"pid":62,"name":"kworker/R-devfreq_wq","state":"I","uid":0,"user":"root","ticks":0,"start":12,"rss":0,"cpu":null},{"pid":63,"name":"watchdogd","state":"S","uid":0,"user":"root","ticks":0,"start":18,"rss":0,"cpu":null},{"pid":64,"name":"kworker/2:1H-kblockd","state":"I","uid":0,"user":"root","ticks":0,"start":20,"rss":0,"cpu":null},{"pid":65,"name":"kswapd0","state":"S","uid":0,"user":"root","ticks":0,"start":20,"rss":0,"cpu":null},{"pid":66,"name":"kworker/R-kthrotld","state":"I","uid":0,"user":"root","ticks":0,"start":21,"rss":0,"cpu":null},{"pid":67,"name":"kworker/R-nvme-wq","state":"I","uid":0,"user":"root","ticks":0,"start":24,"rss":0,"cpu":null},{"pid":68,"name":"kworker/R-nvme-reset-wq","state":"I","uid":0,"user":"root","ticks":0,"start":24,"rss":0,"cpu":null},{"pid":69,"name":"kworker/R-nvme-delete-wq","state":"I","uid":0,"user":"root","ticks":0,"start":24,"rss":0,"cpu":null},{"pid":70,"name":"kworker/2:2-events","state":"I","uid":0,"user":"root","ticks":0,"start":24,"rss":0,"cpu":null},{"pid":71,"name":"kworker/R-mld","state":"I","uid":0,"user":"root","ticks":0,"start":24,"rss":0,"cpu":null},{"pid":72,"name":"kworker/1:1H-kblockd","state":"I","uid":0,"user":"root","ticks":0,"start":24,"rss":0,"cpu":null},{"pid":73,"name":"kworker/R-ipv6_addrconf","state":"I","uid":0,"user":"root","ticks":0,"start":24,"rss":0,"cpu":null},{"pid":74,"name":"kworker/R-kstrp","state":"I","uid":0,"user":"root","ticks":0,"start":24,"rss":0,"cpu":null},{"pid":76,"name":"kworker/u16:3-btrfs-endio","state":"I","uid":0,"user":"root","ticks":0,"start":27,"rss":0,"cpu":null},{"pid":79,"name":"kworker/u17:0","state":"I","uid":0,"user":"root","ticks":0,"start":57,"rss":0,"cpu":null},{"pid":80,"name":"kworker/R-charger_manager","state":"I","uid":0,"user":"root","ticks":0,"start":57,"rss":0,"cpu":null},{"pid":81,"name":"kworker/0:1H-kblockd","state":"I","uid":0,"user":"root","ticks":0,"start":57,"rss":0,"cpu":null},{"pid":264,"name":"kworker/3:1H-kblockd","state":"I","uid":0,"user":"root","ticks":0,"start":67,"rss":0,"cpu":null},{"pid":282,"name":"kworker/0:2-events","state":"I","uid":0,"user":"root","ticks":0,"start":67,"rss":0,"cpu":null},{"pid":288,"name":"kworker/0:3-events","state":"I","uid":0,"user":"root","ticks":0,"start":69,"rss":0,"cpu":null},{"pid":294,"name":"kworker/R-ata_sff","state":"I","uid":0,"user":"root","ticks":0,"start":71,"rss":0,"cpu":null},{"pid":296,"name":"scsi_eh_0","state":"S","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":297,"name":"kworker/R-scsi_tmf_0","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":298,"name":"scsi_eh_1","state":"S","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":299,"name":"kworker/R-scsi_tmf_1","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":300,"name":"scsi_eh_2","state":"S","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":301,"name":"kworker/R-scsi_tmf_2","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":302,"name":"scsi_eh_3","state":"S","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":303,"name":"kworker/R-scsi_tmf_3","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":304,"name":"scsi_eh_4","state":"S","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":305,"name":"kworker/R-scsi_tmf_4","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":306,"name":"scsi_eh_5","state":"S","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":307,"name":"kworker/R-scsi_tmf_5","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":308,"name":"kworker/u16:4-btrfs-endio-write","state":"I","uid":0,"user":"root","ticks":66,"start":72,"rss":0,"cpu":null},{"pid":309,"name":"kworker/u16:5-btrfs-endio-write","state":"I","uid":0,"user":"root","ticks":4,"start":72,"rss":0,"cpu":null},{"pid":310,"name":"kworker/u16:6-btrfs-endio","state":"I","uid":0,"user":"root","ticks":1,"start":72,"rss":0,"cpu":null},{"pid":311,"name":"kworker/u16:7-btrfs-delayed-meta","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":312,"name":"kworker/u16:8-scsi_tmf_1","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":313,"name":"kworker/u16:9-sync_wq","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":314,"name":"kworker/u16:10-kvfree_rcu_reclaim","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":315,"name":"kworker/u16:11-events_unbound","state":"I","uid":0,"user":"root","ticks":38,"start":72,"rss":0,"cpu":null},{"pid":316,"name":"kworker/u16:12-scsi_tmf_5","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":317,"name":"kworker/u16:13","state":"I","uid":0,"user":"root","ticks":0,"start":72,"rss":0,"cpu":null},{"pid":318,"name":"kworker/1:2-events","state":"I","uid":0,"user":"root","ticks":0,"start":111,"rss":0,"cpu":null},{"pid":344,"name":"kworker/R-btrfs-worker","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":345,"name":"kworker/R-btrfs-delalloc","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":346,"name":"kworker/R-btrfs-flush_delalloc","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":347,"name":"kworker/R-btrfs-cache","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":348,"name":"kworker/R-btrfs-fixup","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":349,"name":"kworker/R-btrfs-endio","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":350,"name":"kworker/R-btrfs-endio-meta","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":351,"name":"kworker/R-btrfs-rmw","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":352,"name":"kworker/R-btrfs-endio-write","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":353,"name":"kworker/R-btrfs-compressed-write","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":354,"name":"kworker/R-btrfs-freespace-write","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":355,"name":"kworker/R-btrfs-delayed-meta","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":356,"name":"kworker/R-btrfs-qgroup-rescan","state":"I","uid":0,"user":"root","ticks":0,"start":141,"rss":0,"cpu":null},{"pid":357,"name":"btrfs-cleaner","state":"S","uid":0,"user":"root","ticks":0,"start":142,"rss":0,"cpu":null},{"pid":358,"name":"btrfs-transaction","state":"S","uid":0,"user":"root","ticks":1,"start":142,"rss":0,"cpu":null},{"pid":441,"name":"kworker/3:2-mm_percpu_wq","state":"I","uid":0,"user":"root","ticks":0,"start":152,"rss":0,"cpu":null},{"pid":452,"name":"kworker/R-vfio-irqfd-cleanup","state":"I","uid":0,"user":"root","ticks":0,"start":156,"rss":0,"cpu":null},{"pid":500,"name":"kworker/3:2H","state":"I","uid":0,"user":"root","ticks":0,"start":171,"rss":0,"cpu":null},{"pid":557,"name":"runsvdir","state":"S","uid":0,"user":"root","ticks":0,"start":219,"rss":1245184,"cpu":null},{"pid":563,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1421312,"cpu":null},{"pid":564,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1425408,"cpu":null},{"pid":565,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1363968,"cpu":null},{"pid":566,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1347584,"cpu":null},{"pid":567,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1323008,"cpu":null},{"pid":568,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1306624,"cpu":null},{"pid":569,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1306624,"cpu":null},{"pid":570,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1314816,"cpu":null},{"pid":571,"name":"agetty","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":2113536,"cpu":null},{"pid":572,"name":"agetty","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":2355200,"cpu":null},{"pid":573,"name":"agetty","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":2338816,"cpu":null},{"pid":574,"name":"vlogger","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1232896,"cpu":null},{"pid":575,"name":"dhcpcd","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":2367488,"cpu":null},{"pid":576,"name":"vlogger","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1273856,"cpu":null},{"pid":577,"name":"udevd","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":3231744,"cpu":null},{"pid":578,"name":"agetty","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":2347008,"cpu":null},{"pid":579,"name":"agetty","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":2457600,"cpu":null},{"pid":581,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1286144,"cpu":null},{"pid":582,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1323008,"cpu":null},{"pid":583,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1323008,"cpu":null},{"pid":584,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1318912,"cpu":null},{"pid":585,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":220,"rss":1327104,"cpu":null},{"pid":586,"name":"vlogger","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1282048,"cpu":null},{"pid":587,"name":"sshd","state":"S","uid":0,"user":"root","ticks":7,"start":221,"rss":7725056,"cpu":null},{"pid":588,"name":"agetty","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":2195456,"cpu":null},{"pid":589,"name":"svlogd","state":"S","uid":0,"user":"root","ticks":1,"start":221,"rss":1130496,"cpu":null},{"pid":590,"name":"socklog","state":"S","uid":99,"user":"nobody","ticks":0,"start":221,"rss":1089536,"cpu":null},{"pid":591,"name":"vlogger","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1306624,"cpu":null},{"pid":592,"name":"dbus-daemon","state":"S","uid":22,"user":"dbus","ticks":0,"start":221,"rss":2506752,"cpu":null},{"pid":593,"name":"vlogger","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1409024,"cpu":null},{"pid":594,"name":"iwd","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":2748416,"cpu":null},{"pid":595,"name":"nanoklogd","state":"S","uid":99,"user":"nobody","ticks":0,"start":221,"rss":1011712,"cpu":null},{"pid":596,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1261568,"cpu":null},{"pid":597,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1429504,"cpu":null},{"pid":598,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1282048,"cpu":null},{"pid":599,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1310720,"cpu":null},{"pid":600,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1220608,"cpu":null},{"pid":601,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1142784,"cpu":null},{"pid":602,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1241088,"cpu":null},{"pid":603,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1306624,"cpu":null},{"pid":604,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1282048,"cpu":null},{"pid":607,"name":"vlogger","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1290240,"cpu":null},{"pid":608,"name":"runsv","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1409024,"cpu":null},{"pid":609,"name":"seatd","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1740800,"cpu":null},{"pid":610,"name":"run","state":"S","uid":0,"user":"root","ticks":0,"start":221,"rss":1736704,"cpu":null},{"pid":611,"name":"pipewire","state":"S","uid":1003,"user":"crowbar","ticks":1,"start":222,"rss":8798208,"cpu":null},{"pid":614,"name":"vlogger","state":"S","uid":0,"user":"root","ticks":0,"start":222,"rss":1568768,"cpu":null},{"pid":615,"name":"bluetoothd","state":"S","uid":0,"user":"root","ticks":0,"start":222,"rss":4628480,"cpu":null},{"pid":621,"name":"crowbar-ctrl-al","state":"S","uid":0,"user":"root","ticks":0,"start":223,"rss":2977792,"cpu":null},{"pid":626,"name":"crowbar-launche","state":"S","uid":1003,"user":"crowbar","ticks":5,"start":223,"rss":3481600,"cpu":null},{"pid":627,"name":"crowbar-unlock","state":"S","uid":0,"user":"root","ticks":0,"start":223,"rss":3575808,"cpu":null},{"pid":720,"name":"kworker/R-cfg80211","state":"I","uid":0,"user":"root","ticks":0,"start":231,"rss":0,"cpu":null},{"pid":722,"name":"kworker/3:3","state":"I","uid":0,"user":"root","ticks":0,"start":231,"rss":0,"cpu":null},{"pid":759,"name":"wireplumber","state":"S","uid":1003,"user":"crowbar","ticks":9,"start":240,"rss":25923584,"cpu":null},{"pid":761,"name":"pipewire","state":"S","uid":1003,"user":"crowbar","ticks":0,"start":241,"rss":7168000,"cpu":null},{"pid":1290,"name":"openvt","state":"S","uid":0,"user":"root","ticks":0,"start":4842,"rss":1417216,"cpu":null},{"pid":1301,"name":"crowbar-composi","state":"S","uid":1000,"user":"crowbar-compositor","ticks":1363,"start":4844,"rss":171450368,"cpu":null},{"pid":1302,"name":"crowbaros-shell","state":"S","uid":1001,"user":"crowbar-shell","ticks":1375,"start":4846,"rss":225427456,"cpu":null},{"pid":1854,"name":"crowbar-lever","state":"S","uid":1003,"user":"crowbar","ticks":0,"start":6183,"rss":6184960,"cpu":null},{"pid":2259,"name":"sleep","state":"S","uid":0,"user":"root","ticks":0,"start":7732,"rss":1314816,"cpu":null},{"pid":2276,"name":"sshd-session","state":"S","uid":0,"user":"root","ticks":0,"start":8179,"rss":9347072,"cpu":null},{"pid":2278,"name":"sshd-session","state":"S","uid":0,"user":"root","ticks":0,"start":8191,"rss":6729728,"cpu":null},{"pid":2279,"name":"su","state":"S","uid":0,"user":"root","ticks":0,"start":8191,"rss":2297856,"cpu":null},{"pid":2280,"name":"sh","state":"S","uid":1003,"user":"crowbar","ticks":0,"start":8191,"rss":1650688,"cpu":null},{"pid":2281,"name":"crowbaros-monit","state":"R","uid":1003,"user":"crowbar","ticks":0,"start":8191,"rss":7331840,"cpu":null}],"details":{"services":["run: /var/service/agetty-tty1: (pid 573) 75s","run: /var/service/agetty-tty3: (pid 578) 75s","run: /var/service/agetty-tty4: (pid 571) 75s","run: /var/service/agetty-tty5: (pid 572) 75s","run: /var/service/agetty-tty6: (pid 579) 75s","run: /var/service/agetty-ttyS0: (pid 588) 75s","run: /var/service/bluetoothd: (pid 615) 75s; run: log: (pid 614) 75s","run: /var/service/crowbar-compositor: (pid 1290) 29s","run: /var/service/crowbar-ctrl-alt-del: (pid 621) 75s","run: /var/service/crowbar-launcher: (pid 626) 75s","run: /var/service/crowbar-lever: (pid 1854) 15s","run: /var/service/crowbar-monitor-status: (pid 610) 75s","run: /var/service/crowbar-pipewire: (pid 611) 75s","run: /var/service/crowbar-shell: (pid 1302) 29s","run: /var/service/crowbar-unlock: (pid 627) 75s","run: /var/service/dbus: (pid 592) 75s; run: log: (pid 591) 75s","run: /var/service/dhcpcd: (pid 575) 75s; run: log: (pid 574) 75s","run: /var/service/iwd: (pid 594) 75s; run: log: (pid 593) 75s","run: /var/service/nanoklogd: (pid 595) 75s","run: /var/service/seatd: (pid 609) 75s; run: log: (pid 607) 75s","run: /var/service/socklog-unix: (pid 590) 75s; run: log: (pid 589) 75s","run: /var/service/sshd: (pid 587) 75s; run: log: (pid 586) 75s","run: /var/service/udevd: (pid 577) 75s; run: log: (pid 576) 75s"],"storage":"Btrfs root filesystem /\n4.5 GiB used of 11.9 GiB · 7.0 GiB available","logs":"2026-11-28T06:22:03.60799 daemon.notice: Nov 28 06:22:03 iwd: station: Network configuration is disabled.\n2026-11-28T06:22:03.92164 daemon.info: Nov 28 06:22:03 bluetoothd[615]: Bluetooth daemon 5.88\n2026-11-28T06:22:03.92178 daemon.notice: Nov 28 06:22:03 bluetoothd: bluetoothd[615]: Bluetooth daemon 5.88\n2026-11-28T06:22:03.92312 daemon.info: Nov 28 06:22:03 bluetoothd[615]: Starting SDP server\n2026-11-28T06:22:03.92316 daemon.notice: Nov 28 06:22:03 bluetoothd: bluetoothd[615]: Starting SDP server\n2026-11-28T06:22:03.92934 kern.info: [    2.672725] Bluetooth: BNEP (Ethernet Emulation) ver 1.3\n2026-11-28T06:22:03.92938 kern.info: [    2.672732] Bluetooth: BNEP filters: protocol multicast\n2026-11-28T06:22:03.92939 kern.info: [    2.672739] Bluetooth: BNEP socket layer initialized\n2026-11-28T06:22:03.93013 daemon.info: Nov 28 06:22:03 bluetoothd[615]: Bluetooth management interface 1.23 initialized\n2026-11-28T06:22:03.93016 daemon.notice: Nov 28 06:22:03 bluetoothd: bluetoothd[615]: Bluetooth management interface 1.23 initialized\n2026-11-28T06:22:04.91698 daemon.info: Nov 28 06:22:04 dhcpcd[575]: eth0: soliciting a DHCP lease\n2026-11-28T06:22:04.92272 daemon.info: Nov 28 06:22:04 dhcpcd[575]: eth0: offered 10.0.2.15 from 10.0.2.2\n2026-11-28T06:22:04.92651 daemon.info: Nov 28 06:22:04 dhcpcd[575]: eth0: probing address 10.0.2.15/24\n2026-11-28T06:22:05.38900 daemon.info: Nov 28 06:22:05 dhcpcd[575]: eth0: soliciting an IPv6 router\n2026-11-28T06:22:05.38903 daemon.info: Nov 28 06:22:05 dhcpcd[575]: eth0: Router Advertisement from fe80::2\n2026-11-28T06:22:05.38904 daemon.info: Nov 28 06:22:05 dhcpcd[575]: eth0: adding address fec0::e99f:ab13:e7b8:b46b/64\n2026-11-28T06:22:05.38905 daemon.info: Nov 28 06:22:05 dhcpcd[575]: eth0: adding route to fec0::/64\n2026-11-28T06:22:05.38907 daemon.info: Nov 28 06:22:05 dhcpcd[575]: eth0: adding default route via fe80::2\n2026-11-28T06:22:09.96238 daemon.info: Nov 28 06:22:09 dhcpcd[575]: eth0: leased 10.0.2.15 for 86400 seconds\n2026-11-28T06:22:09.96245 daemon.info: Nov 28 06:22:09 dhcpcd[575]: eth0: adding route to 10.0.2.0/24\n2026-11-28T06:22:09.96247 daemon.info: Nov 28 06:22:09 dhcpcd[575]: eth0: adding default route via 10.0.2.2\n2026-11-28T06:22:39.08067 user.notice: Nov 28 06:22:39 crowbar-check: crowbar-check-1104-service\n2026-11-28T06:22:39.08138 user.warn: [   37.825161] crowbar-check-1104-kernel\n2026-11-28T06:22:49.68101 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.197 [INFO] [seatd/client.c:480] Client disconnected\n2026-11-28T06:22:49.77094 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.287 [INFO] [seatd/seat.c:158] No clients on seat0 to activate\n2026-11-28T06:22:49.77219 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.288 [INFO] [seatd/seat.c:297] Removed client 2 from seat0\n2026-11-28T06:22:49.77222 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.288 [INFO] [seatd/server.c:145] New client connected (pid: 1301, uid: 1000, gid: 1000)\n2026-11-28T06:22:49.77225 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.288 [INFO] [seatd/seat.c:248] Added client 2 to seat0\n2026-11-28T06:22:49.77226 daemon.notice: Nov 28 06:22:49 seatd: 00:00:46.288 [INFO] [seatd/seat.c:584] Opened client 2 on seat0\n2026-11-28T06:23:22.92038 user.notice: Nov 28 06:23:22 monitor-check: Monitor log visibility check"},"warnings":[]}
+[06:23:24] PASS: Monitor reads live metrics without root in dark
+[06:23:24] PASS: Monitor reads runit status without access to its controls
+[06:23:24] guest$ su -s /bin/sh crowbar -c 'test -r /run/crowbar-monitor/services && test ! -w /run/crowbar-monitor/services && test ! -w /var/service/crowbar-compositor/supervise/control && echo read-only'
+[06:23:24] read-only
+[06:23:24] PASS: Monitor status grants read access without service control
+[06:23:24] PASS: Monitor reads recent socklog lines as the person
+[06:23:25] guest$ cd /home/crowbar && setsid -f chpst -u "crowbar:$(id -Gn crowbar | tr " " :)" env -i HOME=/home/crowbar PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1003 WAYLAND_DISPLAY=wayland-0 env CROWBAR_MONITOR_CHECK=1 crowbaros-monitor >/tmp/monitor-dark.log 2>&1 </dev/null
+[06:23:25] 
+[06:23:25] guest$ cat /tmp/monitor-dark.log
+[06:23:26] MONITOR sample cpu=false memory=true processes=185 details=false
+[06:23:26] guest$ cat /tmp/monitor-dark.log
+[06:23:26] MONITOR sample cpu=false memory=true processes=185 details=false
+[06:23:27] guest$ cat /tmp/monitor-dark.log
+[06:23:27] MONITOR sample cpu=false memory=true processes=185 details=false
+[06:23:27] guest$ cat /tmp/monitor-dark.log
+[06:23:27] MONITOR sample cpu=false memory=true processes=185 details=false
+[06:23:28] guest$ cat /tmp/monitor-dark.log
+[06:23:28] MONITOR sample cpu=false memory=true processes=185 details=false
+[06:23:29] guest$ cat /tmp/monitor-dark.log
+[06:23:29] MONITOR sample cpu=false memory=true processes=185 details=false
+[06:23:29] guest$ cat /tmp/monitor-dark.log
+[06:23:29] MONITOR sample cpu=false memory=true processes=185 details=false
+[06:23:30] guest$ cat /tmp/monitor-dark.log
+[06:23:30] MONITOR sample cpu=false memory=true processes=185 details=false
+[06:23:30] guest$ cat /tmp/monitor-dark.log
+[06:23:31] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+[06:23:40] guest$ cat /tmp/monitor-dark.log
+[06:23:40] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+[06:23:40] guest$ cd /home/crowbar && setsid -f chpst -u "crowbar:$(id -Gn crowbar | tr " " :)" env -i HOME=/home/crowbar PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1003 WAYLAND_DISPLAY=wayland-0 sh -c 'echo $$ > /tmp/monitor-child-dark-0.pid; exec sleep 120' >/tmp/monitor-child.log 2>&1 </dev/null
+[06:23:40] 
+[06:23:40] guest$ cat /tmp/monitor-dark.log
+[06:23:40] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+[06:23:40] guest$ cat /tmp/monitor-dark.log
+[06:23:41] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+[06:23:41] guest$ cat /tmp/monitor-dark.log
+[06:23:41] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+[06:23:45] PASS: Monitor terminates an owned process in dark
+[06:23:45] guest$ cd /home/crowbar && setsid -f chpst -u "crowbar:$(id -Gn crowbar | tr " " :)" env -i HOME=/home/crowbar PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1003 WAYLAND_DISPLAY=wayland-0 sh -c 'echo $$ > /tmp/monitor-child-dark-1.pid; exec sleep 120' >/tmp/monitor-child.log 2>&1 </dev/null
+[06:23:45] 
+[06:23:45] guest$ cat /tmp/monitor-dark.log
+[06:23:45] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+[06:23:45] guest$ cat /tmp/monitor-dark.log
+[06:23:46] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+[06:23:46] guest$ cat /tmp/monitor-dark.log
+[06:23:46] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+[06:23:50] guest$ cat /tmp/monitor-dark.log
+[06:23:50] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=true
+[06:23:51] PASS: Cancel Force Quit leaves the child running
+[06:23:52] PASS: Monitor force quits an owned process in dark
+[06:23:54] guest$ cat /tmp/monitor-dark.log
+[06:23:54] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=true
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR page=processes confirmation=true
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+[06:23:55] guest$ cat /tmp/monitor-dark.log
+[06:23:55] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=true
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR page=processes confirmation=true
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+[06:23:55] PASS: System PID 1 remains running
+[06:23:56] guest$ cat /tmp/monitor-dark.log
+[06:23:56] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=true
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR page=processes confirmation=true
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=services confirmation=false
+[06:23:56] guest$ cat /tmp/monitor-dark.log
+[06:23:56] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=true
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR page=processes confirmation=true
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=services confirmation=false
+[06:23:57] guest$ cat /tmp/monitor-dark.log
+[06:23:57] MONITOR sample cpu=false memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=true
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR page=processes confirmation=true
+MONITOR sample cpu=true memory=true processes=186 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=processes confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=false
+MONITOR page=services confirmation=false
+MONITOR sample cpu=true memory=true processes=185 details=true
+[06:23:58] guest$ chpst -u crowbar:crowbar python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="viewer-check-"))'
+[06:23:58] /tmp/viewer-check-nznfciu4
+[06:23:58] guest$ chpst -u crowbar:crowbar python3 -c '
+from pathlib import Path
+import json, shutil
+folder = Path('"'"'/home/crowbar'"'"') / '"'"'.config/crowbaros'"'"'
+backup = Path('"'"'/tmp/viewer-check-nznfciu4'"'"') / '"'"'original-state'"'"'
+if False:
+    for name, existed in json.loads((backup / '"'"'manifest.json'"'"').read_text()).items():
+        target = folder / name
+        if existed:
+            folder.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup / name, target)
+        else:
+            target.unlink(missing_ok=True)
+else:
+    backup.mkdir()
+    manifest = {}
+    for name in ('"'"'appearance.json'"'"', '"'"'wallpaper.rgba'"'"'):
+        source = folder / name
+        manifest[name] = source.exists()
+        if source.exists():
+            shutil.copy2(source, backup / name)
+    (backup / '"'"'manifest.json'"'"').write_text(json.dumps(manifest))
+'
+[06:23:58] 
+[06:23:58] guest$ chpst -u crowbar:crowbar python3 -c 'import base64; from pathlib import Path; Path('"'"'/tmp/viewer-check-nznfciu4/sample.png'"'"').write_bytes(base64.b64decode('"'"'iVBORw0KGgoAAAANSUhEUgAAAUAAAADICAIAAAAWZq/8AAA5pklEQVR4nOzdB05yYQKGUdZj771XBHsXrGBXwN4rduxuYdY1exlz/i1MYjSXnCW8T0Lgft8N5XVkv+VTQCFFFFNCKWWUU0ElVVRTQy111NNAI00000IrbbTTQSdddBOmhwhReumjnwEGGWKYEUYZY5wJJpkiRpxpZphljnkWSJBkkSWWWWGVNdbZYJMUaTJssc0Ou+yxzwGHHHHMCaeccc4Fl1xxTZYbbrnjngceeSLHMy+88sY7H3zyxX//Ewn8X4SCgIOAg4B/r1BeZ/ZbPgUUUkQxJZRSRjkVVFJFNTXUUkc9DTTSRDMttNJGOx100kU3YXqIEKWXPvoZYJAhhhlhlDHGmWCSKWLEmWaGWeaYZ4EESRZZYpkVVlljnQ02SZEmwxbb7LDLHvsccMgRx5xwyhnnXHDJFddkueGWO+554JEncjzzwitvvPPBJ1/8+O7/jCDgIOAg4F8slNeV/ZZPAYUUUUwJpZRRTgWVVFFNDbXUUU8DjTTRTAuttNFOB5100U2YHiJE6aWPfgYYZIhhRhhljHEmmGSKGHGmmWGWOeZZIEGSRZZYZoVV1lhng01SpMmwxTY77LLHPgcccsQxJ5xyxjkXXHLFNVluuOWOex545Ikcz7zwyhvvfPDJFz+++z8jCDgIOAj4FwvldWe/5VNAIUUUU0IpZZRTQSVVVFNDLXXU00AjTTTTQitttNNBJ110E6aHCFF66aOfAQYZYpgRRhljnAkmmSJGnGlmmGWOeRZIkGSRJZZZYZU11tlgkxRpMmyxzQ677LHPAYccccwJp5xxzgWXXHFNlhtuueOeBx55IsczL7zyxjsffPLFj+/+zwgCDgIOAv7FQnnh7Ld8CiikiGJKKKWMciqopIpqaqiljnoaaKSJZlpopY12Ouiki27C9BAhSi999DPAIEMMM8IoY4wzwSRTxIgzzQyzzDHPAgmSLLLEMiusssY6G2ySIk2GLbbZYZc99jngkCOOOeGUM8654JIrrslywy133PPAI0/keOaFV95454NPvvjx3f8ZQcBBwEHAv1goryf7LZ8CCimimBJKKaOcCiqpopoaaqmjngYaaaKZFlppo50OOumimzA9RIjSSx/9DDDIEMOMMMoY40wwyRQx4kwzwyxzzLNAgiSLLLHMCqussc4Gm6RIk2GLbXbYZY99DjjkiGNOOOWMcy645Iprstxwyx33PPDIEzmeeeGVN9754JMvfnz3f0YQcBBwEPAvFsqLZL/lU0AhRRRTQilllFNBJVVUU0MtddTTQCNNNNNCK22000EnXXQTpocIUXrpo58BBhlimBFGGWOcCSaZIkacaWaYZY55FkiQZJEllllhlTXW2WCTFGkybLHNDrvssc8BhxxxzAmnnHHOBZdccU2WG265454HHnkixzMvvPLGOx988sWP7/7PCAIOAg4C/sVCedHst3wKKKSIYkoopYxyKqikimpqqKWOehpopIlmWmiljXY66KSLbsL0ECFKL330M8AgQwwzwihjjDPBJFPEiDPNDLPMMc8CCZIsssQyK6yyxjobbJIiTYYtttlhlz32OeCQI4454ZQzzrngkiuuyXLDLXfc88AjT+R45oVX3njng0+++PHd/xlBwEHAQcC/WCivN/stnwIKKaKYEkopo5wKKqmimhpqqaOeBhppopkWWmmjnQ466aKbMD1EiNJLH/0MMMgQw4wwyhjjTDDJFDHiTDPDLHPMs0CCJIssscwKq6yxzgabpEiTYYttdthlj30OOOSIY0445YxzLrjkimuy3HDLHfc88MgTOZ554ZU33vngky9+fPd/RhBwEHAQ8C8WyuvLfsungEKKKKaEUsoop4JKqqimhlrqqKeBRppopoVW2ming0666CZMDxGi9NJHPwMMMsQwI4wyxjgTTDJFjDjTzDDLHPMskCDJIksss8Iqa6yzwSYp0mTYYpsddtljnwMOOeKYE04545wLLrnimiw33HLHPQ888kSOZ1545Y13Pvjkix/f/Z8RBBwEHAT8i4Xy+rPf8imgkCKKKaGUMsqpoJIqqqmhljrqaaCRJpppoZU22umgky66CdNDhCi99NHPAIMMMcwIo4wxzgSTTBEjzjQzzDLHPAskSLLIEsussMoa62ywSYo0GbbYZodd9tjngEOOOOaEU84454JLrrgmyw233HHPA488keOZF155450PPvnix3f/ZwQBBwEHAf9iobyB7Ld8CiikiGJKKKWMciqopIpqaqiljnoaaKSJZlpopY12Ouiki27C9BAhSi999DPAIEMMM8IoY4wzwSRTxIgzzQyzzDHPAgmSLLLEMiusssY6G2ySIk2GLbbZYZc99jngkCOOOeGUM8654JIrrslywy133PPAI0/keOaFV95454NPvvjx3f8ZQcBBwEHAv1gobzD7LZ8CCimimBJKKaOcCiqpopoaaqmjngYaaaKZFlppo50OOumimzA9RIjSSx/9DDDIEMOMMMoY40wwyRQx4kwzwyxzzLNAgiSLLLHMCqussc4Gm6RIk2GLbXbYZY99DjjkiGNOOOWMcy645Iprstxwyx33PPDIEzmeeeGVN9754JMvfnz3f0YQcBBwEPAvFsobyn7Lp4BCiiimhFLKKKeCSqqopoZa6qingUaaaKaFVtpop4NOuugmTA8RovTSRz8DDDLEMCOMMsY4E0wyRYw408wwyxzzLJAgySJLLLPCKmuss8EmKdJk2GKbHXbZY58DDjnimBNOOeOcCy654posN9xyxz0PPPJEjmdeeOWNdz745Isf3/2fEQQcBBwE/IuF8oaz3/IpoJAiiimhlDLKqaCSKqqpoZY66mmgkSaaaaGVNtrpoJMuugnTQ4QovfTRzwCDDDHMCKOMMc4Ek0wRI840M8wyxzwLJEiyyBLLrLDKGutssEmKNBm22GaHXfbY54BDjjjmhFPOOOeCS664JssNt9xxzwOPPJHjmRdeeeOdDz754sd3/2cEAQcBBwH/YqG8key3fAoopIhiSiiljHIqqKSKamqopY56GmikiWZaaKWNdjropItuwvQQIUovffQzwCBDDDPCKGOMM8EkU8SIM80Ms8wxzwIJkiyyxDIrrLLGOhtskiJNhi222WGXPfY54JAjjjnhlDPOueCSK67JcsMtd9zzwCNP5HjmhVfeeOeDT7748d3/GUHAQcBBwL9YKG80+y2fAgopopgSSimjnAoqqaKaGmqpo54GGmmimRZaaaOdDjrpopswPUSI0ksf/QwwyBDDjDDKGONMMMkUMeJMM8Msc8yzQIIkiyyxzAqrrLHOBpukSJNhi2122GWPfQ445IhjTjjljHMuuOSKa7LccMsd9zzwyBM5nnnhlTfe+eCTL358939GEHAQcBDwLxbKG8t+y6eAQooopoRSyiingkqqqKaGWuqop4FGmmimhVbaaKeDTrroJkwPEaL00kc/AwwyxDAjjDLGOBNMMkWMONPMMMsc8yyQIMkiSyyzwiprrLPBJinSZNhimx122WOfAw454pgTTjnjnAsuueKaLDfccsc9DzzyRI5nXnjljXc++OSLH9/9nxEEHAQcBPyLhfLGs9/yKaCQIoopoZQyyqmgkiqqqaGWOuppoJEmmmmhlTba6aCTLroJ00OEKL300c8AgwwxzAijjDHOBJNMESPONDPMMsc8CyRIssgSy6ywyhrrbLBJijQZtthmh1322OeAQ4445oRTzjjngkuuuCbLDbfccc8DjzyR45kXXnnjnQ8++eLHd/9nBAEHAQcB/2KhvInst3wKKKSIYkoopYxyKqikimpqqKWOehpopIlmWmiljXY66KSLbsL0ECFKL330M8AgQwwzwihjjDPBJFPEiDPNDLPMMc8CCZIsssQyK6yyxjobbJIiTYYtttlhlz32OeCQI4454ZQzzrngkiuuyXLDLXfc88AjT+R45oVX3njng0+++PHd/xlBwEHAQcC/WChvMvstnwIKKaKYEkopo5wKKqmimhpqqaOeBhppopkWWmmjnQ466aKbMD1EiNJLH/0MMMgQw4wwyhjjTDDJFDHiTDPDLHPMs0CCJIssscwKq6yxzgabpEiTYYttdthlj30OOOSIY0445YxzLrjkimuy3HDLHfc88MgTOZ554ZU33vngky9+fPd/RhBwEHAQ8C8WypvKfsungEKKKKaEUsoop4JKqqimhlrqqKeBRppopoVW2ming0666CZMDxGi9NJHPwMMMsQwI4wyxjgTTDJFjDjTzDDLHPMskCDJIksss8Iqa6yzwSYp0mTYYpsddtljnwMOOeKYE04545wLLrnimiw33HLHPQ888kSOZ1545Y13Pvjkix/f/Z8RBBwEHAT8i4XyYtlv+RRQSBHFlFBKGeVUUEkV1dRQSx31NNBIE8200Eob7XTQSRfdhOkhQpRe+uhngEGGGGaEUcYYZ4JJpogRZ5oZZpljngUSJFlkiWVWWGWNdTbYJEWaDFtss8Mue+xzwCFHHHPCKWecc8ElV1yT5YZb7rjngUeeyPHMC6+88c4Hn3zx47v/M4KAg4CDgH+xUF48+y2fAgopopgSSimjnAoqqaKaGmqpo54GGmmimRZaaaOdDjrpopswPUSI0ksf/QwwyBDDjDDKGONMMMkUMeJMM8Msc8yzQIIkiyyxzAqrrLHOBpukSJNhi2122GWPfQ445IhjTjjljHMuuOSKa7LccMsd9zzwyBM5nnnhlTfe+eCTL358939GEHAQcBDwLxbKm85+y6eAQooopoRSyiingkqqqKaGWuqop4FGmmimhVbaaKeDTrroJkwPEaL00kc/AwwyxDAjjDLGOBNMMkWMONPMMMsc8yyQIMkiSyyzwiprrLPBJinSZNhimx122WOfAw454pgTTjnjnAsuueKaLDfccsc9DzzyRI5nXnjljXc++OSLH9/9nxEEHAQcBPyLhfJmst/yKaCQIoopoZQyyqmgkiqqqaGWOuppoJEmmmmhlTba6aCTLroJ00OEKL300c8AgwwxzAijjDHOBJNMESPONDPMMsc8CyRIssgSy6ywyhrrbLBJijQZtthmh1322OeAQ4445oRTzjjngkuuuCbLDbfccc8DjzyR45kXXnnjnQ8++eLHd/9nBAEHAQcB/2KhvNnst3wKKKSIYkoopYxyKqikimpqqKWOehpopIlmWmiljXY66KSLbsL0ECFKL330M8AgQwwzwihjjDPBJFPEiDPNDLPMMc8CCZIsssQyK6yyxjobbJIiTYYtttlhlz32OeCQI4454ZQzzrngkiuuyXLDLXfc88AjT+R45oVX3njng0+++PHd/xlBwEHAQcC/WChvLvstnwIKKaKYEkopo5wKKqmimhpqqaOeBhppopkWWmmjnQ466aKbMD1EiNJLH/0MMMgQw4wwyhjjTDDJFDHiTDPDLHPMs0CCJIssscwKq6yxzgabpEiTYYttdthlj30OOOSIY0445YxzLrjkimuy3HDLHfc88MgTOZ554ZU33vngky9+fPd/RhBwEHAQ8C8WypvPfsungEKKKKaEUsoop4JKqqimhlrqqKeBRppopoVW2ming0666CZMDxGi9NJHPwMMMsQwI4wyxjgTTDJFjDjTzDDLHPMskCDJIksss8Iqa6yzwSYp0mTYYpsddtljnwMOOeKYE04545wLLrnimiw33HLHPQ888kSOZ1545Y13Pvjkix/f/Z8RBBwEHAT8i4XyFrLf8imgkCKKKaGUMsqpoJIqqqmhljrqaaCRJpppoZU22umgky66CdNDhCi99NHPAIMMMcwIo4wxzgSTTBEjzjQzzDLHPAskSLLIEsussMoa62ywSYo0GbbYZodd9tjngEOOOOaEU84454JLrrgmyw233HHPA488keOZF155450PPvnix3f/ZwQBBwEHAf9iobxE9ls+BRRSRDEllFJGORVUUkU1NdRSRz0NNNJEMy200kY7HXTSRTdheogQpZc++hlgkCGGGWGUMcaZYJIpYsSZZoZZ5phngQRJFllimRVWWWOdDTZJkSbDFtvssMse+xxwyBHHnHDKGedccMkV12S54ZY77nngkSdyPPPCK2+888EnX/z47v+MIOAg4CDgXyyUl8x+y6eAQooopoRSyiingkqqqKaGWuqop4FGmmimhVbaaKeDTrroJkwPEaL00kc/AwwyxDAjjDLGOBNMMkWMONPMMMsc8yyQIMkiSyyzwiprrLPBJinSZNhimx122WOfAw454pgTTjnjnAsuueKaLDfccsc9DzzyRI5nXnjljXc++OSLH9/9nxEEHAQcBPyLhfIWs9/yKaCQIoopoZQyyqmgkiqqqaGWOuppoJEmmmmhlTba6aCTLroJ00OEKL300c8AgwwxzAijjDHOBJNMESPONDPMMsc8CyRIssgSy6ywyhrrbLBJijQZtthmh1322OeAQ4445oRTzjjngkuuuCbLDbfccc8DjzyR45kXXnnjnQ8++eLHd/9nBAEHAQcB/2KhvKXst3wKKKSIYkoopYxyKqikimpqqKWOehpopIlmWmiljXY66KSLbsL0ECFKL330M8AgQwwzwihjjDPBJFPEiDPNDLPMMc8CCZIsssQyK6yyxjobbJIiTYYtttlhlz32OeCQI4454ZQzzrngkiuuyXLDLXfc88AjT+R45oVX3njng0+++PHd/xlBwEHAQcC/WChvOfstnwIKKaKYEkopo5wKKqmimhpqqaOeBhppopkWWmmjnQ466aKbMD1EiNJLH/0MMMgQw4wwyhjjTDDJFDHiTDPDLHPMs0CCJIssscwKq6yxzgabpEiTYYttdthlj30OOOSIY0445YxzLrjkimuy3HDLHfc88MgTOZ554ZU33vngky9+fPd/RhBwEHAQ8C8WylvJfsungEKKKKaEUsoop4JKqqimhlrqqKeBRppopoVW2ming0666CZMDxGi9NJHPwMMMsQwI4wyxjgTTDJFjDjTzDDLHPMskCDJIksss8Iqa6yzwSYp0mTYYpsddtljnwMOOeKYE04545wLLrnimiw33HLHPQ888kSOZ1545Y13Pvjkix/f/Z8RBBwEHAT8i4XyVrPf8imgkCKKKaGUMsqpoJIqqqmhljrqaaCRJpppoZU22umgky66CdNDhCi99NHPAIMMMcwIo4wxzgSTTBEjzjQzzDLHPAskSLLIEsussMoa62ywSYo0GbbYZodd9tjngEOOOOaEU84454JLrrgmyw233HHPA488keOZF155450PPvnix3f/ZwQBBwEHAf9ioby17Ld8CiikiGJKKKWMciqopIpqaqiljnoaaKSJZlpopY12Ouiki27C9BAhSi999DPAIEMMM8IoY4wzwSRTxIgzzQyzzDHPAgmSLLLEMiusssY6G2ySIk2GLbbZYZc99jngkCOOOeGUM8654JIrrslywy133PPAI0/keOaFV95454NPvvjx3f8ZQcBBwEHAv1gobz37LZ8CCimimBJKKaOcCiqpopoaaqmjngYaaaKZFlppo50OOumimzA9RIjSSx/9DDDIEMOMMMoY40wwyRQx4kwzwyxzzLNAgiSLLLHMCqussc4Gm6RIk2GLbXbYZY99DjjkiGNOOOWMcy645Iprstxwyx33PPDIEzmeeeGVN9754JMvfnz3f0YQcBBwEPAvFsrbyH7Lp4BCiiimhFLKKKeCSqqopoZa6qingUaaaKaFVtpop4NOuugmTA8RovTSRz8DDDLEMCOMMsY4E0wyRYw408wwyxzzLJAgySJLLLPCKmuss8EmKdJk2GKbHXbZY58DDjnimBNOOeOcCy654posN9xyxz0PPPJEjmdeeOWNdz745Isf3/2fEQQcBBwE/IuF8jaz3/IpoJAiiimhlDLKqaCSKqqpoZY66mmgkSaaaaGVNtrpoJMuugnTQ4QovfTRzwCDDDHMCKOMMc4Ek0wRI840M8wyxzwLJEiyyBLLrLDKGutssEmKNBm22GaHXfbY54BDjjjmhFPOOOeCS664JssNt9xxzwOPPJHjmRdeeeOdDz754sd3/2cEAQcBBwH/YqG8VPZbPgUUUkQxJZRSRjkVVFJFNTXUUkc9DTTSRDMttNJGOx100kU3YXqIEKWXPvoZYJAhhhlhlDHGmWCSKWLEmWaGWeaYZ4EESRZZYpkVVlljnQ02SZEmwxbb7LDLHvsccMgRx5xwyhnnXHDJFddkueGWO+554JEncjzzwitvvPPBJ1/8+O7/jCDgIOAg4F8slJfOfsungEKKKKaEUsoop4JKqqimhlrqqKeBRppopoVW2ming0666CZMDxGi9NJHPwMMMsQwI4wyxjgTTDJFjDjTzDDLHPMskCDJIksss8Iqa6yzwSYp0mTYYpsddtljnwMOOeKYE04545wLLrnimiw33HLHPQ888kSOZ1545Y13Pvjkix/f/Z8RBBwEHAT8i4XyMtlv+RRQSBHFlFBKGeVUUEkV1dRQSx31NNBIE8200Eob7XTQSRfdhOkhQpRe+uhngEGGGGaEUcYYZ4JJpogRZ5oZZpljngUSJFlkiWVWWGWNdTbYJEWaDFtss8Mue+xzwCFHHHPCKWecc8ElV1yT5YZb7rjngUeeyPHMC6+88c4Hn3zx47v/M4KAg4CDgH+xUN5W9ls+BRRSRDEllFJGORVUUkU1NdRSRz0NNNJEMy200kY7HXTSRTdheogQpZc++hlgkCGGGWGUMcaZYJIpYsSZZoZZ5phngQRJFllimRVWWWOdDTZJkSbDFtvssMse+xxwyBHHnHDKGedccMkV12S54ZY77nngkSdyPPPCK2+888EnX/z47v+MIOAg4CDgXyyUt539lk8BhRRRTAmllFFOBZVUUU0NtdRRTwONNNFMC6200U4HnXTRTZgeIkTppY9+BhhkiGFGGGWMcSaYZIoYcaaZYZY55lkgQZJFllhmhVXWWGeDTVKkybDFNjvsssc+BxxyxDEnnHLGORdccsU1WW645Y57HnjkiRzPvPDKG+988MkXP777PyMIOAg4CPgXC+XtZL/lU0AhRRRTQilllFNBJVVUU0MtddTTQCNNNNNCK22000EnXXQTpocIUXrpo58BBhlimBFGGWOcCSaZIkacaWaYZY55FkiQZJEllllhlTXW2WCTFGkybLHNDrvssc8BhxxxzAmnnHHOBZdccU2WG265454HHnkixzMvvPLGOx988sWP7/7PCAIOAg4C/sVCebvZb/kUUEgRxZRQShnlVFBJFdXUUEsd9TTQSBPNtNBKG+100EkX3YTpIUKUXvroZ4BBhhhmhFHGGGeCSaaIEWeaGWaZY54FEiRZZIllVlhljXU22CRFmgxbbLPDLnvsc8AhRxxzwilnnHPBJVdck+WGW+6454FHnsjxzAuvvPHOB5988eO7/zOCgIOAg4B/sVDeXvZbPgUUUkQxJZRSRjkVVFJFNTXUUkc9DTTSRDMttNJGOx100kU3YXqIEKWXPvoZYJAhhhlhlDHGmWCSKWLEmWaGWeaYZ4EESRZZYpkVVlljnQ02SZEmwxbb7LDLHvsccMgRx5xwyhnnXHDJFddkueGWO+554JEncjzzwitvvPPBJ1/8+O7/jCDgIOAg4F8slLef/ZZPAYUUUUwJpZRRTgWVVFFNDbXUUU8DjTTRTAuttNFOB5100U2YHiJE6aWPfgYYZIhhRhhljHEmmGSKGHGmmWGWOeZZIEGSRZZYZoVV1lhng01SpMmwxTY77LLHPgcccsQxJ5xyxjkXXHLFNVluuOWOex545Ikcz7zwyhvvfPDJFz+++z8jCDgIOAj4FwvlHWS/5VNAIUUUU0IpZZRTQSVVVFNDLXXU00AjTTTTQitttNNBJ110E6aHCFF66aOfAQYZYpgRRhljnAkmmSJGnGlmmGWOeRZIkGSRJZZZYZU11tlgkxRpMmyxzQ677LHPAYccccwJp5xxzgWXXHFNlhtuueOeBx55IsczL7zyxjsffPLFj+/+zwgCDgIOAv7FQnmH2W/5FFBIEcWUUEoZ5VRQSRXV1FBLHfU00EgTzbTQShvtdNBJF92E6SFClF766GeAQYYYZoRRxhhngkmmiBFnmhlmmWOeBRIkWWSJZVZYZY11NtgkRZoMW2yzwy577HPAIUccc8IpZ5xzwSVXXJPlhlvuuOeBR57I8cwLr7zxzgeffPHju/8zgoCDgIOAf7FQ3lH2Wz4FFFJEMSWUUkY5FVRSRTU11FJHPQ000kQzLbTSRjsddNJFN2F6iBCllz76GWCQIYYZYZQxxplgkilixJlmhlnmmGeBBEkWWWKZFVZZY50NNkmRJsMW2+ywyx77HHDIEceccMoZ51xwyRXXZLnhljvueeCRJ3I888Irb7zzwSdf/Pju/4wg4CDgIOBfLJR3nP2WTwGFFFFMCaWUUU4FlVRRTQ211FFPA4000UwLrbTRTgeddNFNmB4iROmlj34GGGSIYUYYZYxxJphkihhxpplhljnmWSBBkkWWWGaFVdZYZ4NNUqTJsMU2O+yyxz4HHHLEMSeccsY5F1xyxTVZbrjljnseeOSJHM+88Mob73zwyRc/vvs/Iwg4CDgI+BcL5Z1kv+VTQCFFFFNCKWWUU0ElVVRTQy111NNAI00000IrbbTTQSdddBOmhwhReumjnwEGGWKYEUYZY5wJJpkiRpxpZphljnkWSJBkkSWWWWGVNdbZYJMUaTJssc0Ou+yxzwGHHHHMCaeccc4Fl1xxTZYbbrnjngceeSLHMy+88sY7H3zyxY/v/s8IAg4CDgL+xUJ5p9lv+RRQSBHFlFBKGeVUUEkV1dRQSx31NNBIE8200Eob7XTQSRfdhOkhQpRe+uhngEGGGGaEUcYYZ4JJpogRZ5oZZpljngUSJFlkiWVWWGWNdTbYJEWaDFtss8Mue+xzwCFHHHPCKWecc8ElV1yT5YZb7rjngUeeyPHMC6+88c4Hn3zx47v/M4KAg4CDgH+xUN5Z9ls+BRRSRDEllFJGORVUUkU1NdRSRz0NNNJEMy200kY7HXTSRTdheogQpZc++hlgkCGGGWGUMcaZYJIpYsSZZoZZ5phngQRJFllimRVWWWOdDTZJkSbDFtvssMse+xxwyBHHnHDKGedccMkV12S54ZY77nngkSdyPPPCK2+888EnX/z47v+MIOAg4CDgXyyUd579lk8BhRRRTAmllFFOBZVUUU0NtdRRTwONNNFMC6200U4HnXTRTZgeIkTppY9+BhhkiGFGGGWMcSaYZIoYcaaZYZY55lkgQZJFllhmhVXWWGeDTVKkybDFNjvsssc+BxxyxDEnnHLGORdccsU1WW645Y57HnjkiRzPvPDKG+988MkXP777PyMIOAg4CPgXC+VdZL/lU0AhRRRTQilllFNBJVVUU0MtddTTQCNNNNNCK22000EnXXQTpocIUXrpo58BBhlimBFGGWOcCSaZIkacaWaYZY55FkiQZJEllllhlTXW2WCTFGkybLHNDrvssc8BhxxxzAmnnHHOBZdccU2WG265454HHnkixzMvvPLGOx988sWP7/7PCAIOAg4C/sVCeZfZb/kUUEgRxZRQShnlVFBJFdXUUEsd9TTQSBPNtNBKG+100EkX3YTpIUKUXvroZ4BBhhhmhFHGGGeCSaaIEWeaGWaZY54FEiRZZIllVlhljXU22CRFmgxbbLPDLnvsc8AhRxxzwilnnHPBJVdck+WGW+6454FHnsjxzAuvvPHOB5988eO7/zOCgIOAg4B/sVDeVfZbPgUUUkQxJZRSRjkVVFJFNTXUUkc9DTTSRDMttNJGOx100kU3YXqIEKWXPvoZYJAhhhlhlDHGmWCSKWLEmWaGWeaYZ4EESRZZYpkVVlljnQ02SZEmwxbb7LDLHvsccMgRx5xwyhnnXHDJFddkueGWO+554JEncjzzwitvvPPBJ1/8+O7/jCDgIOAg4F8slHed/ZZPAYUUUUwJpZRRTgWVVFFNDbXUUU8DjTTRTAuttNFOB5100U2YHiJE6aWPfgYYZIhhRhhljHEmmGSKGHGmmWGWOeZZIEGSRZZYZoVV1lhng01SpMmwxTY77LLHPgcccsQxJ5xyxjkXXHLFNVluuOWOex545Ikcz7zwyhvvfPDJFz+++z8jCDgIOAj4FwvlZbPf8imgkCKKKaGUMsqpoJIqqqmhljrqaaCRJpppoZU22umgky66CdNDhCi99NHPAIMMMcwIo4wxzgSTTBEjzjQzzDLHPAskSLLIEsussMoa62ywSYo0Gbb49/Ltfy8A/fcSsn8vQvl3Gfu/C2H/XUr372Kcf4fz/x0Q/HdI4d+Dkv8e1vj3h9G/H63+fXH+F++/zw233HHPA488keOZF155450PPvnix3f/ZwQBBwEHAf9iobyb7Ld8CiikiGJKKKWMciqopIpqaqiljnoaaKSJZlpopY12Ouiki27C9BAhSi999DPAIEMMM8IoY4wzwSRTxIgzzQyzzDHPAgmSLLLEMiusssY6G2ySIk2GLbbZYZc99jngkCOOOeGUM8654JIrrvnX7g233HHPA488keOZF155450PPvnix3f/ZwQBBwEHAf9iobzb7Ld8CiikiGJKKKWMciqopIpqaqiljnoaaKSJZlpopY12Ouiki27C9BAhSi999DPAIEMMM8IoY4wzwSRTxIgzzQyzzDHPAgmSLLLEMiusssY6G2ySIk2GLbbZYZc99jngkCOOOeGUM8654JIrrvn3vfmGW+6454FHnsjxzAuvvPHOB5988eO7/zOCgIOAg4B/sVDeXfZbPgUUUkQxJZRSRjkVVFJFNTXUUkc9DTTSRDMttNJGOx100kU3YXqIEKWXPvoZYJAhhhlhlDHGmWCSKWLEmWaGWeaYZ4EESRZZYpkVVlljnQ02SZEmwxbb7LDLHvsccMgRx5xwyhnnXHDJFdf8+83qhlvuuOeBR57I8cwLr7zxzgeffPHju/8zgoCDgIOAf7FQ3n32Wz4FFFJEMSWUUkY5FVRSRTU11FJHPQ000kQzLbTSRjsddNJFN2F6iBCllz76GWCQIYYZYZQxxplgkilixJlmhlnmmGeBBEkWWWKZFVZZY50NNkmRJsMW2+ywyx77HHDIEceccMoZ51xwyRXX/Pu/6IZb7rjngUeeyPHMC6+88c4Hn3zx47v/M4KAg4CDgH+xUN5D9ls+BRRSRDEllFJGORVUUkU1NdRSRz0NNNJEMy200kY7HXTSRTdheogQpZc++hlgkCGGGWGUMcaZYJIpYsSZZoZZ5phngQRJFllimRVWWWOdDTZJkSbDFtvssMse+xxwyBHHnHDKGedccMkV1/x7VuOGW+6454FHnsjxzAuvvPHOB5988eO7/zOCgIOAg4B/sVDeY/ZbPgUUUkQxJZRSRjkVVFJFNTXUUkc9DTTSRDMttNJGOx100kU3YXqIEKWXPvoZYJAhhhlhlDHGmWCSKWLEmWaGWeaYZ4EESRZZYpkVVlljnQ02SZEmwxbb7LDLHvsccMgRx5xwyhnnXHDJFdf8e07yhlvuuOeBR57I8cwLr7zxzgeffPHju/8zgoCDgIOAf7FQ3lP2Wz4FFFJEMSWUUkY5FVRSRTU11FJHPQ000kQzLbTSRjsddNJFN2F6iBCllz76GWCQIYYZYZQxxplgkilixJlmhlnmmGeBBEkWWWKZFVZZY50NNkmRJsMW2+ywyx77HHDIEceccMoZ51xwyRXX/DujcMMtd9zzwCNP5HjmhVfeeOeDT7748d3/GUHAQcBBwL9YKC+X/ZZPAYUUUUwJpZRRTgWVVFFNDbXUUU8DjTTRTAuttNFOB5100U2YHiJE6aWPfgYYZIhhRhhljHEmmGSKGHGmmWGWOeZZIEGSRZZYZoVV1lhng01SpMmwxTY77LLHPgcccsQxJ5xyxjkXXHLFNf/OB95wyx33PPDIEzmeeeGVN9754JMvfnz3f0YQcBBwEPAvFsp7zn7Lp4BCiiimhFLKKKeCSqqopoZa6qingUaaaKaFVtpop4NOuugmTA8RovTSRz8DDDLEMCOMMsY4E0wyRYw408wwyxzzLJAgySJLLLPCKmuss8EmKdJk2GKbHXbZY58DDjnimBNOOeOcCy654pp/Z/NvuOWOex545Ikcz7zwyhvvfPDJFz+++z8jCDgIOAj4FwvlvWS/5VNAIUUUU0IpZZRTQSVVVFNDLXXU00AjTTTTQitttNNBJ110E6aHCFF66aOfAQYZYpgRRhljnAkmmSJGnGlmmGWOeRZIkGSRJZZZYZU11tlgkxRpMmyxzQ677LHPAYccccwJp5xxzgWXXHHNv3txbrjljnseeOSJHM+88Mob73zwyRc/vvs/Iwg4CDgI+BcL5b1mv+VTQCFFFFNCKWWUU0ElVVRTQy111NNAI00000IrbbTTQSdddBOmhwhReumjnwEGGWKYEUYZY5wJJpkiRpxpZphljnkWSJBkkSWWWWGVNdbZYJMUaTJssc0Ou+yxzwGHHHHMCaeccc4Fl1xxzb876W645Y57HnjkiRzPvPDKG+988MkXP777PyMIOAg4CPgXC+W9Zb/lU0AhRRRTQilllFNBJVVUU0MtddTTQCNNNNNCK22000EnXXQTpocIUXrpo58BBhlimBFGGWOcCSaZIkacaWaYZY55FkiQZJEllllhlTXW2WCTFGkybLHNDrvssc8BhxxxzAmnnHHOBZdccc2/+2BvuOWOex545Ikcz7zwyv/au8vkBhvzDKNejy0zM9uSmZmZmdkyk6iUtEkhKWyznvMtQiPNO3OWcF9/nydGnARJUqR991kjCDgIOAg4g+XkxqO/8giRTwGFFFFMCaWUUU4FlVRRTQ211FFPA4000UwLrbTRTgedhInQRTc99NJHPwMMMsQwI4wyxjgTTDLFNDPMMsc8CyyyxDIrrLLGOhtsssU2O+yyxz4HHHLEMSeccsY5F1xyxTU33HLHPQ888sct9ieeeeGVN9754JMvvvkhRpwESVKkffdZIwg4CDgIOIPl5Caiv/IIkU8BhRRRTAmllFFOBZVUUU0NtdRRTwONNNFMC6200U4HnYSJ0EU3PfTSRz8DDDLEMCOMMsY4E0wyxTQzzDLHPAssssQyK6yyxjobbLLFNjvsssc+BxxyxDEnnHLGORdccsU1N9xyxz0PPPLHH5QnnnnhlTfe+eCTL775IUacBElSpH33WSMIOAg4CDiD5eQmo7/yCJFPAYUUUUwJpZRRTgWVVFFNDbXUUU8DjTTRTAuttNFOB52EidBFNz300kc/AwwyxDAjjDLGOBNMMsU0M8wyxzwLLLLEMiusssY6G2yyxTY77LLHPgcccsQxJ5xyxjkXXHLFNTfccsc9Dzzyxw+yJ5554ZU33vngky+++SFGnARJUqR991kjCDgIOAg4g+XkpqK/8giRTwGFFFFMCaWUUU4FlVRRTQ211FFPA4000UwLrbTRTgedhInQRTc99NJHPwMMMsQwI4wyxjgTTDLFNDPMMsc8CyyyxDIrrLLGOhtsssU2O+yyxz4HHHLEMSeccsY5F1xyxTU33HLHPQ888sf/zyeeeeGVN9754JMvvvkhRpwESVKkffdZIwg4CDgIOIPl5P5D9FceIfIpoJAiiimhlDLKqaCSKqqpoZY66mmgkSaaaaGVNtrpoJMwEbropode+uhngEGGGGaEUcYYZ4JJpphmhlnmmGeBRZZYZoVV1lhng0222GaHXfbY54BDjjjmhFPOOOeCS6645oZb7rjngUeiPPHMC6+88c4Hn3zxzQ8x4iRIkiLtu88aQcBBwEHAGSwn9x+jv/IIkU8BhRRRTAmllFFOBZVUUU0NtdRRTwONNNFMC6200U4HnYSJ0EU3PfTSRz8DDDLEMCOMMsY4E0wyxTQzzDLHPAssssQyK6yyxjobbLLFNjvsssc+BxxyxDEnnHLGORdccsU1N9xyxz0PPBLliWdeeOWNdz745ItvfogRJ0GSFGnffdYIAg4CDgLOYDm5/xT9lUeIfAoopIhiSiiljHIqqKSKamqopY56GmikiWZaaKWNdjroJEyELrrpoZc++hlgkCGGGWGUMcaZYJIppplhljnmWWCRJZZZYZU11tlgky222WGXPfY54JAjjjnhlDPOueCSK6654ZY77nngkShPPPPCK2+888EnX3zzQ4w4CZKkSPvus0YQcBBwEHAGy8n95+ivPELkU0AhRRRTQilllFNBJVVUU0MtddTTQCNNNNNCK22000EnYSJ00U0PvfTRzwCDDDHMCKOMMc4Ek0wxzQyzzDHPAossscwKq6yxzgabbLHNDrvssc8BhxxxzAmnnHHOBZdccc0Nt9xxzwOPRHnimRdeeeOdDz754psfYsRJkCRF2nefNYKAg4CDgDNYTu6/RH/lESKfAgopopgSSimjnAoqqaKaGmqpo54GGmmimRZaaaOdDjoJE6GLbnropY9+BhhkiGFGGGWMcSaYZIppZphljnkWWGSJZVZYZY11Nthki2122GWPfQ445IhjTjjljHMuuOSKa2645Y57HngkyhPPvPDKG+988MkX3/wQI06CJCnSvvusEQQcBBwEnMFycv8U/ZVHiHwKKKSIYkoopYxyKqikimpqqKWOehpopIlmWmiljXY66CRMhC666aGXPvoZYJAhhhlhlDHGmWCSKaaZYZY55llgkSWWWWGVNdbZYJMtttlhlz32OeCQI4454ZQzzrngkiuuueGWO+554JEoTzzzwitvvPPBJ19880OMOAmSpEj77rNGEHAQcBBwBsvJ/XP0Vx4h8imgkCKKKaGUMsqpoJIqqqmhljrqaaCRJpppoZU22umgkzARuuimh1766GeAQYYYZoRRxhhngkmmmGaGWeaYZ4FFllhmhVXWWGeDTbbYZodd9tjngEOOOOaEU84454JLrrjmhlvuuOeBR6I88cwLr7zxzgeffPHNDzHiJEiSIu27zxpBwEHAQcAZLCf3X6O/8giRTwGFFFFMCaWUUU4FlVRRTQ211FFPA4000UwLrbTRTgedhInQRTc99NJHPwMMMsQwI4wyxjgTTDLFNDPMMsc8CyyyxDIrrLLGOhtsssU2O+yyxz4HHHLEMSeccsY5F1xyxTU33HLHPQ88EuWJZ1545Y13Pvjki29+iBEnQZIUad991ggCDgIOAs5gObn/Fv2VR4h8CiikiGJKKKWMciqopIpqaqiljnoaaKSJZlpopY12OugkTIQuuumhlz76GWCQIYYZYZQxxplgkimmmWGWOeZZYJEllllhlTXW2WCTLbbZYZc99jngkCOOOeGUM8654JIrrrnhljvueeCRKE8888Irb7zzwSdffPNDjDgJkqRI++6zRhBwEHAQcAbLyf1L9FceIfIpoJAiiimhlDLKqaCSKqqpoZY66mmgkSaaaaGVNtrpoJMwEbropode+uhngEGGGGaEUcYYZ4JJpphmhlnmmGeBRZZYZoVV1lhng0222GaHXfbY54BDjjjmhFPOOOeCS6645oZb7rjngUeiPPHMC6+88c4Hn3zxzQ8x4iRIkiLtu88aQcBBwEHAGSwn96/RX3mEyKeAQooopoRSyiingkqqqKaGWuqop4FGmmimhVbaaKeDTsJE6KKbHnrpo58BBhlimBFGGWOcCSaZYpoZZpljngUWWWKZFVZZY50NNtlimx122WOfAw454pgTTjnjnAsuueKaG265454HHonyxDMvvPLGOx988sU3P8SIkyBJirTvPmsEAQcBBwFnsJzcf4/+yiNEPgUUUkQxJZRSRjkVVFJFNTXUUkc9DTTSRDMttNJGOx10EiZCF9300Esf/QwwyBDDjDDKGONMMMkU08wwyxzzLLDIEsussMoa62ywyRbb7LDLHvsccMgRx5xwyhnnXHDJFdfccMsd9zzwSJQnnnnhlTfe+eCTL775IUacBElSpH33WSMIOAg4CDiD5eT+R/RXHiHyKaCQIoopoZQyyqmgkiqqqaGWOuppoJEmmmmhlTba6aCTMBG66KaHXvroZ4BBhhhmhFHGGGeCSaaYZoZZ5phngUWWWGaFVdZYZ4NNtthmh1322OeAQ4445oRTzjjngkuuuOaGW+6454FHojzxzAuvvPHOB5988c0PMeIkSJIi7bvPGkHAQcBBwBksJ/c/o7/yCJFPAYUUUUwJpZRRTgWVVFFNDbXUUU8DjTTRTAuttNFOB52EidBFNz300kc/AwwyxDAjjDLGOBNMMsU0M8wyxzwLLLLEMiusssY6G2yyxTY77LLHPgcccsQxJ5xyxjkXXHLFNTfccsc9DzwS5YlnXnjljXc++OSLb36IESdBkhRp333WCAIOAg4CzmA5uf8V/ZVHiHwKKKSIYkoopYxyKqikimpqqKWOehpopIlmWmiljXY66CRMhC666aGXPvoZYJAhhhlhlDHGmWCSKaaZYZY55llgkSWWWWGVNdbZYJMtttlhlz32OeCQI4454ZQzzrngkiuuueGWO+554JEoTzzzwitvvPPBJ19880OMOAmSpEj77rNGEHAQcBBwBsvJ/Vv0Vx4h8imgkCKKKaGUMsqpoJIqqqmhljrqaaCRJpppoZU22umgkzARuuimh1766GeAQYYYZoRRxhhngkmmmGaGWeaYZ4FFllhmhVXWWGeDTbbYZodd9tjngEOOOOaEU84454JLrrjmhlvuuOeBR6I88cwLr7zxzgeffPHNDzHiJEiSIu27zxpBwEHAQcAZLCf379FfeYTIp4BCiiimhFLKKKeCSqqopoZa6qingUaaaKaFVtpop4NOwkToopseeumjnwEGGWKYEUYZY5wJJplimhlmmWOeBRZZYpkVVlljnQ022WKbHXbZY58DDjnimBNOOeOcCy654pobbrnjngceifLEMy+88sY7H3zyxTc/xIiTIEmKtO8+awQBBwEHAWewnNz/jv7KI0Q+BRRSRDEllFJGORVUUkU1NdRSRz0NNNJEMy200kY7HXQSJkIX3fTQSx/9DDDIEMOMMMoY40wwyRTTzDDLHPMssMgSy6ywyhrrbLDJFtvssMse+xxwyBHHnHDKGedccMkV19xwyx33PPBIlCeeeeGVN9754JMvvvkhRpwESVKkffdZIwg4CDgIOIPl5P5P9FceIfIpoJAiiimhlDLKqaCSKqqpoZY66mmgkSaaaaGVNtrpoJMwEbropode+uhngEGGGGaEUcYYZ4JJpphmhlnmmGeBRZZYZoVV1lhng0222GaHXfbY54BDjjjmhFPOOOeCS6645oZb7rjngUeiPPHMC6+88c4Hn3zxzQ8x4iRIkiLtu88aQcBBwEHAGSwn93+jv/IIkU8BhRRRTAmllFFOBZVUUU0NtdRRTwONNNFMC6200U4HnYSJ0EU3PfTSRz8DDDLEMCOMMsY4E0wyxTQzzDLHPAssssQyK6yyxjobbLLFNjvsssc+BxxyxDEnnHLGORdccsU1N9xyxz0PPBLliWdeeOWNdz745ItvfogRJ0GSFGnffdYIAg4CDgLOYDm5/xf9lUeIfAoopIhiSiiljHIqqKSKamqopY56GmikiWZaaKWNdjroJEyELrrpoZc++hlgkCGGGWGUMcaZYJIppplhljnmWWCRJZZZYZU11tlgky222WGXPfY54JAjjjnhlDPOueCSK6654ZY77nngkShPPPPCK2+888EnX3zzQ4w4CZKkSPvus0YQcBBwEHAG+39tJLCFq4agSAAAAABJRU5ErkJggg=='"'"'))'
+[06:23:58] 
+[06:23:58] guest$ chpst -u crowbar:crowbar python3 -c 'import base64; from pathlib import Path; Path('"'"'/tmp/viewer-check-nznfciu4/sibling.png'"'"').write_bytes(base64.b64decode('"'"'iVBORw0KGgoAAAANSUhEUgAAAMgAAAFACAIAAAB2rqTIAAADQUlEQVR4nO3SQQkAIADAQPNZ01x2sYRDkIMLsMfGXBuuG88L+JKxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi8QBGDBeMr2dmmkAAAAASUVORK5CYII='"'"'))'
+[06:23:58] 
+[06:23:58] guest$ chpst -u crowbar:crowbar python3 -c 'import base64; from pathlib import Path; Path('"'"'/tmp/viewer-check-nznfciu4/sample.pdf'"'"').write_bytes(base64.b64decode('"'"'JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUiA0IDAgUiA1IDAgUiA2IDAgUiA3IDAgUiA4IDAgUiA5IDAgUiAxMCAwIFIgMTEgMCBSIDEyIDAgUiAxMyAwIFIgMTQgMCBSXSAvQ291bnQgMTIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA0MjAgNTYwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSAxNSAwIFIgPj4gPj4gL0NvbnRlbnRzIDE2IDAgUiA+PgplbmRvYmoKNCAwIG9iago8PCAvVHlwZSAvUGFnZSAvUGFyZW50IDIgMCBSIC9NZWRpYUJveCBbMCAwIDQyMCA1NjBdIC9SZXNvdXJjZXMgPDwgL0ZvbnQgPDwgL0YxIDE1IDAgUiA+PiA+PiAvQ29udGVudHMgMTcgMCBSID4+CmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9QYWdlIC9QYXJlbnQgMiAwIFIgL01lZGlhQm94IFswIDAgNDIwIDU2MF0gL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgMTUgMCBSID4+ID4+IC9Db250ZW50cyAxOCAwIFIgPj4KZW5kb2JqCjYgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA0MjAgNTYwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSAxNSAwIFIgPj4gPj4gL0NvbnRlbnRzIDE5IDAgUiA+PgplbmRvYmoKNyAwIG9iago8PCAvVHlwZSAvUGFnZSAvUGFyZW50IDIgMCBSIC9NZWRpYUJveCBbMCAwIDQyMCA1NjBdIC9SZXNvdXJjZXMgPDwgL0ZvbnQgPDwgL0YxIDE1IDAgUiA+PiA+PiAvQ29udGVudHMgMjAgMCBSID4+CmVuZG9iago4IDAgb2JqCjw8IC9UeXBlIC9QYWdlIC9QYXJlbnQgMiAwIFIgL01lZGlhQm94IFswIDAgNDIwIDU2MF0gL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgMTUgMCBSID4+ID4+IC9Db250ZW50cyAyMSAwIFIgPj4KZW5kb2JqCjkgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA0MjAgNTYwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSAxNSAwIFIgPj4gPj4gL0NvbnRlbnRzIDIyIDAgUiA+PgplbmRvYmoKMTAgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA0MjAgNTYwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSAxNSAwIFIgPj4gPj4gL0NvbnRlbnRzIDIzIDAgUiA+PgplbmRvYmoKMTEgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA0MjAgNTYwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSAxNSAwIFIgPj4gPj4gL0NvbnRlbnRzIDI0IDAgUiA+PgplbmRvYmoKMTIgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA0MjAgNTYwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSAxNSAwIFIgPj4gPj4gL0NvbnRlbnRzIDI1IDAgUiA+PgplbmRvYmoKMTMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA0MjAgNTYwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSAxNSAwIFIgPj4gPj4gL0NvbnRlbnRzIDI2IDAgUiA+PgplbmRvYmoKMTQgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA0MjAgNTYwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSAxNSAwIFIgPj4gPj4gL0NvbnRlbnRzIDI3IDAgUiA+PgplbmRvYmoKMTUgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagoxNiAwIG9iago8PCAvTGVuZ3RoIDI0MiA+PgpzdHJlYW0KMC4xNSAwLjI1IDAuMzggcmcgMzYgMzgwIDM0OCAxMDAgcmUgZgowLjk1IDAuOTcgMC45OCByZyBCVCAvRjEgMjAgVGYgNTIgNDMwIFRkIChBIHF1aWV0IHBsYWNlIHRvIHJlYWQpIFRqIEVUCjAuMSAwLjEgMC4xIHJnIEJUIC9GMSAxNCBUZiAzNiAzNDAgVGQgKENyb3diYXJPUyBWaWV3ZXIgLSBwYWdlIDEpIFRqIEVUCkJUIC9GMSAxNCBUZiAzNiAzMDAgVGQgKENyb3diYXJPUyBtYWtlcyByb29tIHRvIHJlYWQuKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjE3IDAgb2JqCjw8IC9MZW5ndGggMjM4ID4+CnN0cmVhbQowLjE1IDAuMjUgMC4zOCByZyAzNiAzODAgMzQ4IDEwMCByZSBmCjAuOTUgMC45NyAwLjk4IHJnIEJUIC9GMSAyMCBUZiA1MiA0MzAgVGQgKFRoZSBuZXh0IHBhZ2UgLSAyKSBUaiBFVAowLjEgMC4xIDAuMSByZyBCVCAvRjEgMTQgVGYgMzYgMzQwIFRkIChDcm93YmFyT1MgVmlld2VyIC0gcGFnZSAyKSBUaiBFVApCVCAvRjEgMTQgVGYgMzYgMzAwIFRkIChDcm93YmFyT1MgbWFrZXMgcm9vbSB0byByZWFkLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iagoxOCAwIG9iago8PCAvTGVuZ3RoIDIzOCA+PgpzdHJlYW0KMC4xNSAwLjI1IDAuMzggcmcgMzYgMzgwIDM0OCAxMDAgcmUgZgowLjk1IDAuOTcgMC45OCByZyBCVCAvRjEgMjAgVGYgNTIgNDMwIFRkIChUaGUgbmV4dCBwYWdlIC0gMykgVGogRVQKMC4xIDAuMSAwLjEgcmcgQlQgL0YxIDE0IFRmIDM2IDM0MCBUZCAoQ3Jvd2Jhck9TIFZpZXdlciAtIHBhZ2UgMykgVGogRVQKQlQgL0YxIDE0IFRmIDM2IDMwMCBUZCAoQ3Jvd2Jhck9TIG1ha2VzIHJvb20gdG8gcmVhZC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKMTkgMCBvYmoKPDwgL0xlbmd0aCAyMzggPj4Kc3RyZWFtCjAuMTUgMC4yNSAwLjM4IHJnIDM2IDM4MCAzNDggMTAwIHJlIGYKMC45NSAwLjk3IDAuOTggcmcgQlQgL0YxIDIwIFRmIDUyIDQzMCBUZCAoVGhlIG5leHQgcGFnZSAtIDQpIFRqIEVUCjAuMSAwLjEgMC4xIHJnIEJUIC9GMSAxNCBUZiAzNiAzNDAgVGQgKENyb3diYXJPUyBWaWV3ZXIgLSBwYWdlIDQpIFRqIEVUCkJUIC9GMSAxNCBUZiAzNiAzMDAgVGQgKENyb3diYXJPUyBtYWtlcyByb29tIHRvIHJlYWQuKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjIwIDAgb2JqCjw8IC9MZW5ndGggMjM4ID4+CnN0cmVhbQowLjE1IDAuMjUgMC4zOCByZyAzNiAzODAgMzQ4IDEwMCByZSBmCjAuOTUgMC45NyAwLjk4IHJnIEJUIC9GMSAyMCBUZiA1MiA0MzAgVGQgKFRoZSBuZXh0IHBhZ2UgLSA1KSBUaiBFVAowLjEgMC4xIDAuMSByZyBCVCAvRjEgMTQgVGYgMzYgMzQwIFRkIChDcm93YmFyT1MgVmlld2VyIC0gcGFnZSA1KSBUaiBFVApCVCAvRjEgMTQgVGYgMzYgMzAwIFRkIChDcm93YmFyT1MgbWFrZXMgcm9vbSB0byByZWFkLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iagoyMSAwIG9iago8PCAvTGVuZ3RoIDIzOCA+PgpzdHJlYW0KMC4xNSAwLjI1IDAuMzggcmcgMzYgMzgwIDM0OCAxMDAgcmUgZgowLjk1IDAuOTcgMC45OCByZyBCVCAvRjEgMjAgVGYgNTIgNDMwIFRkIChUaGUgbmV4dCBwYWdlIC0gNikgVGogRVQKMC4xIDAuMSAwLjEgcmcgQlQgL0YxIDE0IFRmIDM2IDM0MCBUZCAoQ3Jvd2Jhck9TIFZpZXdlciAtIHBhZ2UgNikgVGogRVQKQlQgL0YxIDE0IFRmIDM2IDMwMCBUZCAoQ3Jvd2Jhck9TIG1ha2VzIHJvb20gdG8gcmVhZC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKMjIgMCBvYmoKPDwgL0xlbmd0aCAyMzggPj4Kc3RyZWFtCjAuMTUgMC4yNSAwLjM4IHJnIDM2IDM4MCAzNDggMTAwIHJlIGYKMC45NSAwLjk3IDAuOTggcmcgQlQgL0YxIDIwIFRmIDUyIDQzMCBUZCAoVGhlIG5leHQgcGFnZSAtIDcpIFRqIEVUCjAuMSAwLjEgMC4xIHJnIEJUIC9GMSAxNCBUZiAzNiAzNDAgVGQgKENyb3diYXJPUyBWaWV3ZXIgLSBwYWdlIDcpIFRqIEVUCkJUIC9GMSAxNCBUZiAzNiAzMDAgVGQgKENyb3diYXJPUyBtYWtlcyByb29tIHRvIHJlYWQuKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjIzIDAgb2JqCjw8IC9MZW5ndGggMjM4ID4+CnN0cmVhbQowLjE1IDAuMjUgMC4zOCByZyAzNiAzODAgMzQ4IDEwMCByZSBmCjAuOTUgMC45NyAwLjk4IHJnIEJUIC9GMSAyMCBUZiA1MiA0MzAgVGQgKFRoZSBuZXh0IHBhZ2UgLSA4KSBUaiBFVAowLjEgMC4xIDAuMSByZyBCVCAvRjEgMTQgVGYgMzYgMzQwIFRkIChDcm93YmFyT1MgVmlld2VyIC0gcGFnZSA4KSBUaiBFVApCVCAvRjEgMTQgVGYgMzYgMzAwIFRkIChDcm93YmFyT1MgbWFrZXMgcm9vbSB0byByZWFkLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iagoyNCAwIG9iago8PCAvTGVuZ3RoIDIzOCA+PgpzdHJlYW0KMC4xNSAwLjI1IDAuMzggcmcgMzYgMzgwIDM0OCAxMDAgcmUgZgowLjk1IDAuOTcgMC45OCByZyBCVCAvRjEgMjAgVGYgNTIgNDMwIFRkIChUaGUgbmV4dCBwYWdlIC0gOSkgVGogRVQKMC4xIDAuMSAwLjEgcmcgQlQgL0YxIDE0IFRmIDM2IDM0MCBUZCAoQ3Jvd2Jhck9TIFZpZXdlciAtIHBhZ2UgOSkgVGogRVQKQlQgL0YxIDE0IFRmIDM2IDMwMCBUZCAoQ3Jvd2Jhck9TIG1ha2VzIHJvb20gdG8gcmVhZC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKMjUgMCBvYmoKPDwgL0xlbmd0aCAyNDAgPj4Kc3RyZWFtCjAuMTUgMC4yNSAwLjM4IHJnIDM2IDM4MCAzNDggMTAwIHJlIGYKMC45NSAwLjk3IDAuOTggcmcgQlQgL0YxIDIwIFRmIDUyIDQzMCBUZCAoVGhlIG5leHQgcGFnZSAtIDEwKSBUaiBFVAowLjEgMC4xIDAuMSByZyBCVCAvRjEgMTQgVGYgMzYgMzQwIFRkIChDcm93YmFyT1MgVmlld2VyIC0gcGFnZSAxMCkgVGogRVQKQlQgL0YxIDE0IFRmIDM2IDMwMCBUZCAoQ3Jvd2Jhck9TIG1ha2VzIHJvb20gdG8gcmVhZC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKMjYgMCBvYmoKPDwgL0xlbmd0aCAyNDAgPj4Kc3RyZWFtCjAuMTUgMC4yNSAwLjM4IHJnIDM2IDM4MCAzNDggMTAwIHJlIGYKMC45NSAwLjk3IDAuOTggcmcgQlQgL0YxIDIwIFRmIDUyIDQzMCBUZCAoVGhlIG5leHQgcGFnZSAtIDExKSBUaiBFVAowLjEgMC4xIDAuMSByZyBCVCAvRjEgMTQgVGYgMzYgMzQwIFRkIChDcm93YmFyT1MgVmlld2VyIC0gcGFnZSAxMSkgVGogRVQKQlQgL0YxIDE0IFRmIDM2IDMwMCBUZCAoQ3Jvd2Jhck9TIG1ha2VzIHJvb20gdG8gcmVhZC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKMjcgMCBvYmoKPDwgL0xlbmd0aCAyNDAgPj4Kc3RyZWFtCjAuMTUgMC4yNSAwLjM4IHJnIDM2IDM4MCAzNDggMTAwIHJlIGYKMC45NSAwLjk3IDAuOTggcmcgQlQgL0YxIDIwIFRmIDUyIDQzMCBUZCAoVGhlIG5leHQgcGFnZSAtIDEyKSBUaiBFVAowLjEgMC4xIDAuMSByZyBCVCAvRjEgMTQgVGYgMzYgMzQwIFRkIChDcm93YmFyT1MgVmlld2VyIC0gcGFnZSAxMikgVGogRVQKQlQgL0YxIDE0IFRmIDM2IDMwMCBUZCAoQ3Jvd2Jhck9TIG1ha2VzIHJvb20gdG8gcmVhZC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDI4CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDU4IDAwMDAwIG4gCjAwMDAwMDAxODcgMDAwMDAgbiAKMDAwMDAwMDMxNSAwMDAwMCBuIAowMDAwMDAwNDQzIDAwMDAwIG4gCjAwMDAwMDA1NzEgMDAwMDAgbiAKMDAwMDAwMDY5OSAwMDAwMCBuIAowMDAwMDAwODI3IDAwMDAwIG4gCjAwMDAwMDA5NTUgMDAwMDAgbiAKMDAwMDAwMTA4MyAwMDAwMCBuIAowMDAwMDAxMjEyIDAwMDAwIG4gCjAwMDAwMDEzNDEgMDAwMDAgbiAKMDAwMDAwMTQ3MCAwMDAwMCBuIAowMDAwMDAxNTk5IDAwMDAwIG4gCjAwMDAwMDE3MjggMDAwMDAgbiAKMDAwMDAwMTc5OSAwMDAwMCBuIAowMDAwMDAyMDkyIDAwMDAwIG4gCjAwMDAwMDIzODEgMDAwMDAgbiAKMDAwMDAwMjY3MCAwMDAwMCBuIAowMDAwMDAyOTU5IDAwMDAwIG4gCjAwMDAwMDMyNDggMDAwMDAgbiAKMDAwMDAwMzUzNyAwMDAwMCBuIAowMDAwMDAzODI2IDAwMDAwIG4gCjAwMDAwMDQxMTUgMDAwMDAgbiAKMDAwMDAwNDQwNCAwMDAwMCBuIAowMDAwMDA0Njk1IDAwMDAwIG4gCjAwMDAwMDQ5ODYgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSAyOCAvUm9vdCAxIDAgUiA+PgpzdGFydHhyZWYKNTI3NwolJUVPRgo='"'"'))'
+[06:23:58] 
+[06:23:58] guest$ su -s /bin/sh crowbar -c 'xdg-mime query default image/png'
+[06:23:59] com.crowbaros.Viewer.desktop
+[06:23:59] PASS: Viewer handles image/png in dark — com.crowbaros.Viewer.desktop
+[06:23:59] guest$ su -s /bin/sh crowbar -c 'xdg-mime query default application/pdf'
+[06:23:59] com.crowbaros.Viewer.desktop
+[06:23:59] PASS: Viewer handles application/pdf in dark — com.crowbaros.Viewer.desktop
+[06:23:59] guest$ ldd /usr/bin/pdfinfo
+[06:23:59] 	linux-vdso.so.1 (0x00007f57c90fc000)
+	libpoppler.so.166 => /usr/lib/libpoppler.so.166 (0x00007f57c8c00000)
+	libstdc++.so.6 => /usr/lib/libstdc++.so.6 (0x00007f57c8800000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f57c8616000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007f57c8b36000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007f57c90c0000)
+	libfontconfig.so.1 => /usr/lib/libfontconfig.so.1 (0x00007f57c859f000)
+	libjpeg.so.8 => /usr/lib/libjpeg.so.8 (0x00007f57c84fc000)
+	libcurl.so.4 => /usr/lib/libcurl.so.4 (0x00007f57c83f8000)
+	libgpgmepp.so.7 => /usr/lib/libgpgmepp.so.7 (0x00007f57c8387000)
+	libopenjp2.so.7 => /usr/lib/libopenjp2.so.7 (0x00007f57c831b000)
+	liblcms2.so.2 => /usr/lib/liblcms2.so.2 (0x00007f57c82b4000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007f57c9086000)
+	libtiff.so.6 => /usr/lib/libtiff.so.6 (0x00007f57c821e000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007f57c9076000)
+	libsmime3.so => /usr/lib/libsmime3.so (0x00007f57c81ef000)
+	libnss3.so => /usr/lib/libnss3.so (0x00007f57c80aa000)
+	libplc4.so => /usr/lib/libplc4.so (0x00007f57c906f000)
+	libnspr4.so => /usr/lib/libnspr4.so (0x00007f57c805f000)
+	libharfbuzz-subset.so.0 => /usr/lib/libharfbuzz-subset.so.0 (0x00007f57c7ec3000)
+	libharfbuzz.so.0 => /usr/lib/libharfbuzz.so.0 (0x00007f57c7d62000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f57c7c74000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f57c90fe000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f57c7c47000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007f57c8b23000)
+	libexpat.so.1 => /usr/lib/libexpat.so.1 (0x00007f57c7c16000)
+	libnghttp3.so.9 => /usr/lib/libnghttp3.so.9 (0x00007f57c7bef000)
+	libngtcp2_crypto_ossl.so.0 => /usr/lib/libngtcp2_crypto_ossl.so.0 (0x00007f57c905e000)
+	libngtcp2.so.16 => /usr/lib/libngtcp2.so.16 (0x00007f57c7b97000)
+	libnghttp2.so.14 => /usr/lib/libnghttp2.so.14 (0x00007f57c7b68000)
+	libidn2.so.0 => /usr/lib/libidn2.so.0 (0x00007f57c7b0f000)
+	libssh2.so.1 => /usr/lib/libssh2.so.1 (0x00007f57c7ac7000)
+	libpsl.so.5 => /usr/lib/libpsl.so.5 (0x00007f57c7ab1000)
+	libssl.so.3 => /usr/lib/libssl.so.3 (0x00007f57c79ad000)
+	libcrypto.so.3 => /usr/lib/libcrypto.so.3 (0x00007f57c7200000)
+	libzstd.so.1 => /usr/lib/libzstd.so.1 (0x00007f57c78fd000)
+	libgpgme.so.45 => /usr/lib/libgpgme.so.45 (0x00007f57c78a4000)
+	libwebp.so.7 => /usr/lib/libwebp.so.7 (0x00007f57c782e000)
+	liblzma.so.5 => /usr/lib/liblzma.so.5 (0x00007f57c71cf000)
+	libjbig.so.0 => /usr/lib/libjbig.so.0 (0x00007f57c8b11000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007f57c71ac000)
+	libnssutil3.so => /usr/lib/libnssutil3.so (0x00007f57c7177000)
+	libplds4.so => /usr/lib/libplds4.so (0x00007f57c7829000)
+	libglib-2.0.so.0 => /usr/lib/libglib-2.0.so.0 (0x00007f57c7021000)
+	libgraphite2.so.3 => /usr/lib/libgraphite2.so.3 (0x00007f57c6ff7000)
+	libunistring.so.2 => /usr/lib/libunistring.so.2 (0x00007f57c6e4a000)
+	libassuan.so.9 => /usr/lib/libassuan.so.9 (0x00007f57c7813000)
+	libgpg-error.so.0 => /usr/lib/libgpg-error.so.0 (0x00007f57c6e1d000)
+	libsharpyuv.so.0 => /usr/lib/libsharpyuv.so.0 (0x00007f57c6e14000)
+	libpcre2-8.so.0 => /usr/lib/libpcre2-8.so.0 (0x00007f57c6d63000)
+[06:23:59] PASS: pdfinfo linked libraries resolve
+[06:23:59] guest$ ldd /usr/bin/pdftoppm
+[06:23:59] 	linux-vdso.so.1 (0x00007f01bbc09000)
+	liblcms2.so.2 => /usr/lib/liblcms2.so.2 (0x00007f01bbb87000)
+	libpoppler.so.166 => /usr/lib/libpoppler.so.166 (0x00007f01bb600000)
+	libstdc++.so.6 => /usr/lib/libstdc++.so.6 (0x00007f01bb200000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f01bba99000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f01bb016000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007f01bb536000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007f01bba7d000)
+	libfontconfig.so.1 => /usr/lib/libfontconfig.so.1 (0x00007f01baf9f000)
+	libjpeg.so.8 => /usr/lib/libjpeg.so.8 (0x00007f01baefc000)
+	libcurl.so.4 => /usr/lib/libcurl.so.4 (0x00007f01badf8000)
+	libgpgmepp.so.7 => /usr/lib/libgpgmepp.so.7 (0x00007f01bad87000)
+	libopenjp2.so.7 => /usr/lib/libopenjp2.so.7 (0x00007f01bad1b000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007f01bace3000)
+	libtiff.so.6 => /usr/lib/libtiff.so.6 (0x00007f01bac4d000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007f01bba6d000)
+	libsmime3.so => /usr/lib/libsmime3.so (0x00007f01bac1e000)
+	libnss3.so => /usr/lib/libnss3.so (0x00007f01baad9000)
+	libplc4.so => /usr/lib/libplc4.so (0x00007f01bba66000)
+	libnspr4.so => /usr/lib/libnspr4.so (0x00007f01baa8e000)
+	libharfbuzz-subset.so.0 => /usr/lib/libharfbuzz-subset.so.0 (0x00007f01ba8f2000)
+	libharfbuzz.so.0 => /usr/lib/libharfbuzz.so.0 (0x00007f01ba791000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f01bbc0b000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f01ba764000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007f01bb523000)
+	libexpat.so.1 => /usr/lib/libexpat.so.1 (0x00007f01ba733000)
+	libnghttp3.so.9 => /usr/lib/libnghttp3.so.9 (0x00007f01ba70c000)
+	libngtcp2_crypto_ossl.so.0 => /usr/lib/libngtcp2_crypto_ossl.so.0 (0x00007f01bb516000)
+	libngtcp2.so.16 => /usr/lib/libngtcp2.so.16 (0x00007f01ba6b4000)
+	libnghttp2.so.14 => /usr/lib/libnghttp2.so.14 (0x00007f01ba685000)
+	libidn2.so.0 => /usr/lib/libidn2.so.0 (0x00007f01ba62c000)
+	libssh2.so.1 => /usr/lib/libssh2.so.1 (0x00007f01ba5e4000)
+	libpsl.so.5 => /usr/lib/libpsl.so.5 (0x00007f01ba5ce000)
+	libssl.so.3 => /usr/lib/libssl.so.3 (0x00007f01ba4ca000)
+	libcrypto.so.3 => /usr/lib/libcrypto.so.3 (0x00007f01b9e00000)
+	libzstd.so.1 => /usr/lib/libzstd.so.1 (0x00007f01ba41a000)
+	libgpgme.so.45 => /usr/lib/libgpgme.so.45 (0x00007f01b9da7000)
+	libwebp.so.7 => /usr/lib/libwebp.so.7 (0x00007f01b9d31000)
+	liblzma.so.5 => /usr/lib/liblzma.so.5 (0x00007f01b9d00000)
+	libjbig.so.0 => /usr/lib/libjbig.so.0 (0x00007f01b9cf2000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007f01b9ccf000)
+	libnssutil3.so => /usr/lib/libnssutil3.so (0x00007f01b9c9a000)
+	libplds4.so => /usr/lib/libplds4.so (0x00007f01bb50f000)
+	libglib-2.0.so.0 => /usr/lib/libglib-2.0.so.0 (0x00007f01b9b44000)
+	libgraphite2.so.3 => /usr/lib/libgraphite2.so.3 (0x00007f01b9b1a000)
+	libunistring.so.2 => /usr/lib/libunistring.so.2 (0x00007f01b996d000)
+	libassuan.so.9 => /usr/lib/libassuan.so.9 (0x00007f01b9957000)
+	libgpg-error.so.0 => /usr/lib/libgpg-error.so.0 (0x00007f01b992a000)
+	libsharpyuv.so.0 => /usr/lib/libsharpyuv.so.0 (0x00007f01ba411000)
+	libpcre2-8.so.0 => /usr/lib/libpcre2-8.so.0 (0x00007f01b9879000)
+[06:23:59] PASS: pdftoppm linked libraries resolve
+[06:23:59] guest$ ldd /usr/bin/pdftotext
+[06:23:59] 	linux-vdso.so.1 (0x00007f20ec6ef000)
+	libpoppler.so.166 => /usr/lib/libpoppler.so.166 (0x00007f20ec200000)
+	libstdc++.so.6 => /usr/lib/libstdc++.so.6 (0x00007f20ebe00000)
+	libc.so.6 => /usr/lib/libc.so.6 (0x00007f20ebc16000)
+	libfreetype.so.6 => /usr/lib/libfreetype.so.6 (0x00007f20ec136000)
+	libz.so.1 => /usr/lib/libz.so.1 (0x00007f20ec6b6000)
+	libfontconfig.so.1 => /usr/lib/libfontconfig.so.1 (0x00007f20ebb9f000)
+	libjpeg.so.8 => /usr/lib/libjpeg.so.8 (0x00007f20ebafc000)
+	libcurl.so.4 => /usr/lib/libcurl.so.4 (0x00007f20eb9f8000)
+	libgpgmepp.so.7 => /usr/lib/libgpgmepp.so.7 (0x00007f20eb987000)
+	libopenjp2.so.7 => /usr/lib/libopenjp2.so.7 (0x00007f20eb91b000)
+	liblcms2.so.2 => /usr/lib/liblcms2.so.2 (0x00007f20eb8b4000)
+	libpng16.so.16 => /usr/lib/libpng16.so.16 (0x00007f20ec67c000)
+	libtiff.so.6 => /usr/lib/libtiff.so.6 (0x00007f20eb81e000)
+	libbrotlidec.so.1 => /usr/lib/libbrotlidec.so.1 (0x00007f20ec66c000)
+	libsmime3.so => /usr/lib/libsmime3.so (0x00007f20eb7ef000)
+	libnss3.so => /usr/lib/libnss3.so (0x00007f20eb6aa000)
+	libplc4.so => /usr/lib/libplc4.so (0x00007f20ec665000)
+	libnspr4.so => /usr/lib/libnspr4.so (0x00007f20eb65f000)
+	libharfbuzz-subset.so.0 => /usr/lib/libharfbuzz-subset.so.0 (0x00007f20eb4c3000)
+	libharfbuzz.so.0 => /usr/lib/libharfbuzz.so.0 (0x00007f20eb362000)
+	libm.so.6 => /usr/lib/libm.so.6 (0x00007f20eb274000)
+	/lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f20ec6f1000)
+	libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f20eb247000)
+	libbz2.so.1 => /usr/lib/libbz2.so.1 (0x00007f20ec123000)
+	libexpat.so.1 => /usr/lib/libexpat.so.1 (0x00007f20eb216000)
+	libnghttp3.so.9 => /usr/lib/libnghttp3.so.9 (0x00007f20eb1ef000)
+	libngtcp2_crypto_ossl.so.0 => /usr/lib/libngtcp2_crypto_ossl.so.0 (0x00007f20ec116000)
+	libngtcp2.so.16 => /usr/lib/libngtcp2.so.16 (0x00007f20eb197000)
+	libnghttp2.so.14 => /usr/lib/libnghttp2.so.14 (0x00007f20eb168000)
+	libidn2.so.0 => /usr/lib/libidn2.so.0 (0x00007f20eb10f000)
+	libssh2.so.1 => /usr/lib/libssh2.so.1 (0x00007f20eb0c7000)
+	libpsl.so.5 => /usr/lib/libpsl.so.5 (0x00007f20eb0b1000)
+	libssl.so.3 => /usr/lib/libssl.so.3 (0x00007f20eafad000)
+	libcrypto.so.3 => /usr/lib/libcrypto.so.3 (0x00007f20ea800000)
+	libzstd.so.1 => /usr/lib/libzstd.so.1 (0x00007f20eaefd000)
+	libgpgme.so.45 => /usr/lib/libgpgme.so.45 (0x00007f20eaea4000)
+	libwebp.so.7 => /usr/lib/libwebp.so.7 (0x00007f20eae2e000)
+	liblzma.so.5 => /usr/lib/liblzma.so.5 (0x00007f20ea7cf000)
+	libjbig.so.0 => /usr/lib/libjbig.so.0 (0x00007f20eae20000)
+	libbrotlicommon.so.1 => /usr/lib/libbrotlicommon.so.1 (0x00007f20ea7ac000)
+	libnssutil3.so => /usr/lib/libnssutil3.so (0x00007f20ea777000)
+	libplds4.so => /usr/lib/libplds4.so (0x00007f20ec10d000)
+	libglib-2.0.so.0 => /usr/lib/libglib-2.0.so.0 (0x00007f20ea621000)
+	libgraphite2.so.3 => /usr/lib/libgraphite2.so.3 (0x00007f20ea5f7000)
+	libunistring.so.2 => /usr/lib/libunistring.so.2 (0x00007f20ea44a000)
+	libassuan.so.9 => /usr/lib/libassuan.so.9 (0x00007f20ea434000)
+	libgpg-error.so.0 => /usr/lib/libgpg-error.so.0 (0x00007f20ea407000)
+	libsharpyuv.so.0 => /usr/lib/libsharpyuv.so.0 (0x00007f20eae15000)
+	libpcre2-8.so.0 => /usr/lib/libpcre2-8.so.0 (0x00007f20ea356000)
+[06:23:59] PASS: pdftotext linked libraries resolve
+[06:23:59] guest$ su -s /bin/sh crowbar -c 'crowbaros-viewer --inspect /tmp/viewer-check-nznfciu4/sample.png'
+[06:23:59] {"kind":"image","width":320,"height":200}
+[06:23:59] PASS: Viewer reads the image fixture as the person — {'kind': 'image', 'width': 320, 'height': 200}
+[06:24:00] guest$ cd /home/crowbar && setsid -f chpst -u "crowbar:$(id -Gn crowbar | tr " " :)" env -i HOME=/home/crowbar PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1003 WAYLAND_DISPLAY=wayland-0 xdg-open /tmp/viewer-check-nznfciu4/sample.png >/tmp/viewer-image-dark.log 2>&1 </dev/null
+[06:24:00] 
+[06:24:01] guest$ cat /tmp/viewer-image-dark.log
+[06:24:01] VIEWER loaded kind=image
+[06:24:03] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'image/png'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:24:04] iVBORw0KGgoAAAANSUhEUgAAAMgAAAFACAYAAAD5zDOfAAAIYElEQVR4Ae3AA6AkWZbG8f937o3IzKdyS2Oubdu2bdu2bdu2bWmMnpZKr54yMyLu+Xa3anqmhztr1a++6fc91Vx11VXPD8FVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131ghBcddVVLwjBVVdd9YIQXHXVVS8IwVVXXfWCEFx11VUvCMFVV131gvCPvcUFTE8WAIMAAAAASUVORK5CYII=
+[06:24:04] PASS: Viewer copies the sibling image pixels in dark
+[06:24:06] guest$ cat /tmp/viewer-image-dark.log
+[06:24:06] VIEWER loaded kind=image
+VIEWER loaded kind=image
+VIEWER loaded kind=image
+VIEWER wallpaper=saved
+[06:24:16] PASS: Viewer pans the zoomed image in dark
+[06:24:20] PASS: Viewer opens and navigates the image in dark
+[06:24:20] guest$ sv restart crowbar-shell
+[06:24:21] ok: run: crowbar-shell: (pid 2816) 0s
+[06:24:22] PASS: Viewer wallpaper persists after the app and shell close in dark
+[06:24:22] guest$ cd /home/crowbar && setsid -f chpst -u "crowbar:$(id -Gn crowbar | tr " " :)" env -i HOME=/home/crowbar PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1003 WAYLAND_DISPLAY=wayland-0 xdg-open /tmp/viewer-check-nznfciu4/sample.png >/tmp/viewer-image-dark.log-restore 2>&1 </dev/null
+[06:24:22] 
+[06:24:23] guest$ cat /tmp/viewer-image-dark.log-restore
+[06:24:23] VIEWER loaded kind=image
+[06:24:24] guest$ cat /tmp/viewer-image-dark.log-restore
+[06:24:24] VIEWER loaded kind=image
+VIEWER wallpaper=restored
+[06:24:24] guest$ chpst -u crowbar:crowbar python3 -c 'from pathlib import Path; print((Path('"'"'/home/crowbar'"'"') / ".config/crowbaros/wallpaper.rgba").exists())'
+[06:24:24] False
+[06:24:24] PASS: Viewer removes the wallpaper override in dark
+[06:24:25] guest$ su -s /bin/sh crowbar -c 'crowbaros-viewer --inspect /tmp/viewer-check-nznfciu4/sample.pdf'
+[06:24:25] {"kind":"pdf","pages":12}
+[06:24:25] PASS: Viewer reads the pdf fixture as the person — {'kind': 'pdf', 'pages': 12}
+[06:24:26] guest$ cd /home/crowbar && setsid -f chpst -u "crowbar:$(id -Gn crowbar | tr " " :)" env -i HOME=/home/crowbar PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1003 WAYLAND_DISPLAY=wayland-0 xdg-open /tmp/viewer-check-nznfciu4/sample.pdf >/tmp/viewer-pdf-dark.log 2>&1 </dev/null
+[06:24:26] 
+[06:24:27] guest$ cat /tmp/viewer-pdf-dark.log
+[06:24:27] VIEWER loaded kind=pdf
+[06:24:30] guest$ cat /tmp/viewer-pdf-dark.log
+[06:24:30] VIEWER loaded kind=pdf
+VIEWER thumbnail page=1
+VIEWER thumbnail page=2
+VIEWER thumbnail page=3
+VIEWER thumbnail page=4
+VIEWER page=1
+VIEWER thumbnail page=5
+VIEWER thumbnail page=6
+VIEWER thumbnail page=7
+VIEWER page=2
+[06:24:31] PASS: Viewer follows continuous PDF scrolling in dark
+[06:24:35] guest$ cat /tmp/viewer-pdf-dark.log
+[06:24:35] VIEWER loaded kind=pdf
+VIEWER thumbnail page=1
+VIEWER thumbnail page=2
+VIEWER thumbnail page=3
+VIEWER thumbnail page=4
+VIEWER page=1
+VIEWER thumbnail page=5
+VIEWER thumbnail page=6
+VIEWER thumbnail page=7
+VIEWER page=2
+VIEWER page=1
+VIEWER search matches=24
+VIEWER search match=1 page=1 offset=27
+[06:24:36] guest$ cat /tmp/viewer-pdf-dark.log
+[06:24:36] VIEWER loaded kind=pdf
+VIEWER thumbnail page=1
+VIEWER thumbnail page=2
+VIEWER thumbnail page=3
+VIEWER thumbnail page=4
+VIEWER page=1
+VIEWER thumbnail page=5
+VIEWER thumbnail page=6
+VIEWER thumbnail page=7
+VIEWER page=2
+VIEWER page=1
+VIEWER search matches=24
+VIEWER search match=1 page=1 offset=27
+VIEWER search match=2 page=1 offset=54
+[06:24:39] PASS: Viewer draws selectable PDF text in dark
+[06:24:41] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:24:41] ICBBIHF1aWV0IHBsYWNlIHRvIHJlYWQKCgoKQ3Jvd2Jhck9TIFZpZXdlciAtIHBhZ2UgMQoKQ3Jvd2Jhck9TIG1ha2VzIHJvb20gdG8gcmVhZC4K
+[06:24:42] PASS: Viewer copies selected PDF text in dark
+[06:24:45] guest$ cat /tmp/viewer-pdf-dark.log
+[06:24:45] VIEWER loaded kind=pdf
+VIEWER thumbnail page=1
+VIEWER thumbnail page=2
+VIEWER thumbnail page=3
+VIEWER thumbnail page=4
+VIEWER page=1
+VIEWER thumbnail page=5
+VIEWER thumbnail page=6
+VIEWER thumbnail page=7
+VIEWER page=2
+VIEWER page=1
+VIEWER search matches=24
+VIEWER search match=1 page=1 offset=27
+VIEWER search match=2 page=1 offset=54
+VIEWER search match=1 page=1 offset=27
+VIEWER thumbnail page=8
+VIEWER thumbnail page=9
+VIEWER thumbnail page=10
+VIEWER thumbnail page=11
+VIEWER thumbnail page=12
+[06:24:45] guest$ cat /tmp/viewer-pdf-dark.log
+[06:24:46] VIEWER loaded kind=pdf
+VIEWER thumbnail page=1
+VIEWER thumbnail page=2
+VIEWER thumbnail page=3
+VIEWER thumbnail page=4
+VIEWER page=1
+VIEWER thumbnail page=5
+VIEWER thumbnail page=6
+VIEWER thumbnail page=7
+VIEWER page=2
+VIEWER page=1
+VIEWER search matches=24
+VIEWER search match=1 page=1 offset=27
+VIEWER search match=2 page=1 offset=54
+VIEWER search match=1 page=1 offset=27
+VIEWER thumbnail page=8
+VIEWER thumbnail page=9
+VIEWER thumbnail page=10
+VIEWER thumbnail page=11
+VIEWER thumbnail page=12
+[06:24:46] guest$ cat /tmp/viewer-pdf-dark.log
+[06:24:46] VIEWER loaded kind=pdf
+VIEWER thumbnail page=1
+VIEWER thumbnail page=2
+VIEWER thumbnail page=3
+VIEWER thumbnail page=4
+VIEWER page=1
+VIEWER thumbnail page=5
+VIEWER thumbnail page=6
+VIEWER thumbnail page=7
+VIEWER page=2
+VIEWER page=1
+VIEWER search matches=24
+VIEWER search match=1 page=1 offset=27
+VIEWER search match=2 page=1 offset=54
+VIEWER search match=1 page=1 offset=27
+VIEWER thumbnail page=8
+VIEWER thumbnail page=9
+VIEWER thumbnail page=10
+VIEWER thumbnail page=11
+VIEWER thumbnail page=12
+VIEWER page=12
+[06:24:46] PASS: Viewer browses and opens distant PDF thumbnails in dark
+[06:24:48] PASS: Viewer opens and navigates the pdf in dark
+[06:24:48] guest$ chpst -u crowbar:crowbar python3 -c '
+from pathlib import Path
+import json, shutil
+folder = Path('"'"'/home/crowbar'"'"') / '"'"'.config/crowbaros'"'"'
+backup = Path('"'"'/tmp/viewer-check-nznfciu4'"'"') / '"'"'original-state'"'"'
+if True:
+    for name, existed in json.loads((backup / '"'"'manifest.json'"'"').read_text()).items():
+        target = folder / name
+        if existed:
+            folder.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup / name, target)
+        else:
+            target.unlink(missing_ok=True)
+else:
+    backup.mkdir()
+    manifest = {}
+    for name in ('"'"'appearance.json'"'"', '"'"'wallpaper.rgba'"'"'):
+        source = folder / name
+        manifest[name] = source.exists()
+        if source.exists():
+            shutil.copy2(source, backup / name)
+    (backup / '"'"'manifest.json'"'"').write_text(json.dumps(manifest))
+'
+[06:24:48] 
+[06:24:48] guest$ chpst -u crowbar:crowbar python3 -c 'import shutil; shutil.rmtree('"'"'/tmp/viewer-check-nznfciu4'"'"')'
+[06:24:48] 
+[06:24:49] guest$ cd /home/crowbar && setsid -f chpst -u "crowbar:$(id -Gn crowbar | tr " " :)" env -i HOME=/home/crowbar PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/1003 WAYLAND_DISPLAY=wayland-0 env CROWBAR_CALC_CHECK=1 crowbaros-calc >/tmp/calc-dark.log 2>&1 </dev/null
+[06:24:49] 
+[06:24:55] guest$ cat /tmp/calc-dark.log
+[06:24:56] CALC mode=Standard width=64 result=1600
+[06:24:56] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:24:57] MTYwMA==
+[06:24:57] PASS: Calculator copies the Standard answer in dark
+[06:25:07] guest$ cat /tmp/calc-dark.log
+[06:25:07] CALC mode=Standard width=64 result=1600
+CALC mode=Scientific width=64 result=11
+[06:25:07] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:25:08] MTE=
+[06:25:08] PASS: Calculator copies the Scientific answer in dark
+[06:25:15] guest$ cat /tmp/calc-dark.log
+[06:25:15] CALC mode=Standard width=64 result=1600
+CALC mode=Scientific width=64 result=11
+CALC mode=Programmer width=64 result=240
+[06:25:16] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:25:16] MjQw
+[06:25:17] PASS: Calculator copies the Programmer answer in dark
+[06:25:20] guest$ cat /tmp/calc-dark.log
+[06:25:20] CALC mode=Standard width=64 result=1600
+CALC mode=Scientific width=64 result=11
+CALC mode=Programmer width=64 result=240
+CALC mode=Programmer width=8 result=255
+[06:25:24] guest$ cat /tmp/calc-dark.log
+[06:25:24] CALC mode=Standard width=64 result=1600
+CALC mode=Scientific width=64 result=11
+CALC mode=Programmer width=64 result=240
+CALC mode=Programmer width=8 result=255
+CALC mode=Scientific width=8 result=3
+[06:25:28] guest$ cat /tmp/calc-dark.log
+[06:25:28] CALC mode=Standard width=64 result=1600
+CALC mode=Scientific width=64 result=11
+CALC mode=Programmer width=64 result=240
+CALC mode=Programmer width=8 result=255
+CALC mode=Scientific width=8 result=3
+CALC mode=Standard width=8 result=5
+[06:25:37] guest$ cat /tmp/calc-dark.log
+[06:25:37] CALC mode=Standard width=64 result=1600
+CALC mode=Scientific width=64 result=11
+CALC mode=Programmer width=64 result=240
+CALC mode=Programmer width=8 result=255
+CALC mode=Scientific width=8 result=3
+CALC mode=Standard width=8 result=5
+CALC mode=Standard width=8 result=5
+CALC mode=Standard width=8 result=20
+[06:25:47] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:25:48] MTYwMA==
+[06:25:48] PASS: launcher copies 1600 in dark
+[06:25:52] guest$ chpst -u crowbar:crowbar python3 -c '
+import base64, os, subprocess
+env = dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"',
+           WAYLAND_DISPLAY='"'"'wayland-0'"'"')
+result = subprocess.run(['"'"'wl-paste'"'"', '"'"'--no-newline'"'"', '"'"'--type'"'"', '"'"'text/plain;charset=utf-8'"'"'],
+                        env=env, check=True, stdout=subprocess.PIPE, timeout=12)
+print(base64.b64encode(result.stdout).decode('"'"'ascii'"'"'))
+'
+[06:25:53] Mjcx
+[06:25:53] PASS: launcher copies 271 in dark
+[06:25:54] guest$ chpst -u crowbar:crowbar python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="theme-studio-check-"))'
+[06:25:54] /tmp/theme-studio-check-31_8aiq9
+[06:25:54] guest$ chpst -u crowbar:crowbar python3 -c '
+import shutil
+from pathlib import Path
+root=Path('"'"'/home/crowbar'"'"')/'"'"'.config'"'"'; backup=Path('"'"'/tmp/theme-studio-check-31_8aiq9'"'"')/'"'"'backup'"'"'; backup.mkdir()
+for name in ['"'"'crowbaros'"'"','"'"'foot'"'"','"'"'gtk-3.0'"'"','"'"'gtk-4.0'"'"']:
+    if (root/name).exists(): shutil.copytree(root/name,backup/name)
+'
+[06:25:54] 
+[06:25:55] guest$ python3 -c '
+import socket, struct, sys
+def send(message):
+    s.sendall(struct.pack(">I", len(message)) + message)
+def read():
+    length = f.read(4)
+    if len(length) < 4:
+        raise EOFError
+    message = f.read(struct.unpack(">I", length)[0])
+    if len(message) < struct.unpack(">I", length)[0]:
+        raise EOFError
+    return message
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(5)
+try:
+    s.connect(sys.argv[1])
+    f = s.makefile("rb")
+    send(b'"'"'{"version":1}'"'"')
+    if read() != b'"'"'{"version":1}'"'"':
+        raise EOFError
+    send(sys.argv[2].encode())
+    while (message := read()).startswith(b'"'"'{"event":'"'"'):
+        pass
+    print(message.decode(errors="replace"))
+except (OSError, EOFError):
+    pass
+' /run/crowbar-trusted/unlock/compositor '{"op":"set_theme","focused":"#112233","unfocused":"#445566","background":"#778899"}'
+[06:25:55] {"reply":"error","message":"a request names its op, and nothing else"}
+[06:25:55] PASS: the unlock authority cannot change the desktop theme
+[06:25:55] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --list-themes
+[06:25:55] [
+  {
+    "schema_version": 1,
+    "id": "nullkeel-dark",
+    "name": "Nullkeel Dark",
+    "author": "CrowbarOS",
+    "appearance": "dark",
+    "colors": {
+      "canvas": "#080d12",
+      "surface": "#17212b",
+      "surface_elevated": "#1f2d3a",
+      "text": "#d8e5ec",
+      "muted": "#a8bac7",
+      "line": "#364957",
+      "accent": "#49d7e8",
+      "on_accent": "#080d12",
+      "focus": "#49d7e8",
+      "danger": "#f07178",
+      "warning": "#f2c97d",
+      "success": "#7fd4a6",
+      "ansi": [
+        "#0f1720",
+        "#e06c75",
+        "#6bc99a",
+        "#e8c170",
+        "#5fa8e8",
+        "#b88ce8",
+        "#49d7e8",
+        "#c4d5df",
+        "#4b6070",
+        "#f28b92",
+        "#8be0b5",
+        "#f5d790",
+        "#82c0f5",
+        "#d0aef5",
+        "#7ce6f2",
+        "#eaf2f7"
+      ]
+    },
+    "backgrounds": [
+      "signal-feather.png",
+      "nightwatch.png",
+      "quiet-signal.png"
+    ]
+  },
+  {
+    "schema_version": 1,
+    "id": "nullkeel-light",
+    "name": "Nullkeel Light",
+    "author": "CrowbarOS",
+    "appearance": "light",
+    "colors": {
+      "canvas": "#f4f7f9",
+      "surface": "#eaf0f3",
+      "surface_elevated": "#ffffff",
+      "text": "#080d12",
+      "muted": "#3e515d",
+      "line": "#b2c2cc",
+      "accent": "#49d7e8",
+      "on_accent": "#080d12",
+      "focus": "#086a78",
+      "danger": "#c23640",
+      "warning": "#9c6508",
+      "success": "#1e7a52",
+      "ansi": [
+        "#080d12",
+        "#c23640",
+        "#1e7a52",
+        "#9c6508",
+        "#1d5fa3",
+        "#7c3fa3",
+        "#086a78",
+        "#5a6e7c",
+        "#3e515d",
+        "#d94550",
+        "#289465",
+        "#b57912",
+        "#2b75c2",
+        "#9452bf",
+        "#0c8799",
+        "#080d12"
+      ]
+    },
+    "backgrounds": [
+      "signal-feather.png",
+      "quiet-signal.png",
+      "nightwatch.png"
+    ]
+  },
+  {
+    "schema_version": 1,
+    "id": "warm-paper",
+    "name": "Warm Paper",
+    "author": "CrowbarOS",
+    "appearance": "warm-paper",
+    "colors": {
+      "canvas": "#f7f2e8",
+      "surface": "#eae3d7",
+      "surface_elevated": "#fcf9f2",
+      "text": "#211f1c",
+      "muted": "#5c564b",
+      "line": "#bcb3a3",
+      "accent": "#49d7e8",
+      "on_accent": "#080d12",
+      "focus": "#526c6c",
+      "danger": "#b53932",
+      "warning": "#996414",
+      "success": "#2f7048",
+      "ansi": [
+        "#211f1c",
+        "#b53932",
+        "#2f7048",
+        "#996414",
+        "#2d5b85",
+        "#7c4678",
+        "#2b6e75",
+        "#6b6458",
+        "#5c564b",
+        "#cf4a42",
+        "#3d8a5a",
+        "#b3781e",
+        "#3d72a3",
+        "#965891",
+        "#39878f",
+        "#211f1c"
+      ]
+    },
+    "backgrounds": [
+      "quiet-signal.png",
+      "signal-feather.png",
+      "nightwatch.png"
+    ]
+  },
+  {
+    "schema_version": 1,
+    "id": "catppuccin-mocha",
+    "name": "Catppuccin Mocha",
+    "author": "Catppuccin",
+    "appearance": "dark",
+    "colors": {
+      "canvas": "#1e1e2e",
+      "surface": "#313244",
+      "surface_elevated": "#45475a",
+      "text": "#cdd6f4",
+      "muted": "#a6adc8",
+      "line": "#585b70",
+      "accent": "#89b4fa",
+      "on_accent": "#11111b",
+      "focus": "#b4befe",
+      "danger": "#f38ba8",
+      "warning": "#f9e2af",
+      "success": "#a6e3a1",
+      "ansi": [
+        "#45475a",
+        "#f38ba8",
+        "#a6e3a1",
+        "#f9e2af",
+        "#89b4fa",
+        "#f5c2e7",
+        "#94e2d5",
+        "#bac2de",
+        "#585b70",
+        "#f38ba8",
+        "#a6e3a1",
+        "#f9e2af",
+        "#89b4fa",
+        "#f5c2e7",
+        "#94e2d5",
+        "#a6adc8"
+      ]
+    },
+    "backgrounds": [
+      "nightwatch.png",
+      "signal-feather.png"
+    ]
+  },
+  {
+    "schema_version": 1,
+    "id": "tokyo-night",
+    "name": "Tokyo Night",
+    "author": "Tokyo Night",
+    "appearance": "dark",
+    "colors": {
+      "canvas": "#1a1b26",
+      "surface": "#24283b",
+      "surface_elevated": "#2f3549",
+      "text": "#c0caf5",
+      "muted": "#9aa5ce",
+      "line": "#414868",
+      "accent": "#7aa2f7",
+      "on_accent": "#15161e",
+      "focus": "#7dcfff",
+      "danger": "#f7768e",
+      "warning": "#e0af68",
+      "success": "#9ece6a",
+      "ansi": [
+        "#15161e",
+        "#f7768e",
+        "#9ece6a",
+        "#e0af68",
+        "#7aa2f7",
+        "#bb9af7",
+        "#7dcfff",
+        "#a9b1d6",
+        "#414868",
+        "#f7768e",
+        "#9ece6a",
+        "#e0af68",
+        "#7aa2f7",
+        "#bb9af7",
+        "#7dcfff",
+        "#c0caf5"
+      ]
+    },
+    "backgrounds": [
+      "nightwatch.png",
+      "signal-feather.png"
+    ]
+  },
+  {
+    "schema_version": 1,
+    "id": "nord",
+    "name": "Nord",
+    "author": "Arctic Ice Studio",
+    "appearance": "dark",
+    "colors": {
+      "canvas": "#2e3440",
+      "surface": "#3b4252",
+      "surface_elevated": "#434c5e",
+      "text": "#eceff4",
+      "muted": "#d8dee9",
+      "line": "#4c566a",
+      "accent": "#88c0d0",
+      "on_accent": "#2e3440",
+      "focus": "#81a1c1",
+      "danger": "#bf616a",
+      "warning": "#ebcb8b",
+      "success": "#a3be8c",
+      "ansi": [
+        "#3b4252",
+        "#bf616a",
+        "#a3be8c",
+        "#ebcb8b",
+        "#81a1c1",
+        "#b48ead",
+        "#88c0d0",
+        "#e5e9f0",
+        "#4c566a",
+        "#bf616a",
+        "#a3be8c",
+        "#ebcb8b",
+        "#81a1c1",
+        "#b48ead",
+        "#8fbcbb",
+        "#eceff4"
+      ]
+    },
+    "backgrounds": [
+      "signal-feather.png",
+      "quiet-signal.png"
+    ]
+  },
+  {
+    "schema_version": 1,
+    "id": "gruvbox-dark",
+    "name": "Gruvbox Dark",
+    "author": "Gruvbox",
+    "appearance": "dark",
+    "colors": {
+      "canvas": "#282828",
+      "surface": "#3c3836",
+      "surface_elevated": "#504945",
+      "text": "#ebdbb2",
+      "muted": "#bdae93",
+      "line": "#665c54",
+      "accent": "#fabd2f",
+      "on_accent": "#282828",
+      "focus": "#fe8019",
+      "danger": "#fb4934",
+      "warning": "#fabd2f",
+      "success": "#b8bb26",
+      "ansi": [
+        "#282828",
+        "#cc241d",
+        "#98971a",
+        "#d79921",
+        "#458588",
+        "#b16286",
+        "#689d6a",
+        "#a89984",
+        "#928374",
+        "#fb4934",
+        "#b8bb26",
+        "#fabd2f",
+        "#83a598",
+        "#d3869b",
+        "#8ec07c",
+        "#ebdbb2"
+      ]
+    },
+    "backgrounds": [
+      "nightwatch.png",
+      "quiet-signal.png"
+    ]
+  }
+]
+[06:25:55] PASS: Theme Studio discovers seven built-in bundles
+[06:25:55] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nord
+[06:25:55] Applied Nord
+[06:25:56] guest$ cat /home/crowbar/.config/crowbaros/current-theme.json
+[06:25:56] {
+  "schema_version": 1,
+  "theme_id": "nord",
+  "theme_name": "Nord",
+  "appearance": "dark",
+  "studio": false,
+  "background": "signal-feather.png",
+  "background_path": "/usr/share/crowbaros/themes/nord/backgrounds/signal-feather.png",
+  "colors": {
+    "canvas": "#2e3440",
+    "surface": "#3b4252",
+    "surface_elevated": "#434c5e",
+    "text": "#eceff4",
+    "muted": "#d8dee9",
+    "line": "#4c566a",
+    "accent": "#88c0d0",
+    "on_accent": "#2e3440",
+    "focus": "#81a1c1",
+    "danger": "#bf616a",
+    "warning": "#ebcb8b",
+    "success": "#a3be8c",
+    "ansi": [
+      "#3b4252",
+      "#bf616a",
+      "#a3be8c",
+      "#ebcb8b",
+      "#81a1c1",
+      "#b48ead",
+      "#88c0d0",
+      "#e5e9f0",
+      "#4c566a",
+      "#bf616a",
+      "#a3be8c",
+      "#ebcb8b",
+      "#81a1c1",
+      "#b48ead",
+      "#8fbcbb",
+      "#eceff4"
+    ]
+  },
+  "generation": 1
+}
+[06:25:56] PASS: applying nord updates saved active colors
+[06:25:56] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nullkeel-light
+[06:25:56] Applied Nullkeel Light
+[06:25:57] guest$ cat /home/crowbar/.config/crowbaros/current-theme.json
+[06:25:57] {
+  "schema_version": 1,
+  "theme_id": "nullkeel-light",
+  "theme_name": "Nullkeel Light",
+  "appearance": "light",
+  "studio": false,
+  "background": "signal-feather.png",
+  "background_path": "/usr/share/crowbaros/themes/nullkeel-light/backgrounds/signal-feather.png",
+  "colors": {
+    "canvas": "#f4f7f9",
+    "surface": "#eaf0f3",
+    "surface_elevated": "#ffffff",
+    "text": "#080d12",
+    "muted": "#3e515d",
+    "line": "#b2c2cc",
+    "accent": "#49d7e8",
+    "on_accent": "#080d12",
+    "focus": "#086a78",
+    "danger": "#c23640",
+    "warning": "#9c6508",
+    "success": "#1e7a52",
+    "ansi": [
+      "#080d12",
+      "#c23640",
+      "#1e7a52",
+      "#9c6508",
+      "#1d5fa3",
+      "#7c3fa3",
+      "#086a78",
+      "#5a6e7c",
+      "#3e515d",
+      "#d94550",
+      "#289465",
+      "#b57912",
+      "#2b75c2",
+      "#9452bf",
+      "#0c8799",
+      "#080d12"
+    ]
+  },
+  "generation": 2
+}
+[06:25:57] PASS: applying nullkeel-light updates saved active colors
+[06:25:57] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nullkeel-dark
+[06:25:57] Applied Nullkeel Dark
+[06:25:58] guest$ cat /home/crowbar/.config/crowbaros/current-theme.json
+[06:25:58] {
+  "schema_version": 1,
+  "theme_id": "nullkeel-dark",
+  "theme_name": "Nullkeel Dark",
+  "appearance": "dark",
+  "studio": false,
+  "background": "signal-feather.png",
+  "background_path": "/usr/share/crowbaros/themes/nullkeel-dark/backgrounds/signal-feather.png",
+  "colors": {
+    "canvas": "#080d12",
+    "surface": "#17212b",
+    "surface_elevated": "#1f2d3a",
+    "text": "#d8e5ec",
+    "muted": "#a8bac7",
+    "line": "#364957",
+    "accent": "#49d7e8",
+    "on_accent": "#080d12",
+    "focus": "#49d7e8",
+    "danger": "#f07178",
+    "warning": "#f2c97d",
+    "success": "#7fd4a6",
+    "ansi": [
+      "#0f1720",
+      "#e06c75",
+      "#6bc99a",
+      "#e8c170",
+      "#5fa8e8",
+      "#b88ce8",
+      "#49d7e8",
+      "#c4d5df",
+      "#4b6070",
+      "#f28b92",
+      "#8be0b5",
+      "#f5d790",
+      "#82c0f5",
+      "#d0aef5",
+      "#7ce6f2",
+      "#eaf2f7"
+    ]
+  },
+  "generation": 3
+}
+[06:25:58] PASS: applying nullkeel-dark updates saved active colors
+[06:25:58] guest$ chpst -u crowbar env HOME=/home/crowbar foot --check-config
+[06:25:58] warn: main.c:495: 'C' is not a UTF-8 locale, falling back to 'C.UTF-8'
+[06:25:58] PASS: generated foot configuration passes foot --check-config
+[06:25:58] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --extract /usr/share/crowbaros-shell/wallpaper.png "Lab Palette" dark /usr/share/crowbaros-shell/nightwatch.png
+[06:25:58] Saved lab-palette
+[06:25:58] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme lab-palette
+[06:25:59] Applied Lab Palette
+[06:25:59] guest$ cat /home/crowbar/.config/crowbaros/current-theme.json
+[06:25:59] {
+  "schema_version": 1,
+  "theme_id": "lab-palette",
+  "theme_name": "Lab Palette",
+  "appearance": "dark",
+  "studio": false,
+  "background": "wallpaper.png",
+  "background_path": "/home/crowbar/.config/crowbaros/themes/lab-palette/backgrounds/wallpaper.png",
+  "colors": {
+    "canvas": "#090c0e",
+    "surface": "#12161a",
+    "surface_elevated": "#1b2227",
+    "text": "#ffffff",
+    "muted": "#b4c1cb",
+    "line": "#b4c1cb",
+    "accent": "#87c7f7",
+    "on_accent": "#000000",
+    "focus": "#87c7f7",
+    "danger": "#ec93a0",
+    "warning": "#eac894",
+    "success": "#a6d9c4",
+    "ansi": [
+      "#12161a",
+      "#ec93a0",
+      "#a6d9c4",
+      "#eac894",
+      "#96b4e9",
+      "#d99ce3",
+      "#87c7f7",
+      "#ffffff",
+      "#b4c1cb",
+      "#ec93a0",
+      "#a6d9c4",
+      "#eac894",
+      "#96b4e9",
+      "#d99ce3",
+      "#87c7f7",
+      "#ffffff"
+    ]
+  },
+  "generation": 4
+}
+[06:25:59] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --cycle-background
+[06:25:59] Background: nightwatch.png
+[06:25:59] guest$ cat /home/crowbar/.config/crowbaros/current-theme.json
+[06:25:59] {
+  "schema_version": 1,
+  "theme_id": "lab-palette",
+  "theme_name": "Lab Palette",
+  "appearance": "dark",
+  "studio": false,
+  "background": "nightwatch.png",
+  "background_path": "/home/crowbar/.config/crowbaros/themes/lab-palette/backgrounds/nightwatch.png",
+  "colors": {
+    "canvas": "#090c0e",
+    "surface": "#12161a",
+    "surface_elevated": "#1b2227",
+    "text": "#ffffff",
+    "muted": "#b4c1cb",
+    "line": "#b4c1cb",
+    "accent": "#87c7f7",
+    "on_accent": "#000000",
+    "focus": "#87c7f7",
+    "danger": "#ec93a0",
+    "warning": "#eac894",
+    "success": "#a6d9c4",
+    "ansi": [
+      "#12161a",
+      "#ec93a0",
+      "#a6d9c4",
+      "#eac894",
+      "#96b4e9",
+      "#d99ce3",
+      "#87c7f7",
+      "#ffffff",
+      "#b4c1cb",
+      "#ec93a0",
+      "#a6d9c4",
+      "#eac894",
+      "#96b4e9",
+      "#d99ce3",
+      "#87c7f7",
+      "#ffffff"
+    ]
+  },
+  "generation": 5
+}
+[06:25:59] PASS: an extracted two-background theme cycles and keeps its palette
+[06:26:34] PASS: closing an unsaved palette preserves its window
+[06:26:40] guest$ chpst -u crowbar:crowbar python3 -c 'import json; from pathlib import Path; print(json.loads(Path('"'"'/home/crowbar'"'"'+"/.config/crowbaros/current-theme.json").read_text())["theme_id"])'

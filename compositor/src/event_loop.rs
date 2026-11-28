@@ -43,6 +43,8 @@ pub enum Token {
     AuthorityListener,
     /// The Harness's listener (ADR 0035, see `control.rs`).
     AgentListener,
+    /// A bounded text selection read for the shell.
+    Clipboard,
 }
 
 impl Token {
@@ -57,6 +59,7 @@ impl Token {
             Token::Held(surface) => (9, surface),
             Token::AuthorityListener => (10, 0),
             Token::AgentListener => (11, 0),
+            Token::Clipboard => (12, 0),
         };
         debug_assert!(value < 1 << 56);
         (kind << 56) | value
@@ -74,6 +77,7 @@ impl Token {
             9 => Token::Held(value),
             10 => Token::AuthorityListener,
             11 => Token::AgentListener,
+            12 => Token::Clipboard,
             _ => return None,
         })
     }
@@ -98,6 +102,8 @@ pub enum TimerKey {
     FrameWait(u64, u64),
     /// The session may have been idle long enough to lock (see `lock.rs`).
     IdleLock,
+    /// A clipboard source did not finish in time.
+    Clipboard(u64),
     /// A control connection's `lock` has waited long enough for the
     /// displays to show the session locked (see `lock.rs`).
     LockShown(u64),

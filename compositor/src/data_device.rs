@@ -221,6 +221,7 @@ impl State {
                 if let Some(old) = old.filter(|old| Some(*old) != new) {
                     self.cancel_source(old);
                 }
+                self.capture_clipboard();
                 self.offer_selection_to_keyboard();
             }
             wl_data_device::Request::StartDrag {
@@ -306,6 +307,7 @@ impl State {
         self.drag_source_destroyed(source);
         if self.data.selection == Some(source) {
             self.data.selection = None;
+            self.cancel_clipboard_capture();
             self.offer_selection_to_keyboard();
         }
     }

@@ -564,6 +564,8 @@ impl State {
     /// | Super+Left, Super+Right | Snaps it to that half, or restores it |
     /// | Super+Down | Restores it |
     /// | Super+L | Locks the desktop |
+    /// | Super+V | Toggles the shell clipboard history |
+    /// | Super+. | Toggles the shell character picker |
     /// | Super+Space | The summon gesture: tells the shell (see `agent.rs`) |
     ///
     /// Super tapped alone, pressed and let go with nothing else between,
@@ -574,6 +576,8 @@ impl State {
         match key {
             KEY_L => return self.lock("key"),
             KEY_SPACE => return self.summon(),
+            47 => return self.control_event("clipboard"),  // Super+V
+            52 => return self.control_event("characters"), // Super+.
             KEY_UP => return self.toggle_mode(Mode::Maximized),
             KEY_F => return self.toggle_mode(Mode::Fullscreen),
             KEY_LEFT => return self.toggle_mode(Mode::Left),

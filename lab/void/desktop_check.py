@@ -603,6 +603,104 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
             self.python(viewer_state_code(home, directory, restore=True), person)
             self.python(f'import shutil; shutil.rmtree({directory!r})', person)
 
+    def clipboard_picker_check(self, theme):
+        """Actual Wayland copies, keyboard search/restore, focus, clearing and lock."""
+        app_class = 'com.crowbaros.Calc'
+        logfile = '/tmp/clipboard-calc.log'
+        self.as_app('env CROWBAR_CALC_CHECK=1 crowbaros-calc', logfile)
+        self.wait('Calculator opens for clipboard checks',
+                  lambda: self.snapshot()['active'].get('class') == app_class)
+
+        def history():
+            command = 'chpst -u crowbar-shell:crowbar-shell ' + guest.ask_fulcrum(
+                '/run/crowbar-trusted/compositor/control', '{"op":"clipboard_history"}')
+            return json.loads(self.guest.ssh(command).stdout)['items']
+
+        def opened(kind, *chord):
+            offset = len(self.shell_log())
+            self.key(*chord)
+            self.wait(kind + ' opens from its chord', lambda:
+                      'SHELL picker open=true kind=' + kind in self.shell_log()[offset:])
+            if kind == 'History':
+                self.wait('history finishes loading', lambda:
+                          'SHELL picker history loaded=' in self.shell_log()[offset:])
+
+        def focused():
+            self.wait('closing the picker restores the previous app',
+                      lambda: self.snapshot()['active'].get('class') == app_class)
+
+        for expression in ['111', '222']:
+            self.key('ctrl', 'l'); self.key('ctrl', 'a'); self.type(expression); self.key('ret')
+            self.wait('Calculator prepares copied text ' + expression,
+                      lambda: 'result=' + expression in self.run('cat ' + logfile))
+            self.key('ctrl', 'c')
+            self.wait('history receives copied text ' + expression,
+                      lambda: bool(history()) and history()[0] == expression)
+        self.key('ctrl', 'c')
+        time.sleep(0.2)
+        self.check('history deduplicates consecutive copies', history()[:2] == ['222', '111'])
+        opened('History', 'meta_l', 'v')
+        self.capture(f'clipboard-{theme}-history')
+        self.key('down'); self.key('ret'); focused()
+        self.check('Enter restores the selected earlier text to Wayland',
+                   self.clipboard('text/plain;charset=utf-8', app_class) == b'111')
+        opened('History', 'meta_l', 'v')
+        self.type('222'); self.capture(f'clipboard-{theme}-filtered'); self.key('ret'); focused()
+        self.check('history filters copied text and restores it',
+                   self.clipboard('text/plain;charset=utf-8', app_class) == b'222')
+        opened('History', 'meta_l', 'v'); self.key('meta_l', 'v'); focused()
+        opened('Characters', 'meta_l', 'dot')
+        self.capture(f'characters-{theme}-all')
+        self.type('em dash'); self.capture(f'characters-{theme}-search'); self.key('ret'); focused()
+        self.check('character name search copies the em dash',
+                   self.clipboard('text/plain;charset=utf-8', app_class) == '—'.encode())
+        opened('Characters', 'meta_l', 'dot')
+        for _ in range(7): self.key('down')
+        self.capture(f'characters-{theme}-next-page'); self.key('ret'); focused()
+        self.check('character arrows move beyond the first page',
+                   self.clipboard('text/plain;charset=utf-8', app_class) == '’'.encode())
+        opened('Characters', 'meta_l', 'dot')
+        self.type('thinking'); time.sleep(0.2)
+        self.capture(f'characters-{theme}-thinking')
+        _, _, pixels = guest.png_pixels(self.work / f'characters-{theme}-thinking.png')
+        colored = sum(1 for y in range(174, 214) for x in range(396, 434)
+                      if (lambda r, g, b: r > 160 and g > 75 and r > 1.3*b and g > 1.3*b)
+                         (*pixels[y][3*x:3*x+3]))
+        self.check('the requested emoji family renders Thinking face in ' + theme,
+                   colored > 10, f'{colored} colored glyph pixels')
+        self.key('esc'); focused()
+        opened('Characters', 'meta_l', 'dot')
+        self.type('emoji'); self.capture(f'characters-{theme}-emoji'); self.key('esc'); focused()
+        opened('Characters', 'meta_l', 'dot')
+        self.type('rocket'); self.key('ret'); focused()
+        self.check('emoji search copies a complete glyph',
+                   self.clipboard('text/plain;charset=utf-8', app_class) == '🚀'.encode())
+        opened('Characters', 'meta_l', 'dot'); self.key('meta_l', 'dot'); focused()
+        opened('Characters', 'meta_l', 'dot')
+        self.type('no such character'); self.capture(f'characters-{theme}-empty'); self.key('esc'); focused()
+        opened('History', 'meta_l', 'v')
+        self.key('tab'); self.capture(f'clipboard-{theme}-clear-focus'); self.key('ret')
+        self.wait('Clear removes every history item', lambda: not history())
+        self.check('Clear removes clipboard history in ' + theme, history() == [])
+        time.sleep(0.2); self.capture(f'clipboard-{theme}-empty'); self.key('esc'); focused()
+        self.key('ctrl', 'l'); self.key('ctrl', 'a'); self.type('333'); self.key('ret')
+        self.wait('Calculator prepares a copy after Clear', lambda: 'result=333' in self.run('cat ' + logfile))
+        self.key('ctrl', 'c')
+        self.wait('copy after Clear starts new history', lambda: bool(history()))
+        opened('History', 'meta_l', 'v'); self.key('meta_l', 'l')
+        self.wait('locking closes the clipboard overlay', lambda: self.snapshot().get('locked'))
+        self.check('lock clears clipboard history', history() == [])
+        offset = len(self.shell_log())
+        self.key('meta_l', 'v'); self.key('meta_l', 'dot')
+        time.sleep(0.2)
+        self.check('both picker chords are refused while locked',
+                   'SHELL picker open=true' not in self.shell_log()[offset:])
+        self.unlock(); self.wait('picker check unlocks', lambda: not self.snapshot().get('locked'))
+        self.check('unlock does not recapture the old clipboard', history() == [])
+        focused(); self.key('ctrl', 'q')
+        self.wait('clipboard Calculator closes', lambda:
+                  not any(c['class'] == app_class for c in self.snapshot()['clients']))
+
     def clipboard(self, mime, app_class='com.crowbaros.Viewer'):
         """Read the compositor's actual selection as another ordinary client."""
         person, home = self.person()
@@ -847,6 +945,7 @@ print(base64.b64encode(result.stdout).decode('ascii'))
         self.viewer_check('dark')
         self.calculator_check('dark')
         self.theme_studio_check('dark')
+        self.clipboard_picker_check('dark')
         self.check('fresh guest has no saved preferences', self.preferences() is None)
         self.click(680, 935)  # Terminal dock entry (Applications · Files · Chromium · Terminal · Settings).
         terminal = self.wait('terminal launched', lambda: next((c for c in self.snapshot()['clients'] if c['class'] == 'foot'), None))
@@ -1099,6 +1198,7 @@ for name, original in {original_files!r}.items():
         self.viewer_check('light')
         self.calculator_check('light')
         self.theme_studio_check('light')
+        self.clipboard_picker_check('light')
         log_offset = len(self.app_log())
         self.click(720, 935)
         self.wait('Settings restored Light after reboot', lambda: 'event=opened theme=Light' in self.app_log()[log_offset:])
