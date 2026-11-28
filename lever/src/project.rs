@@ -269,6 +269,16 @@ fn normalize_path(path: &Path, label: &str) -> Result<PathBuf, ProjectError> {
             other => out.push(other),
         }
     }
+    let Some(s) = out.to_str() else {
+        return Err(ProjectError::Invalid(format!(
+            "{label} resolves to a path that is not valid UTF-8."
+        )));
+    };
+    if s.chars().any(char::is_control) {
+        return Err(ProjectError::Invalid(format!(
+            "{label} resolves to a path containing a control character."
+        )));
+    }
     Ok(out)
 }
 
@@ -392,20 +402,47 @@ mod tests {
             trailing.join("my-app")
         );
 
-        // Non-UTF-8 directory names are omitted so every listed folder can
-        // round-trip through the UTF-8 JSON protocol.
+        // Control-character directory names are omitted from listings.
+        let ctrl = base.join("bad\tdir");
+        std::fs::create_dir_all(&ctrl).unwrap();
+        let listed_ctrl = list_subdirectories(Some(&base.to_string_lossy()), &base).unwrap();
+        assert!(
+            !listed_ctrl.entries.iter().any(|(n, _)| n.contains('\t')),
+            "control-char dir should be excluded: {:?}",
+            listed_ctrl.entries
+        );
+
+        // Non-UTF-8 directory names are omitted from listings, and symlinks
+        // that traverse into a non-UTF-8 path via `..` are rejected before any
+        // folder is created or returned to the picker.
         #[cfg(unix)]
         {
             use std::ffi::OsStr;
             use std::os::unix::ffi::OsStrExt;
             let bad = base.join(OsStr::from_bytes(b"bad-\xff-dir"));
-            if std::fs::create_dir_all(&bad).is_ok() {
+            let bad_sub = bad.join("sub");
+            if std::fs::create_dir_all(&bad_sub).is_ok() {
                 let listed = list_subdirectories(Some(&base.to_string_lossy()), &base).unwrap();
                 assert!(
                     !listed.entries.iter().any(|(n, _)| n.starts_with("bad-")),
                     "non-UTF-8 dir should be excluded: {:?}",
                     listed.entries
                 );
+                let sym = base.join("utf8-link");
+                std::os::unix::fs::symlink(&bad_sub, &sym).unwrap();
+                let via_link = format!("{}/..", sym.to_string_lossy());
+                assert!(matches!(
+                    resolve_exact_path(&via_link, &base),
+                    Err(ProjectError::Invalid(_))
+                ));
+                assert!(matches!(
+                    resolve_project_path("app", Some(&via_link), &base),
+                    Err(ProjectError::Invalid(_))
+                ));
+                assert!(matches!(
+                    list_subdirectories(Some(&via_link), &base),
+                    Err(ProjectError::Invalid(_))
+                ));
             }
         }
 

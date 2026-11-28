@@ -4815,4 +4815,67 @@ mod tests {
         assert!(tool_ids.contains(&"call_1".to_string()));
         assert_eq!(sub_ids, vec!["ses_child_1".to_string()]);
     }
+
+    #[test]
+    fn late_update_for_known_child_does_not_stamp_retired_turn() {
+        let cfg = HarnessConfig {
+            id: "cat-test".into(),
+            name: "cat-test".into(),
+            program: "/bin/cat".into(),
+            args: Vec::new(),
+            env: Vec::new(),
+            watch_paths: Vec::new(),
+        };
+        let mut harness = AcpHarness::spawn(&cfg, false).unwrap();
+        assert!(harness.bind_session("t1", "ses-root-1"));
+
+        let mut events = Vec::new();
+        // Register an earlier-turn direct child while the root session is live.
+        harness.handle_opencode_child_update(
+            Some(&json!({
+                "childSessionId": "ses-child-t1",
+                "rootSessionId": "ses-root-1",
+                "parentSessionId": "ses-root-1",
+                "title": "Earlier child",
+                "type": "status",
+                "status": "completed"
+            })),
+            &mut events,
+        );
+        assert_eq!(harness.retired_turn_of("ses-child-t1"), None);
+
+        // Detach the root session on Turn 2 (after a project move).
+        harness.detach_session("t1", Some(2));
+
+        // A late update for the already-known Turn 1 child must NOT stamp Turn 2 onto it.
+        harness.handle_opencode_child_update(
+            Some(&json!({
+                "childSessionId": "ses-child-t1",
+                "rootSessionId": "ses-root-1",
+                "parentSessionId": "ses-root-1",
+                "title": "Earlier child",
+                "type": "status",
+                "status": "completed"
+            })),
+            &mut events,
+        );
+        assert_eq!(harness.retired_turn_of("ses-child-t1"), None);
+
+        // By contrast, a brand-new delayed direct child first seen after detach gets Turn 2.
+        harness.handle_opencode_child_update(
+            Some(&json!({
+                "childSessionId": "ses-child-t2",
+                "rootSessionId": "ses-root-1",
+                "parentSessionId": "ses-root-1",
+                "title": "Delayed child",
+                "type": "status",
+                "status": "running"
+            })),
+            &mut events,
+        );
+        assert_eq!(harness.retired_turn_of("ses-child-t2"), Some(2));
+
+        let _ = harness.child.kill();
+        let _ = harness.child.wait();
+    }
 }

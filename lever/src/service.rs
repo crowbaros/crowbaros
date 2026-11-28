@@ -4026,17 +4026,24 @@ impl Service {
         let home = PathBuf::from(&home_str);
         match project::list_subdirectories(path, &home) {
             Ok(listing) => {
+                let Some(path_str) = listing.path.to_str() else {
+                    return error_outcome("invalid-request", "Folder resolves to a path that is not valid UTF-8.");
+                };
+                let parent = match listing.parent.as_deref() {
+                    Some(p) => p.to_str().map(str::to_string),
+                    None => None,
+                };
                 let entries: Vec<Value> = listing
                     .entries
                     .into_iter()
-                    .map(|(name, p)| json!({ "name": name, "path": p.to_string_lossy() }))
+                    .filter_map(|(name, p)| p.to_str().map(|ps| json!({ "name": name, "path": ps })))
                     .collect();
                 RequestOutcome {
                     reply: Some(json!({
                         "reply": "dirs",
-                        "path": listing.path.to_string_lossy(),
+                        "path": path_str,
                         "home": home_str,
-                        "parent": listing.parent.map(|p| p.to_string_lossy().into_owned()),
+                        "parent": parent,
                         "entries": entries,
                     })),
                     subscribe: None,
@@ -4260,8 +4267,13 @@ impl Service {
         from_active_turn: bool,
         log: &mut Log,
     ) -> Result<(String, bool, Vec<Broadcast>), (&'static str, String)> {
+        let Some(target_str) = target.to_str().map(str::to_string) else {
+            return Err((
+                "invalid-request",
+                "Project folder resolves to a path that is not valid UTF-8.".to_string(),
+            ));
+        };
         let created = project::ensure_project_dir(target).map_err(|e| (e.code(), e.message().to_string()))?;
-        let target_str = target.to_string_lossy().into_owned();
         if target_str == meta.cwd {
             return Ok((target_str, created, Vec::new()));
         }
