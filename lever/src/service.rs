@@ -341,11 +341,12 @@ pub struct Service {
     mcp_auth: String,
     /// Maps each opaque per-session MCP token to its owning Lever thread ID.
     mcp_sessions: HashMap<String, String>,
-    /// Threads that moved to a new project folder while a turn was in flight;
-    /// their old harness session stays mapped while idle so late outliving
-    /// subagents or harness continuations still route to the thread, and is
-    /// detached before the next turn or session-level control runs.
-    pending_session_resets: HashSet<String>,
+    /// Threads that moved to a new project folder while a turn was in flight,
+    /// mapped to the last turn number that ran on the pre-move session. The
+    /// old harness session stays mapped while idle so late outliving subagents
+    /// or harness continuations still route to the thread, and is detached
+    /// before the next turn or session-level control runs.
+    pending_session_resets: HashMap<String, Option<u64>>,
     harness: Option<AcpHarness>,
     watcher: Option<StoreWatcher>,
     discovery: Option<DiscoveryRunner>,
@@ -508,7 +509,7 @@ impl Service {
             tool_socket,
             mcp_auth: String::new(),
             mcp_sessions: HashMap::new(),
-            pending_session_resets: HashSet::new(),
+            pending_session_resets: HashMap::new(),
             harness: None,
             watcher,
             discovery,
@@ -1041,7 +1042,7 @@ impl Service {
             || self.modes_in_flight.iter().any(|(t, _)| t == thread_id)
             || self.loading_history.contains_key(thread_id)
             || (!self.working_turns.contains_key(thread_id)
-                && self.pending_session_resets.contains(thread_id)
+                && self.pending_session_resets.contains_key(thread_id)
                 && self.has_live_session_work(thread_id))
     }
 
@@ -1063,7 +1064,7 @@ impl Service {
     /// over: not one the person asked to stop, whose Stop must go through, and
     /// not one running on a pre-move session awaiting detach.
     fn harness_turn_to_take_over(&self, thread_id: &str) -> Option<u64> {
-        if self.pending_session_resets.contains(thread_id) {
+        if self.pending_session_resets.contains_key(thread_id) {
             return None;
         }
         self.harness_turn(thread_id).filter(|_| {
@@ -2587,7 +2588,7 @@ impl Service {
             Err(err) => return error_outcome("storage-error", &err),
         }
 
-        if !self.pending_session_resets.contains(thread_id)
+        if !self.pending_session_resets.contains_key(thread_id)
             && let Some(harness) = self.harness.as_mut()
             && harness.is_initialized()
             && let Some(session_id) = harness.session_for_thread(thread_id).map(str::to_string)
@@ -2621,11 +2622,7 @@ impl Service {
         if let Some(catalog) = self.model_catalog.clone()
             && !(catalog.supported && catalog.models.is_empty())
         {
-            let outcome = self.finish_set_model_with_catalog(thread_id, model, &catalog, log);
-            if outcome.reply.as_ref().is_some_and(|r| r["reply"] == "model-set") {
-                self.flush_pending_session_reset(thread_id);
-            }
-            return outcome;
+            return self.finish_set_model_with_catalog(thread_id, model, &catalog, log);
         }
 
         if self.harness.is_none()
@@ -2673,6 +2670,7 @@ impl Service {
             store_failed(log, &err);
             return error_outcome("storage-error", &err);
         }
+        self.flush_pending_session_reset(thread_id);
         // An effort is a level of one Model: another Model begins at its own.
         if !broadcasts.is_empty() {
             self.pending_effort_threads.remove(thread_id);
@@ -4179,13 +4177,16 @@ impl Service {
             }
         };
 
-        let in_flight = self.working_turns.get(&thread_id).is_some_and(|active| {
-            matches!(
-                active.dispatch,
-                TurnDispatch::PromptInFlight { .. } | TurnDispatch::HarnessStarted { .. }
-            )
-        });
-        if !in_flight {
+        let Some(active) = self.working_turns.get(&thread_id) else {
+            return mcp_error("Could not identify an active turn for this tool call.");
+        };
+        if active.stop_asked.is_some() {
+            return mcp_error("This turn was stopped; cannot make the thread into a project.");
+        }
+        if !matches!(
+            active.dispatch,
+            TurnDispatch::PromptInFlight { .. } | TurnDispatch::HarnessStarted { .. }
+        ) {
             return mcp_error("Could not identify an active turn for this tool call.");
         }
 
@@ -4287,12 +4288,17 @@ impl Service {
             active.handoff_pending = false;
         }
 
+        let retired_turn = self
+            .working_turns
+            .get(thread_id)
+            .map(|active| active.turn)
+            .or(meta.latest_turn);
         if from_active_turn && self.has_live_session_work(thread_id) {
-            self.pending_session_resets.insert(thread_id.to_string());
+            self.pending_session_resets.insert(thread_id.to_string(), retired_turn);
         } else {
             self.pending_session_resets.remove(thread_id);
             if let Some(harness) = self.harness.as_mut() {
-                harness.detach_session(thread_id);
+                harness.detach_session(thread_id, retired_turn);
             }
             self.mcp_sessions.retain(|_, tid| tid != thread_id);
         }
@@ -4312,15 +4318,15 @@ impl Service {
     /// remains on it. Returns `true` when no pre-move session remains attached
     /// (either none was pending or it was just detached).
     fn flush_pending_session_reset(&mut self, thread_id: &str) -> bool {
-        if !self.pending_session_resets.contains(thread_id) {
+        if !self.pending_session_resets.contains_key(thread_id) {
             return true;
         }
         if self.has_live_session_work(thread_id) {
             return false;
         }
-        self.pending_session_resets.remove(thread_id);
+        let retired_turn = self.pending_session_resets.remove(thread_id).flatten();
         if let Some(harness) = self.harness.as_mut() {
-            harness.detach_session(thread_id);
+            harness.detach_session(thread_id, retired_turn);
         }
         self.mcp_sessions.retain(|_, tid| tid != thread_id);
         true
@@ -4345,7 +4351,7 @@ impl Service {
         // reset before inserting the new turn, and `session_change_pending`
         // prevents starting a turn while pre-move subagents/requests/steers
         // remain live.
-        if self.pending_session_resets.contains(thread_id) {
+        if self.pending_session_resets.contains_key(thread_id) {
             let blocked = self.working_subagents.values().any(|s| s.thread_id == thread_id)
                 || self.waiting.values().any(|w| w.thread_id == thread_id)
                 || self.pending_steers.iter().any(|p| p.thread_id == thread_id);
@@ -4354,9 +4360,9 @@ impl Service {
                 "dispatch_turn reached with live work still holding pre-move session on {thread_id}"
             );
             if !blocked {
-                self.pending_session_resets.remove(thread_id);
+                let retired_turn = self.pending_session_resets.remove(thread_id).flatten();
                 if let Some(harness) = self.harness.as_mut() {
-                    harness.detach_session(thread_id);
+                    harness.detach_session(thread_id, retired_turn);
                 }
                 self.mcp_sessions.retain(|_, tid| tid != thread_id);
             }
@@ -6359,6 +6365,9 @@ impl Service {
             },
         };
         self.idle_since = None;
+        if let Some(slot) = self.pending_session_resets.get_mut(thread_id) {
+            *slot = Some(turn);
+        }
         if held && let Some(harness) = self.harness.as_mut() {
             harness.cancel_session(&session_id);
         }
@@ -6430,10 +6439,17 @@ impl Service {
     }
 
     /// The turn a subagent's update belongs to: a nested subagent's is the
-    /// turn of the subagent that launched it, whatever turn works now.
+    /// turn of the subagent that launched it, a delayed subagent from a
+    /// retired pre-move session keeps that session's turn, and otherwise the
+    /// thread's current or latest turn.
     fn turn_for_subagent(&self, thread_id: &str, harness_subagent_id: &str) -> Option<u64> {
         self.launcher(thread_id, harness_subagent_id)
             .map(|s| s.turn)
+            .or_else(|| {
+                self.harness
+                    .as_ref()
+                    .and_then(|h| h.retired_turn_of(harness_subagent_id))
+            })
             .or_else(|| self.turn_for_update(thread_id))
     }
 

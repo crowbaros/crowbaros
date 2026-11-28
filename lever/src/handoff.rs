@@ -65,30 +65,62 @@ pub fn render_thread_handoff(
     let rendered: Vec<String> = prior.iter().map(|t| format_turn(t)).collect();
     let mut selected = vec![false; prior.len()];
 
-    // Always try to include the newest turn first (truncating if even one turn
-    // exceeds the whole budget), then the first turn (the original goal), then
-    // fill backwards from newest to oldest.
+    // Reserve room for the opening turn (original goal) and the newest turn
+    // (preserving the newest turn's person prompt even when its answer is huge),
+    // then fill backwards from newest to oldest within the remaining budget.
     let newest = prior.len() - 1;
     let mut entries: Vec<Option<String>> = vec![None; prior.len()];
 
-    let newest_sep = 1; // leading '\n'
-    if rendered[newest].len() + newest_sep <= remaining {
-        remaining -= rendered[newest].len() + newest_sep;
-        selected[newest] = true;
-        entries[newest] = Some(rendered[newest].clone());
-    } else if remaining > newest_sep + 32 {
-        let truncated = truncate_tail(&rendered[newest], remaining - newest_sep);
-        remaining = 0;
-        selected[newest] = true;
-        entries[newest] = Some(truncated);
-    }
-
-    if prior.len() > 1 && remaining > 0 {
-        let first_cost = rendered[0].len() + 2;
-        if first_cost <= remaining {
-            remaining -= first_cost;
+    if prior.len() == 1 {
+        let newest_sep = 1; // leading '\n'
+        if rendered[0].len() + newest_sep <= remaining {
+            remaining -= rendered[0].len() + newest_sep;
             selected[0] = true;
             entries[0] = Some(rendered[0].clone());
+        } else if remaining > newest_sep + 32 {
+            let fitted = fit_turn_in_budget(prior[0], remaining - newest_sep);
+            remaining = 0;
+            selected[0] = true;
+            entries[0] = Some(fitted);
+        }
+    } else {
+        let first_sep = 1; // leading '\n'
+        let newest_sep = 2; // "\n\n" between opening and newest
+        if rendered[0].len() + first_sep + rendered[newest].len() + newest_sep <= remaining {
+            remaining -= rendered[0].len() + first_sep + rendered[newest].len() + newest_sep;
+            selected[0] = true;
+            entries[0] = Some(rendered[0].clone());
+            selected[newest] = true;
+            entries[newest] = Some(rendered[newest].clone());
+        } else {
+            // Both cannot fit in full: preserve the opening goal first (up to a
+            // third of the budget, or its full length if smaller), then give the
+            // rest of the budget to the newest turn while keeping its Person line.
+            let pair_budget = remaining.saturating_sub(first_sep + newest_sep);
+            if pair_budget > 64 {
+                let first_cap = rendered[0].len().min((pair_budget / 3).max(128).min(pair_budget / 2));
+                let first_entry = if rendered[0].len() <= first_cap {
+                    rendered[0].clone()
+                } else {
+                    fit_turn_in_budget(prior[0], first_cap)
+                };
+                let newest_cap = pair_budget.saturating_sub(first_entry.len());
+                let newest_entry = if rendered[newest].len() <= newest_cap {
+                    rendered[newest].clone()
+                } else {
+                    fit_turn_in_budget(prior[newest], newest_cap)
+                };
+                remaining = pair_budget.saturating_sub(first_entry.len() + newest_entry.len());
+                selected[0] = true;
+                entries[0] = Some(first_entry);
+                selected[newest] = true;
+                entries[newest] = Some(newest_entry);
+            } else if remaining > first_sep + 32 {
+                let fitted = fit_turn_in_budget(prior[newest], remaining - first_sep);
+                remaining = 0;
+                selected[newest] = true;
+                entries[newest] = Some(fitted);
+            }
         }
     }
 
@@ -146,26 +178,38 @@ pub fn render_thread_handoff(
     Some(out)
 }
 
-fn format_turn(turn: &TurnRecord) -> String {
-    let mut lines = Vec::new();
-    lines.push(format!("[Turn {}]", turn.turn));
+fn format_turn_parts(turn: &TurnRecord, max_prompt_bytes: Option<usize>) -> (String, String) {
+    let mut head = Vec::new();
+    head.push(format!("[Turn {}]", turn.turn));
     if turn.origin.as_deref() == Some("harness") {
-        lines.push("Origin: harness continuation".to_string());
+        head.push("Origin: harness continuation".to_string());
     } else if !turn.message.trim().is_empty() {
-        lines.push(format!("Person: {}", neutralize_tags(turn.message.trim())));
+        let text = neutralize_tags(turn.message.trim());
+        let text = match max_prompt_bytes {
+            Some(cap) => truncate_head(&text, cap),
+            None => text,
+        };
+        head.push(format!("Person: {text}"));
     }
     for steer in &turn.steered {
         if !steer.text.trim().is_empty() {
-            lines.push(format!("Person (steered): {}", neutralize_tags(steer.text.trim())));
+            let text = neutralize_tags(steer.text.trim());
+            let text = match max_prompt_bytes {
+                Some(cap) => truncate_head(&text, cap),
+                None => text,
+            };
+            head.push(format!("Person (steered): {text}"));
         }
     }
+
+    let mut body = Vec::new();
     if !turn.acts.is_empty() {
         for act in &turn.acts {
-            lines.push(neutralize_tags(&format_act(act)));
+            body.push(neutralize_tags(&format_act(act)));
         }
     }
     if !turn.answer.trim().is_empty() {
-        lines.push(format!("Agent: {}", neutralize_tags(turn.answer.trim())));
+        body.push(format!("Agent: {}", neutralize_tags(turn.answer.trim())));
     }
     for sub in &turn.subagents {
         let title = neutralize_tags(sub.title.trim());
@@ -183,15 +227,15 @@ fn format_turn(turn: &TurnRecord) -> String {
         if !answers.is_empty() {
             let joined = answers.join("\n");
             let capped = truncate_head(&joined, MAX_SUBAGENT_ANSWER_BYTES);
-            lines.push(format!("{header} {capped}"));
+            body.push(format!("{header} {capped}"));
         } else if let Some(err) = sub.error.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            lines.push(format!("{header} error: {}", neutralize_tags(err)));
+            body.push(format!("{header} error: {}", neutralize_tags(err)));
         } else if let Some(prompt) = sub
             .messages
             .iter()
             .find(|m| m.role == "prompt" && !m.text.trim().is_empty())
         {
-            lines.push(format!(
+            body.push(format!(
                 "{header} {}",
                 neutralize_tags(&compact_single_line(prompt.text.trim(), MAX_ACT_DETAIL_BYTES))
             ));
@@ -201,13 +245,47 @@ fn format_turn(turn: &TurnRecord) -> String {
         "done" | "working" => {}
         "failed" => match turn.error.as_deref() {
             Some(err) if !err.trim().is_empty() => {
-                lines.push(format!("State: failed ({})", neutralize_tags(err.trim())))
+                body.push(format!("State: failed ({})", neutralize_tags(err.trim())))
             }
-            _ => lines.push("State: failed".to_string()),
+            _ => body.push("State: failed".to_string()),
         },
-        other => lines.push(format!("State: {other}")),
+        other => body.push(format!("State: {other}")),
     }
-    lines.join("\n")
+    (head.join("\n"), body.join("\n"))
+}
+
+fn format_turn(turn: &TurnRecord) -> String {
+    let (head, body) = format_turn_parts(turn, None);
+    if body.is_empty() {
+        head
+    } else {
+        format!("{head}\n{body}")
+    }
+}
+
+/// Fits a single turn within `max_bytes`, keeping its `[Turn N]` header and
+/// `Person:` message intact ahead of a tail-truncated answer body.
+fn fit_turn_in_budget(turn: &TurnRecord, max_bytes: usize) -> String {
+    let full = format_turn(turn);
+    if full.len() <= max_bytes {
+        return full;
+    }
+    let prompt_cap = (max_bytes / 2).max(64);
+    let (head, body) = format_turn_parts(turn, Some(prompt_cap));
+    if head.len() >= max_bytes {
+        return truncate_head(&head, max_bytes);
+    }
+    if body.is_empty() {
+        return head;
+    }
+    let body_budget = max_bytes.saturating_sub(head.len() + 1);
+    if body_budget <= 16 {
+        return head;
+    }
+    let fitted_body = truncate_tail(&body, body_budget);
+    let out = format!("{head}\n{fitted_body}");
+    debug_assert!(out.len() <= max_bytes);
+    out
 }
 
 /// Neutralizes literal `<thread-history>` / `</thread-history>` tags inside
@@ -468,6 +546,30 @@ mod tests {
         assert!(capped.len() <= 2048);
         assert!(capped.contains("KEEP_OPENING_GOAL"), "{capped}");
         assert!(capped.contains("Parent reply."), "{capped}");
-        assert!(capped.contains("..."), "{capped}");
+        assert!(
+            !capped.contains(&"z".repeat(MAX_SUBAGENT_ANSWER_BYTES + 64)),
+            "subagent answer was not capped: {capped}"
+        );
+    }
+
+    #[test]
+    fn oversized_newest_answer_preserves_opening_goal_and_latest_person_message() {
+        let t1 = sample_turn(1, "ORIGINAL_GOAL_TOKEN", "Sounds good, let's build it.");
+        let huge_answer = format!("{} FINAL_ANSWER_TAIL", "x".repeat(36 * 1024));
+        let t2 = sample_turn(2, "LATEST_ASK_TOKEN", &huge_answer);
+        let rec = sample_record(vec![t1, t2]);
+
+        let rendered = render_thread_handoff(&rec, "/home/person/Projects/demo", None, MAX_HANDOFF_BYTES).unwrap();
+        assert!(rendered.len() <= MAX_HANDOFF_BYTES, "len {}", rendered.len());
+        assert!(rendered.contains("ORIGINAL_GOAL_TOKEN"), "{rendered}");
+        assert!(rendered.contains("LATEST_ASK_TOKEN"), "{rendered}");
+        assert!(rendered.contains("FINAL_ANSWER_TAIL"), "{rendered}");
+
+        // Also check tight cap (2 KiB) where both turns must coexist cleanly.
+        let tight = render_thread_handoff(&rec, "/home/person/Projects/demo", None, 2048).unwrap();
+        assert!(tight.len() <= 2048, "len {}", tight.len());
+        assert!(tight.contains("ORIGINAL_GOAL_TOKEN"), "{tight}");
+        assert!(tight.contains("LATEST_ASK_TOKEN"), "{tight}");
+        assert!(tight.contains("FINAL_ANSWER_TAIL"), "{tight}");
     }
 }

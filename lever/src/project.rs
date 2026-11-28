@@ -51,21 +51,16 @@ pub fn validate_name(raw: &str) -> Result<&str, ProjectError> {
     Ok(trimmed)
 }
 
-/// Expands a leading `~` or `~/` against `home`, then normalizes `.` and `..`
-/// (resolving existing symlinks before traversing `..` so the result matches
-/// real filesystem traversal). Requires an absolute path after expansion and
-/// rejects control characters.
-pub fn expand_absolute_path(raw: &str, home: &Path, label: &str) -> Result<PathBuf, ProjectError> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
+fn expand_tilde_candidate(candidate: &str, home: &Path, label: &str) -> Result<PathBuf, ProjectError> {
+    if candidate.is_empty() {
         return Err(ProjectError::Invalid(format!("{label} must not be empty.")));
     }
-    if trimmed.chars().any(char::is_control) {
+    if candidate.chars().any(char::is_control) {
         return Err(ProjectError::Invalid(format!("{label} contains an invalid character.")));
     }
-    let expanded = if trimmed == "~" {
+    let expanded = if candidate == "~" {
         home.to_path_buf()
-    } else if let Some(rest) = trimmed.strip_prefix("~/") {
+    } else if let Some(rest) = candidate.strip_prefix("~/") {
         // Strip repeated slashes after `~/` so `~//Code` stays under `home`
         // instead of `PathBuf::join` replacing `home` with `/Code`.
         let relative = rest.trim_start_matches('/');
@@ -74,18 +69,39 @@ pub fn expand_absolute_path(raw: &str, home: &Path, label: &str) -> Result<PathB
         } else {
             home.join(relative)
         }
-    } else if trimmed.starts_with('~') {
+    } else if candidate.starts_with('~') {
         return Err(ProjectError::Invalid(format!(
             "{label} must be an absolute path or start with ~/."
         )));
     } else {
-        PathBuf::from(trimmed)
+        PathBuf::from(candidate)
     };
     if !expanded.is_absolute() {
         return Err(ProjectError::Invalid(format!(
             "{label} must be an absolute path or start with ~/."
         )));
     }
+    Ok(expanded)
+}
+
+/// Expands a leading `~` or `~/` against `home`, then normalizes `.` and `..`
+/// (resolving existing symlinks before traversing `..` so the result matches
+/// real filesystem traversal). Requires an absolute path after expansion and
+/// rejects control characters. Preserves trailing spaces when they refer to an
+/// existing filesystem entry (such as a folder clicked in the picker).
+pub fn expand_absolute_path(raw: &str, home: &Path, label: &str) -> Result<PathBuf, ProjectError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ProjectError::Invalid(format!("{label} must not be empty.")));
+    }
+    let expanded = if raw != trimmed
+        && let Ok(exact) = expand_tilde_candidate(raw, home, label)
+        && std::fs::symlink_metadata(&exact).is_ok()
+    {
+        exact
+    } else {
+        expand_tilde_candidate(trimmed, home, label)?
+    };
     let normalized = normalize_path(&expanded, label)?;
     if !normalized.is_absolute() {
         return Err(ProjectError::Invalid(format!("{label} must be an absolute path.")));
@@ -122,7 +138,7 @@ pub struct DirListing {
 /// walking up to the nearest existing ancestor directory when `raw` does not
 /// exist yet. Capped at 64 entries so a huge directory cannot flood the UI.
 pub fn list_subdirectories(raw: Option<&str>, home: &Path) -> Result<DirListing, ProjectError> {
-    let start = match raw.map(str::trim).filter(|s| !s.is_empty()) {
+    let start = match raw.filter(|s| !s.trim().is_empty()) {
         Some(p) => expand_absolute_path(p, home, "Folder")?,
         None => normalize_path(home, "Folder")?,
     };
@@ -353,6 +369,20 @@ mod tests {
         assert!(names.contains(&"link"));
         assert!(!names.contains(&".secret"));
         assert!(!names.contains(&"file.txt"));
+
+        // Sibling directories differing only by a trailing space remain distinct.
+        let plain = base.join("notes");
+        let trailing = base.join("notes ");
+        std::fs::create_dir_all(plain.join("plain-child")).unwrap();
+        std::fs::create_dir_all(trailing.join("spaced-child")).unwrap();
+        let listed = list_subdirectories(Some(&trailing.to_string_lossy()), &base).unwrap();
+        assert_eq!(listed.path, trailing);
+        let child_names: Vec<&str> = listed.entries.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(child_names, vec!["spaced-child"]);
+        assert_eq!(
+            resolve_exact_path(&trailing.to_string_lossy(), &base).unwrap(),
+            trailing
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }

@@ -358,6 +358,7 @@ pub enum AcpEvent {
 enum PendingRpc {
     DeleteSession {
         thread_id: String,
+        session_id: String,
     },
     Initialize,
     ProbeModels,
@@ -480,11 +481,14 @@ pub struct AcpHarness {
     session_gen: HashMap<String, u64>,
     thread_to_session: HashMap<String, String>,
     session_to_thread: HashMap<String, String>,
-    /// Pre-move root session IDs detached from a thread, kept until the thread
-    /// is forgotten/deleted or the ID is reassigned so late subagent updates
-    /// from the old session still route to the thread even if a queued turn has
-    /// already started in the new project folder.
-    retired_root_to_thread: HashMap<String, String>,
+    /// Pre-move root session IDs detached from a thread, kept with the turn
+    /// number that last ran on that session until the thread is forgotten or
+    /// the session ID is deleted/reassigned, so late subagent updates from the
+    /// old session still route to the thread and attach to their original turn.
+    retired_root_to_thread: HashMap<String, (String, Option<u64>)>,
+    /// Original turn number recorded for a subagent routed from a retired
+    /// pre-move session.
+    child_retired_turn: HashMap<String, u64>,
     session_models: HashMap<String, String>,
     /// Each session's effort selector, when its Model has effort levels.
     session_efforts: HashMap<String, EffortSelector>,
@@ -625,6 +629,7 @@ impl AcpHarness {
             thread_to_session: HashMap::new(),
             session_to_thread: HashMap::new(),
             retired_root_to_thread: HashMap::new(),
+            child_retired_turn: HashMap::new(),
             session_models: HashMap::new(),
             session_efforts: HashMap::new(),
             probe_sessions: VecDeque::new(),
@@ -697,9 +702,10 @@ impl AcpHarness {
     /// Detaches a thread's active harness session (for instance when the thread
     /// moved to a new project folder) and closes it on the harness when
     /// supported so subsequent turns open a fresh session in the new folder.
-    /// Keeps the retired root session ID mapped for late subagent updates until
-    /// the thread is forgotten/deleted or the session ID is reassigned.
-    pub fn detach_session(&mut self, thread_id: &str) {
+    /// Keeps the retired root session ID mapped (with its last turn number) for
+    /// late subagent updates until the thread is forgotten/deleted or the
+    /// session ID is reassigned.
+    pub fn detach_session(&mut self, thread_id: &str, retired_turn: Option<u64>) {
         let entry = self.session_gen.entry(thread_id.to_string()).or_insert(0);
         *entry = entry.wrapping_add(1);
         self.transport_failures.remove(thread_id);
@@ -709,7 +715,8 @@ impl AcpHarness {
             self.session_models.remove(&sid);
             self.session_modes.remove(&sid);
             self.session_efforts.remove(&sid);
-            self.retired_root_to_thread.insert(sid.clone(), thread_id.to_string());
+            self.retired_root_to_thread
+                .insert(sid.clone(), (thread_id.to_string(), retired_turn));
             if self.supports_close_session {
                 let close = CloseSessionRequest::new(SessionId::new(sid));
                 let id = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
@@ -717,6 +724,12 @@ impl AcpHarness {
                 let _ = self.on_writable();
             }
         }
+    }
+
+    /// Original turn number of a subagent routed from a retired pre-move
+    /// session, if any.
+    pub fn retired_turn_of(&self, child_session_id: &str) -> Option<u64> {
+        self.child_retired_turn.get(child_session_id).copied()
     }
 
     /// Session IDs Lever opened as short-lived probes (for Models or efforts),
@@ -765,8 +778,9 @@ impl AcpHarness {
             self.child_titles.remove(&cid);
             self.child_prompts.remove(&cid);
             self.child_launchers.remove(&cid);
+            self.child_retired_turn.remove(&cid);
         }
-        self.retired_root_to_thread.retain(|_, owner| owner != thread_id);
+        self.retired_root_to_thread.retain(|_, (owner, _)| owner != thread_id);
         self.pending_subagent_calls
             .retain(|_, call| call.thread_id != thread_id);
     }
@@ -775,7 +789,6 @@ impl AcpHarness {
         if !self.supports_delete_session {
             return false;
         }
-        self.retired_root_to_thread.remove(session_id);
         let id = self.send_request(
             AGENT_METHOD_NAMES.session_delete,
             &agent_client_protocol_schema::v1::DeleteSessionRequest::new(session_id.to_string()),
@@ -784,6 +797,7 @@ impl AcpHarness {
             id,
             PendingRpc::DeleteSession {
                 thread_id: thread_id.into(),
+                session_id: session_id.into(),
             },
         );
         true
@@ -1638,7 +1652,7 @@ impl AcpHarness {
                 .unwrap_or_else(|| "The harness reported an error.".to_string());
             let no_models = is_no_models_error(err_val, &raw_msg);
             match pending {
-                PendingRpc::DeleteSession { thread_id } => {
+                PendingRpc::DeleteSession { thread_id, .. } => {
                     let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
                     events.push(AcpEvent::SessionDeleted {
                         thread_id,
@@ -1780,7 +1794,8 @@ impl AcpHarness {
 
         let result = value.get("result").cloned().unwrap_or(Value::Null);
         match pending {
-            PendingRpc::DeleteSession { thread_id } => {
+            PendingRpc::DeleteSession { thread_id, session_id } => {
+                self.retired_root_to_thread.remove(&session_id);
                 events.push(AcpEvent::SessionDeleted {
                     thread_id,
                     result: Ok(()),
@@ -2477,6 +2492,7 @@ impl AcpHarness {
         };
         let root_sid = obj.get("rootSessionId").and_then(Value::as_str);
         let parent_sid = obj.get("parentSessionId").and_then(Value::as_str);
+        let mut retired_turn: Option<u64> = None;
         let thread_id = self
             .child_to_thread
             .get(child_sid)
@@ -2490,8 +2506,22 @@ impl AcpHarness {
                         .cloned()
                 })
             })
-            .or_else(|| root_sid.and_then(|s| self.retired_root_to_thread.get(s).cloned()))
-            .or_else(|| parent_sid.and_then(|s| self.retired_root_to_thread.get(s).cloned()));
+            .or_else(|| {
+                root_sid.and_then(|s| {
+                    self.retired_root_to_thread.get(s).map(|(tid, turn)| {
+                        retired_turn = *turn;
+                        tid.clone()
+                    })
+                })
+            })
+            .or_else(|| {
+                parent_sid.and_then(|s| {
+                    self.retired_root_to_thread.get(s).map(|(tid, turn)| {
+                        retired_turn = *turn;
+                        tid.clone()
+                    })
+                })
+            });
         let Some(thread_id) = thread_id else {
             return;
         };
@@ -2505,6 +2535,13 @@ impl AcpHarness {
             .filter(|s| !s.is_empty());
         if !self.register_child(&thread_id, child_sid, title) {
             return;
+        }
+        if let Some(turn) = retired_turn {
+            self.child_retired_turn.entry(child_sid.to_string()).or_insert(turn);
+        } else if let Some(parent) = parent_sid
+            && let Some(&turn) = self.child_retired_turn.get(parent)
+        {
+            self.child_retired_turn.entry(child_sid.to_string()).or_insert(turn);
         }
         // A child of another of the thread's subagents was launched by it,
         // though the launcher has yet to name it.
@@ -3006,7 +3043,7 @@ impl AcpHarness {
             ids.extend(
                 self.retired_root_to_thread
                     .iter()
-                    .filter(|(_, owner)| owner.as_str() == tid)
+                    .filter(|(_, (owner, _))| owner.as_str() == tid)
                     .map(|(sid, _)| sid.as_str()),
             );
             if let Some(tools) = self.thread_tool_ids.get(tid) {

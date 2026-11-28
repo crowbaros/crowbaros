@@ -12795,6 +12795,24 @@ fn partial_delete_retries_only_remaining_session_and_warns_on_missing_retired() 
         let ok = read_until(&mut client, |f| f["reply"] == "deleted");
         assert!(ok["warning"].as_str().is_some(), "warning must survive retry: {ok}");
 
+        let rpc_log = std::fs::read_to_string(&rpc_log_path).unwrap();
+        let deleted_sids: Vec<String> = rpc_log
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["method"] == "session/delete")
+            .filter_map(|v| v["params"]["sessionId"].as_str().map(str::to_string))
+            .collect();
+        assert_eq!(
+            deleted_sids,
+            vec![
+                "ses-both-1".to_string(),
+                "ses-both-2".to_string(),
+                "ses-both-1".to_string(),
+                "ses-both-2".to_string(),
+            ],
+            "retry must re-attempt unresolved retired session: {deleted_sids:?}"
+        );
+
         lever.signal(libc::SIGTERM);
         assert_eq!(lever.wait().code(), Some(0));
     }
@@ -12877,10 +12895,20 @@ fn queued_message_draining_after_move_still_routes_delayed_old_session_subagent(
                 .as_str()
                 .is_some_and(|t| t.contains("LATE_QUEUED_CHILD_RESULT"))
         {
+            assert_eq!(
+                f["turn"], 1,
+                "delayed old-session subagent-text must belong to Turn 1, not Turn 2: {f}"
+            );
             saw_subagent_text = true;
         }
-        if f["event"] == "subagent" && f["state"] == "done" {
-            saw_subagent_done = true;
+        if f["event"] == "subagent" {
+            assert_eq!(
+                f["turn"], 1,
+                "delayed old-session subagent event must belong to Turn 1, not Turn 2: {f}"
+            );
+            if f["state"] == "done" {
+                saw_subagent_done = true;
+            }
         }
         if f["event"] == "done" && f["turn"] == 2 {
             saw_turn2_done = true;
@@ -12891,6 +12919,185 @@ fn queued_message_draining_after_move_still_routes_delayed_old_session_subagent(
         "{turn2_text}"
     );
     assert!(saw_subagent_text, "late subagent text was not routed");
+
+    // Verify saved record also records the delayed subagent under Turn 1 only.
+    write_frame(&mut client, &json!({ "op": "resume", "thread": tid })).unwrap();
+    let resumed = read_until(&mut client, |f| f["reply"] == "resumed");
+    let turn1_subs = resumed["turns"][0]["subagents"].as_array().unwrap();
+    let turn2_subs = resumed["turns"][1]["subagents"].as_array().unwrap();
+    assert_eq!(turn1_subs.len(), 1, "expected delayed subagent on Turn 1: {resumed}");
+    assert_eq!(turn1_subs[0]["title"], "Delayed helper");
+    assert!(
+        turn2_subs.is_empty(),
+        "Turn 2 must not own Turn 1's subagent: {resumed}"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn mcp_make_project_rejected_after_stop_leaves_folder_and_thread_unchanged() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "stop-before-mcp",
+                    "ignore_cancel": true,
+                    "steps": [
+                        { "kind": "pause_ms", "ms": 300 },
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_after_stop",
+                            "tool": "make_project",
+                            "arguments": { "name": "proj-after-stop" },
+                            "reply": "MCP_AFTER_STOP={mcp_result}"
+                        }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let rpc_log_path = dir.0.join("rpc.jsonl");
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log_path), None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    write_frame(&mut client, &json!({ "op": "send", "text": "stop-before-mcp" })).unwrap();
+    let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+
+    // Wait until `session/prompt` is in flight, then send Stop before the MCP call fires.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let prompt_sent = std::fs::read_to_string(&rpc_log_path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .any(|v| v["method"] == "session/prompt");
+        if prompt_sent {
+            break;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for session/prompt");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    write_frame(&mut client, &json!({ "op": "stop", "thread": tid })).unwrap();
+    let _ = read_until(&mut client, |f| {
+        (f["event"] == "done" || f["event"] == "stopped") && f["turn"] == 1
+    });
+
+    // Neither the folder on disk nor the thread's cwd may have changed.
+    assert!(
+        !home.join("Projects").join("proj-after-stop").exists(),
+        "make_project created folder after Stop"
+    );
+    write_frame(&mut client, &json!({ "op": "resume", "thread": tid })).unwrap();
+    let resumed = read_until(&mut client, |f| f["reply"] == "resumed");
+    assert_eq!(
+        resumed["cwd"].as_str().unwrap(),
+        home.to_string_lossy(),
+        "thread cwd changed after Stop: {resumed}"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn failed_delete_and_rejected_model_preserve_pending_session_reset() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "delete_session": false,
+            "models": [
+                { "id": "stub/model-a", "name": "Model A" },
+                { "id": "stub/model-b", "name": "Model B" }
+            ],
+            "turns": [
+                {
+                    "match": "check-cwd",
+                    "steps": [{ "kind": "text", "text": "CWD={cwd}" }]
+                },
+                {
+                    "match": "move-mid-turn",
+                    "steps": [
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_mid_move",
+                            "tool": "make_project",
+                            "arguments": { "name": "proj-keep-reset" },
+                            "reply": "MOVED={mcp_result}"
+                        }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let rpc_log_path = dir.0.join("rpc.jsonl");
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log_path), None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    // Turn 1 moves mid-turn, leaving `pending_session_resets` populated while idle.
+    write_frame(&mut client, &json!({ "op": "send", "text": "move-mid-turn" })).unwrap();
+    let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 1);
+
+    // 1. A rejected `set-model` must NOT flush the pending reset or send `session/close`.
+    write_frame(
+        &mut client,
+        &json!({ "op": "set-model", "thread": tid, "model": "stub/nonexistent" }),
+    )
+    .unwrap();
+    let bad_model = read_until(&mut client, |f| f.get("reply").is_some());
+    assert_eq!(bad_model["code"], "invalid-model", "{bad_model}");
+    let rpc_after_bad = std::fs::read_to_string(&rpc_log_path).unwrap();
+    assert!(
+        !rpc_after_bad.contains("session/close"),
+        "rejected set-model flushed pending reset early: {rpc_after_bad}"
+    );
+
+    // 2. A failed SQLite `delete` must NOT clear `pending_session_resets` so
+    // the next turn still detaches the old session and runs in the new project.
+    let db = rusqlite::Connection::open(lever.state.join("lever.sqlite")).unwrap();
+    refuse_writes(&db, "DELETE ON threads");
+    write_frame(&mut client, &json!({ "op": "delete", "thread": tid })).unwrap();
+    let del_err = read_until(&mut client, |f| f.get("reply").is_some());
+    assert_eq!(del_err["code"], "storage-error", "{del_err}");
+    db.execute_batch("DROP TRIGGER refused").unwrap();
+
+    let proj = home.join("Projects").join("proj-keep-reset");
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "check-cwd" }),
+    )
+    .unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let mut turn2 = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" {
+            turn2.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["turn"] == 2 {
+            break;
+        }
+    }
+    assert!(
+        turn2.contains(&format!("CWD={}", proj.display())),
+        "next turn reused old folder after failed delete: {turn2}"
+    );
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
