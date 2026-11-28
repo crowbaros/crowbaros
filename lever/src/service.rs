@@ -1788,15 +1788,15 @@ impl Service {
     }
 
     fn delete_record(&mut self, thread: &str, warning: Option<&str>) -> RequestOutcome {
+        if let Err(e) = self.store.delete_thread(thread, unix_now()) {
+            return error_outcome("storage-error", &e);
+        }
         self.subagent_threads.remove(thread);
         self.held_stops.remove(thread);
         self.drain_wanted.remove(thread);
         self.pending_session_resets.remove(thread);
         self.mcp_sessions.retain(|_, tid| tid != thread);
         self.queued_prompts.retain(|_, (t, _)| t != thread);
-        if let Err(e) = self.store.delete_thread(thread, unix_now()) {
-            return error_outcome("storage-error", &e);
-        }
         if let Some(h) = self.harness.as_mut() {
             h.forget_session(thread);
         }
@@ -1841,33 +1841,16 @@ impl Service {
             if !self.pending_deletes[i].remaining.is_empty() {
                 return self.dispatch_deletes(log);
             }
-        } else if let Err(ref err) = result
-            && self.pending_deletes[i].in_flight.as_ref().is_some_and(|t| t.retired)
-        {
+        } else if result.is_err() && self.pending_deletes[i].in_flight.as_ref().is_some_and(|t| t.retired) {
             // A retired pre-move session that the harness cannot delete (for
             // instance already removed) warns rather than making the thread
-            // impossible to delete, and is marked deleted so retries move on.
-            let retired = self.pending_deletes[i].in_flight.take().unwrap();
-            let _ = log.write(
-                Event::Error,
-                &format!("could not delete retired session for {thread}: {err}"),
-            );
+            // impossible to delete. Leave its retirement row intact until
+            // `delete_record` commits so if deleting the current session also
+            // fails, a retry tries this session again and preserves the warning.
+            let _ = self.pending_deletes[i].in_flight.take();
+            let _ = log.write(Event::Error, "could not delete a retired harness session");
             self.pending_deletes[i].warning =
                 Some("Could not delete an earlier session on the harness; its copy may remain.".to_string());
-            if let Err(store_err) = self.store.mark_session_deleted(thread, &retired.session_id, unix_now()) {
-                store_failed(log, &store_err);
-                let pending = self.pending_deletes.remove(i);
-                let outcome = error_outcome("storage-error", &store_err);
-                self.refresh_idle_timer();
-                return Effects {
-                    broadcasts: outcome.broadcasts,
-                    replies: vec![PeerReply {
-                        peer_id: pending.peer_id,
-                        message: outcome.reply.unwrap(),
-                        subscribe: None,
-                    }],
-                };
-            }
             if !self.pending_deletes[i].remaining.is_empty() {
                 return self.dispatch_deletes(log);
             }
@@ -2604,12 +2587,8 @@ impl Service {
             Err(err) => return error_outcome("storage-error", &err),
         }
 
-        // If this thread moved to a new project while a previous turn was
-        // running, detach its pre-move session now so the new Model is stored
-        // for the fresh session rather than sent to the retired one.
-        self.flush_pending_session_reset(thread_id);
-
-        if let Some(harness) = self.harness.as_mut()
+        if !self.pending_session_resets.contains(thread_id)
+            && let Some(harness) = self.harness.as_mut()
             && harness.is_initialized()
             && let Some(session_id) = harness.session_for_thread(thread_id).map(str::to_string)
         {
@@ -2642,7 +2621,11 @@ impl Service {
         if let Some(catalog) = self.model_catalog.clone()
             && !(catalog.supported && catalog.models.is_empty())
         {
-            return self.finish_set_model_with_catalog(thread_id, model, &catalog, log);
+            let outcome = self.finish_set_model_with_catalog(thread_id, model, &catalog, log);
+            if outcome.reply.as_ref().is_some_and(|r| r["reply"] == "model-set") {
+                self.flush_pending_session_reset(thread_id);
+            }
+            return outcome;
         }
 
         if self.harness.is_none()

@@ -480,6 +480,11 @@ pub struct AcpHarness {
     session_gen: HashMap<String, u64>,
     thread_to_session: HashMap<String, String>,
     session_to_thread: HashMap<String, String>,
+    /// Pre-move root session IDs detached from a thread, kept until the thread
+    /// is forgotten/deleted or the ID is reassigned so late subagent updates
+    /// from the old session still route to the thread even if a queued turn has
+    /// already started in the new project folder.
+    retired_root_to_thread: HashMap<String, String>,
     session_models: HashMap<String, String>,
     /// Each session's effort selector, when its Model has effort levels.
     session_efforts: HashMap<String, EffortSelector>,
@@ -619,6 +624,7 @@ impl AcpHarness {
             session_gen: HashMap::new(),
             thread_to_session: HashMap::new(),
             session_to_thread: HashMap::new(),
+            retired_root_to_thread: HashMap::new(),
             session_models: HashMap::new(),
             session_efforts: HashMap::new(),
             probe_sessions: VecDeque::new(),
@@ -691,16 +697,25 @@ impl AcpHarness {
     /// Detaches a thread's active harness session (for instance when the thread
     /// moved to a new project folder) and closes it on the harness when
     /// supported so subsequent turns open a fresh session in the new folder.
+    /// Keeps the retired root session ID mapped for late subagent updates until
+    /// the thread is forgotten/deleted or the session ID is reassigned.
     pub fn detach_session(&mut self, thread_id: &str) {
-        let session_id = self.thread_to_session.get(thread_id).cloned();
-        self.forget_session(thread_id);
-        if let Some(sid) = session_id
-            && self.supports_close_session
-        {
-            let close = CloseSessionRequest::new(SessionId::new(sid));
-            let id = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
-            self.pending.insert(id, PendingRpc::CloseProbe);
-            let _ = self.on_writable();
+        let entry = self.session_gen.entry(thread_id.to_string()).or_insert(0);
+        *entry = entry.wrapping_add(1);
+        self.transport_failures.remove(thread_id);
+        let session_id = self.thread_to_session.remove(thread_id);
+        if let Some(sid) = session_id {
+            self.session_to_thread.remove(&sid);
+            self.session_models.remove(&sid);
+            self.session_modes.remove(&sid);
+            self.session_efforts.remove(&sid);
+            self.retired_root_to_thread.insert(sid.clone(), thread_id.to_string());
+            if self.supports_close_session {
+                let close = CloseSessionRequest::new(SessionId::new(sid));
+                let id = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
+                self.pending.insert(id, PendingRpc::CloseProbe);
+                let _ = self.on_writable();
+            }
         }
     }
 
@@ -710,6 +725,7 @@ impl AcpHarness {
     pub fn own_session_ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.probe_sessions.iter().cloned().collect();
         ids.extend(self.session_to_thread.keys().cloned());
+        ids.extend(self.retired_root_to_thread.keys().cloned());
         ids.extend(self.loading_sessions.iter().cloned());
         ids.extend(self.history_loads.keys().cloned());
         ids.extend(self.child_to_thread.keys().cloned());
@@ -750,6 +766,7 @@ impl AcpHarness {
             self.child_prompts.remove(&cid);
             self.child_launchers.remove(&cid);
         }
+        self.retired_root_to_thread.retain(|_, owner| owner != thread_id);
         self.pending_subagent_calls
             .retain(|_, call| call.thread_id != thread_id);
     }
@@ -758,6 +775,7 @@ impl AcpHarness {
         if !self.supports_delete_session {
             return false;
         }
+        self.retired_root_to_thread.remove(session_id);
         let id = self.send_request(
             AGENT_METHOD_NAMES.session_delete,
             &agent_client_protocol_schema::v1::DeleteSessionRequest::new(session_id.to_string()),
@@ -1186,6 +1204,7 @@ impl AcpHarness {
         {
             self.session_to_thread.remove(&before);
         }
+        self.retired_root_to_thread.remove(session_id);
         self.session_to_thread
             .insert(session_id.to_string(), thread_id.to_string());
         true
@@ -2470,7 +2489,9 @@ impl AcpHarness {
                         .or_else(|| self.child_to_thread.get(s))
                         .cloned()
                 })
-            });
+            })
+            .or_else(|| root_sid.and_then(|s| self.retired_root_to_thread.get(s).cloned()))
+            .or_else(|| parent_sid.and_then(|s| self.retired_root_to_thread.get(s).cloned()));
         let Some(thread_id) = thread_id else {
             return;
         };
@@ -2982,6 +3003,12 @@ impl AcpHarness {
         let mut ids: Vec<&str> = Vec::new();
         if let Some(tid) = thread_id {
             ids.extend(self.thread_to_session.get(tid).map(String::as_str));
+            ids.extend(
+                self.retired_root_to_thread
+                    .iter()
+                    .filter(|(_, owner)| owner.as_str() == tid)
+                    .map(|(sid, _)| sid.as_str()),
+            );
             if let Some(tools) = self.thread_tool_ids.get(tid) {
                 ids.extend(tools.iter().map(String::as_str));
             }
@@ -2990,6 +3017,7 @@ impl AcpHarness {
             }
         } else {
             ids.extend(self.session_to_thread.keys().map(String::as_str));
+            ids.extend(self.retired_root_to_thread.keys().map(String::as_str));
             ids.extend(self.child_to_thread.keys().map(String::as_str));
         }
         ids

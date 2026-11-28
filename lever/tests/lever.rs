@@ -12545,7 +12545,8 @@ fn stopping_first_project_turn_before_output_preserves_handoff() {
     );
 
     let uid = unsafe { libc::geteuid() };
-    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let rpc_log_path = dir.0.join("rpc.jsonl");
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log_path), None);
     let mut client = handshake(&lever.person);
     client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
 
@@ -12570,8 +12571,21 @@ fn stopping_first_project_turn_before_output_preserves_handoff() {
     )
     .unwrap();
     assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
-    // Give session/new + session/prompt a moment to reach the stalled turn.
-    std::thread::sleep(Duration::from_millis(100));
+    // Wait deterministically until Turn 2's `session/prompt` has actually been sent.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let prompt_count = std::fs::read_to_string(&rpc_log_path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["method"] == "session/prompt")
+            .count();
+        if prompt_count >= 2 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for Turn 2 session/prompt");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     write_frame(&mut client, &json!({ "op": "stop", "thread": tid })).unwrap();
     let _ = read_until(&mut client, |f| f["event"] == "stopped" && f["turn"] == 2);
 
@@ -12730,4 +12744,154 @@ fn partial_delete_retries_only_remaining_session_and_warns_on_missing_retired() 
         lever.signal(libc::SIGTERM);
         assert_eq!(lever.wait().code(), Some(0));
     }
+
+    // Part C: retired session fails permanently AND current session fails once;
+    // retry must still surface the warning for the unresolved retired session.
+    {
+        let dir = TempDir::new();
+        let home = dir.0.join("lever-home");
+        std::fs::create_dir_all(&home).unwrap();
+        let script = write_script(
+            &dir.0,
+            &json!({
+                "delete_session": true,
+                "session_prefix": "ses-both-",
+                "delete_fail_for": ["ses-both-1"],
+                "delete_fail_once_for": "ses-both-2",
+                "turns": [{ "steps": [{ "kind": "text", "text": "ok" }] }]
+            }),
+        );
+        let rpc_log_path = dir.0.join("rpc.jsonl");
+        let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log_path), None);
+        let mut client = handshake(&lever.person);
+        client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+        write_frame(&mut client, &json!({ "op": "send", "text": "turn 1" })).unwrap();
+        let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+        let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 1);
+
+        write_frame(
+            &mut client,
+            &json!({ "op": "make-project", "thread": tid, "name": "proj-both" }),
+        )
+        .unwrap();
+        assert_eq!(
+            read_until(&mut client, |f| f.get("reply").is_some())["reply"],
+            "project-made"
+        );
+
+        write_frame(&mut client, &json!({ "op": "send", "text": "turn 2", "thread": tid })).unwrap();
+        assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+        let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 2);
+
+        // First delete fails on `ses-both-2` after `ses-both-1` failed.
+        write_frame(&mut client, &json!({ "op": "delete", "thread": tid })).unwrap();
+        let err = read_until(&mut client, |f| f.get("reply").is_some());
+        assert_eq!(err["reply"], "error", "{err}");
+        assert_eq!(err["code"], "harness-error", "{err}");
+
+        // Retry still attempts `ses-both-1`, succeeds on `ses-both-2`, and keeps the warning.
+        write_frame(&mut client, &json!({ "op": "delete", "thread": tid })).unwrap();
+        let ok = read_until(&mut client, |f| f["reply"] == "deleted");
+        assert!(ok["warning"].as_str().is_some(), "warning must survive retry: {ok}");
+
+        lever.signal(libc::SIGTERM);
+        assert_eq!(lever.wait().code(), Some(0));
+    }
+}
+
+#[test]
+fn queued_message_draining_after_move_still_routes_delayed_old_session_subagent() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "queued-followup",
+                    "steps": [
+                        { "kind": "pause_ms", "ms": 300 },
+                        { "kind": "text", "text": "CWD={cwd}" }
+                    ]
+                },
+                {
+                    "match": "move-and-queue",
+                    "steps": [
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_q_move",
+                            "tool": "make_project",
+                            "arguments": { "name": "proj-queued" },
+                            "reply": "MOVED={mcp_result}"
+                        },
+                        { "kind": "pause_ms", "ms": 250 }
+                    ],
+                    "after": [
+                        { "kind": "pause_ms", "ms": 150 },
+                        { "kind": "subagent_start", "id": "ses_late_queued", "title": "Delayed helper" },
+                        { "kind": "subagent_text", "subagent": "ses_late_queued", "text": "LATE_QUEUED_CHILD_RESULT" },
+                        { "kind": "subagent_end", "subagent": "ses_late_queued", "status": "completed" }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    // Start Turn 1, wait until `make_project` broadcasts `thread-updated`, then
+    // queue a follow-up message while Turn 1 is still finishing its pause.
+    write_frame(&mut client, &json!({ "op": "send", "text": "move-and-queue" })).unwrap();
+    let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| {
+        f["event"] == "thread-updated" && f.get("cwd").is_some()
+    });
+
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "queued-followup" }),
+    )
+    .unwrap();
+    let q_reply = read_until(&mut client, |f| f.get("reply").is_some());
+    assert_eq!(q_reply["reply"], "queued", "{q_reply}");
+
+    // Turn 1 ends, queued Turn 2 drains immediately into `proj-queued`, AND the
+    // delayed old-session subagent arriving 150ms later must still route and complete.
+    let proj_q = home.join("Projects").join("proj-queued");
+    let mut saw_subagent_done = false;
+    let mut saw_subagent_text = false;
+    let mut saw_turn2_done = false;
+    let mut turn2_text = String::new();
+    while !(saw_subagent_done && saw_turn2_done) {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" && f["turn"] == 2 {
+            turn2_text.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "subagent-text"
+            && f["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("LATE_QUEUED_CHILD_RESULT"))
+        {
+            saw_subagent_text = true;
+        }
+        if f["event"] == "subagent" && f["state"] == "done" {
+            saw_subagent_done = true;
+        }
+        if f["event"] == "done" && f["turn"] == 2 {
+            saw_turn2_done = true;
+        }
+    }
+    assert!(
+        turn2_text.contains(&format!("CWD={}", proj_q.display())),
+        "{turn2_text}"
+    );
+    assert!(saw_subagent_text, "late subagent text was not routed");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
 }

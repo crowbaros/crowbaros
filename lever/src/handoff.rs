@@ -18,6 +18,10 @@ pub const MAX_HANDOFF_BYTES: usize = 32 * 1024;
 /// Maximum UTF-8 bytes kept for a single act's detail line inside a handoff.
 const MAX_ACT_DETAIL_BYTES: usize = 240;
 
+/// Maximum UTF-8 bytes kept for a single subagent's answer inside a handoff,
+/// so a verbose helper cannot crowd out the person's message or opening goal.
+const MAX_SUBAGENT_ANSWER_BYTES: usize = 1024;
+
 /// Renders prior turns of `record` (those strictly before `before_turn`, or
 /// all turns when `before_turn` is `None`) into a bounded `<thread-history>`
 /// block for a new harness session starting in `new_cwd`.
@@ -177,7 +181,9 @@ fn format_turn(turn: &TurnRecord) -> String {
             .map(|m| neutralize_tags(m.text.trim()))
             .collect();
         if !answers.is_empty() {
-            lines.push(format!("{header} {}", answers.join("\n")));
+            let joined = answers.join("\n");
+            let capped = truncate_head(&joined, MAX_SUBAGENT_ANSWER_BYTES);
+            lines.push(format!("{header} {capped}"));
         } else if let Some(err) = sub.error.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             lines.push(format!("{header} error: {}", neutralize_tags(err)));
         } else if let Some(prompt) = sub
@@ -224,16 +230,20 @@ fn format_act(act: &ActRecord) -> String {
 
 fn compact_single_line(text: &str, max_bytes: usize) -> String {
     let collapsed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.len() <= max_bytes {
-        return collapsed;
+    truncate_head(&collapsed, max_bytes)
+}
+
+fn truncate_head(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
     }
     let suffix = "...";
     let budget = max_bytes.saturating_sub(suffix.len());
-    let mut end = budget.min(collapsed.len());
-    while end > 0 && !collapsed.is_char_boundary(end) {
+    let mut end = budget.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}{suffix}", &collapsed[..end])
+    format!("{}{suffix}", &text[..end])
 }
 
 /// Truncates `text` to at most `max_bytes`, keeping the most recent suffix on a
@@ -437,5 +447,27 @@ mod tests {
             "{rendered}"
         );
         assert_eq!(rendered.matches("</thread-history>").count(), 1, "{rendered}");
+
+        // A huge subagent answer is capped so it cannot push the opening goal out.
+        let mut t_big = sample_turn(1, "KEEP_OPENING_GOAL", "Parent reply.");
+        t_big.subagents.push(SubagentRecord {
+            id: "sub-big".into(),
+            title: "Verbose helper".into(),
+            state: "done".into(),
+            error: None,
+            started: 1001,
+            ended: Some(1002),
+            messages: vec![SubagentMessageRecord {
+                role: "answer".into(),
+                text: "z".repeat(4096),
+            }],
+            acts: Vec::new(),
+        });
+        let rec_big = sample_record(vec![t_big]);
+        let capped = render_thread_handoff(&rec_big, "/home/person/Projects/demo", None, 2048).unwrap();
+        assert!(capped.len() <= 2048);
+        assert!(capped.contains("KEEP_OPENING_GOAL"), "{capped}");
+        assert!(capped.contains("Parent reply."), "{capped}");
+        assert!(capped.contains("..."), "{capped}");
     }
 }
