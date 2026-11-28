@@ -715,6 +715,7 @@ pub enum LeverMessage {
         cwd: String,
         created: bool,
     },
+    Dirs(DirListing),
     Done {
         thread: String,
         turn: u64,
@@ -757,6 +758,23 @@ pub enum LeverMessage {
         working: Vec<String>,
         waiting: Vec<String>,
     },
+}
+
+/// One subdirectory entry returned by Lever's `list-dirs` operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirEntry {
+    pub name: String,
+    pub path: String,
+}
+
+/// A bounded directory listing returned by Lever's `list-dirs` operation for
+/// the drawer's inline folder picker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirListing {
+    pub path: String,
+    pub home: String,
+    pub parent: Option<String>,
+    pub entries: Vec<DirEntry>,
 }
 
 /// Events sent from the surface-socket client to the shell's UI loop.
@@ -863,6 +881,7 @@ pub enum AgentEvent {
         cwd: String,
         created: bool,
     },
+    Dirs(DirListing),
     Done {
         thread: String,
         turn: u64,
@@ -1014,6 +1033,7 @@ impl LeverMessage {
                 cwd,
                 created,
             }),
+            LeverMessage::Dirs(listing) => Some(AgentEvent::Dirs(listing)),
             LeverMessage::Models(offer) => Some(AgentEvent::Offer(offer)),
             LeverMessage::FreeModels {
                 enabled,
@@ -1068,6 +1088,9 @@ pub enum AgentCommand {
         thread: String,
         name: Option<String>,
         place: Option<String>,
+        path: Option<String>,
+    },
+    ListDirs {
         path: Option<String>,
     },
     Send {
@@ -1135,6 +1158,9 @@ impl CommandSender {
     pub fn lifecycle(&self, thread: String, delete: bool) { let _ = self.tx.send(AgentCommand::Lifecycle { thread, delete }); }
     pub fn make_project(&self, thread: String, name: Option<String>, place: Option<String>, path: Option<String>) {
         let _ = self.tx.send(AgentCommand::MakeProject { thread, name, place, path });
+    }
+    pub fn list_dirs(&self, path: Option<String>) {
+        let _ = self.tx.send(AgentCommand::ListDirs { path });
     }
 
     /// Sends a message. `mode` is the mode a new thread starts in.
@@ -2324,6 +2350,7 @@ impl AgentState {
                 }
                 true
             }
+            AgentEvent::Dirs(_) => false,
             AgentEvent::ModeSet { thread, mode } => {
                 if self.thread.as_deref() != Some(thread.as_str())
                     || self.mode.as_deref() == Some(mode.as_str())
@@ -3146,6 +3173,31 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                 cwd: msg.get("cwd")?.as_str()?.to_string(),
                 created: msg.get("created").and_then(|v| v.as_bool()).unwrap_or(false),
             }),
+            "dirs" => {
+                let path = msg.get("path")?.as_str()?.to_string();
+                let home = msg.get("home")?.as_str()?.to_string();
+                let parent = msg.get("parent").and_then(|v| v.as_str()).map(str::to_string);
+                let entries = msg
+                    .get("entries")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|e| {
+                                Some(DirEntry {
+                                    name: e.get("name")?.as_str()?.to_string(),
+                                    path: e.get("path")?.as_str()?.to_string(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(LeverMessage::Dirs(DirListing {
+                    path,
+                    home,
+                    parent,
+                    entries,
+                }))
+            }
             "ok" => Some(LeverMessage::Ok),
             "error" => Some(LeverMessage::Error {
                 code: msg
@@ -3794,6 +3846,7 @@ fn start_with_stream_clone(
                 AgentCommand::Select { .. } => "resume",
                 AgentCommand::Lifecycle { .. } => "lifecycle",
                 AgentCommand::MakeProject { .. } => "make-project",
+                AgentCommand::ListDirs { .. } => "list-dirs",
                 AgentCommand::Send { .. } => "send",
                 AgentCommand::SetModel { .. } => "set-model",
                 AgentCommand::SetEffort { .. } => "set-effort",
@@ -3815,6 +3868,11 @@ fn start_with_stream_clone(
                     let mut req = serde_json::json!({"op": "make-project", "thread": thread});
                     if let Some(name) = name { req["name"] = serde_json::Value::String(name); }
                     if let Some(place) = place { req["place"] = serde_json::Value::String(place); }
+                    if let Some(path) = path { req["path"] = serde_json::Value::String(path); }
+                    req
+                }
+                AgentCommand::ListDirs { path } => {
+                    let mut req = serde_json::json!({"op": "list-dirs"});
                     if let Some(path) = path { req["path"] = serde_json::Value::String(path); }
                     req
                 }
@@ -3910,7 +3968,7 @@ fn start_with_stream_clone(
             };
             if !matches!(write_outcome, Some(Ok(()))) {
                 match op {
-                    "send" | "resume" | "lifecycle" | "make-project" => {
+                    "send" | "resume" | "lifecycle" | "make-project" | "list-dirs" => {
                         let _ = events_for_cmds.send(session::Event::Agent(AgentEvent::Error {
                             code: "disconnected".into(),
                             message: "The Agent is not reachable right now.".into(),
@@ -7041,6 +7099,21 @@ mod tests {
             Some(LeverMessage::ProjectMade {
                 thread: "t-1".into(), cwd: "/home/crowbar/Projects/demo".into(), created: true,
             })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({
+                "reply": "dirs",
+                "path": "/home/crowbar/Code",
+                "home": "/home/crowbar",
+                "parent": "/home/crowbar",
+                "entries": [{ "name": "demo", "path": "/home/crowbar/Code/demo" }]
+            })),
+            Some(LeverMessage::Dirs(DirListing {
+                path: "/home/crowbar/Code".into(),
+                home: "/home/crowbar".into(),
+                parent: Some("/home/crowbar".into()),
+                entries: vec![DirEntry { name: "demo".into(), path: "/home/crowbar/Code/demo".into() }],
+            }))
         );
         assert_eq!(
             parse_lever_message(&serde_json::json!({ "event": "thread-updated", "thread": "t-1", "effort": null })),

@@ -4156,7 +4156,8 @@ fn lever_adds_ask_first_for_its_own_harness_and_leaves_the_persons_opencode_file
         &json!({
             "bash": { "*": "ask", "rm *": "deny" },
             "edit": { "*": "ask" },
-            "crowbar_*": { "*": "ask" }
+            "crowbar_*": { "*": "ask" },
+            "crowbar_make_project": { "*": "ask" }
         })
     );
     let order: Vec<&String> = permission["bash"].as_object().unwrap().keys().collect();
@@ -11776,6 +11777,554 @@ fn mcp_tool_routes_correctly_for_both_per_session_and_shared_cwd_harnesses() {
         t2_row["cwd"],
         home.join("Projects").join("from-token").to_str().unwrap()
     );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn late_session_reply_after_stop_and_make_project_does_not_rebind_old_folder() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "new_session_delay_ms": 350,
+            "turns": [
+                { "steps": [{ "kind": "text", "text": "CWD={cwd}" }] }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    // Start turn 1 so `session/new` in `$HOME` is in flight, then stop before it answers.
+    write_frame(&mut client, &json!({ "op": "send", "text": "first" })).unwrap();
+    let sent1 = read_frame(&mut client).unwrap();
+    assert_eq!(sent1["reply"], "sent");
+    let tid = sent1["thread"].as_str().unwrap().to_string();
+
+    write_frame(&mut client, &json!({ "op": "stop", "thread": tid })).unwrap();
+    let _ = read_until(&mut client, |f| f["event"] == "stopped");
+
+    // Move the thread while the old `$HOME` `session/new` RPC is still in flight.
+    let target = home.join("Projects").join("late-move");
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": tid, "name": "late-move" }),
+    )
+    .unwrap();
+    let made = read_until(&mut client, |f| f.get("reply").is_some());
+    assert_eq!(made["reply"], "project-made");
+    assert_eq!(made["cwd"], target.to_str().unwrap());
+
+    // Let the stale old-folder `session/new` reply arrive and be discarded.
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Turn 2 must open a fresh session in the project folder, not inherit the stale `$HOME` session.
+    write_frame(&mut client, &json!({ "op": "send", "thread": tid, "text": "second" })).unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let mut answer = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" {
+            answer.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["turn"] == 2 {
+            break;
+        }
+    }
+    assert_eq!(answer, format!("CWD={}", target.display()));
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn handoff_survives_harness_crash_before_first_post_move_prompt_is_accepted() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "after-crash",
+                    "steps": [{ "kind": "text", "text": "CWD={cwd}\nPROMPT={prompt}" }]
+                },
+                {
+                    "match": "crash-before-answer",
+                    "steps": [],
+                    "crash": true
+                },
+                {
+                    "match": "seed-before-move",
+                    "steps": [{ "kind": "text", "text": "SEED_CRASH_MEMORY" }]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    write_frame(&mut client, &json!({ "op": "send", "text": "seed-before-move" })).unwrap();
+    let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 1);
+
+    let target = home.join("Projects").join("crash-retry");
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": tid, "name": "crash-retry" }),
+    )
+    .unwrap();
+    let made = read_until(&mut client, |f| f.get("reply").is_some());
+    assert_eq!(made["reply"], "project-made");
+
+    // First post-move turn crashes the harness before any output/acknowledgment.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "crash-before-answer" }),
+    )
+    .unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let _ = read_until(&mut client, |f| f["event"] == "interrupted" && f["turn"] == 2);
+
+    // Next turn restarts the harness in the project folder and STILL delivers `<thread-history>`.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "after-crash" }),
+    )
+    .unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let mut answer = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" {
+            answer.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["turn"] == 3 {
+            break;
+        }
+    }
+    assert!(answer.contains(&format!("CWD={}", target.display())), "{answer}");
+    assert!(answer.contains("<thread-history>"), "{answer}");
+    assert!(answer.contains("SEED_CRASH_MEMORY"), "{answer}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn moving_a_thread_respects_outliving_subagents_and_stopped_quiet_turns() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "check-cwd",
+                    "steps": [{ "kind": "text", "text": "CWD={cwd}\nPROMPT={prompt}" }]
+                },
+                {
+                    "match": "ctrl-subagent",
+                    "steps": [
+                        { "kind": "subagent_start", "id": "ses_ctrl_sub", "title": "Background" },
+                        { "kind": "text", "text": "Launched." }
+                    ],
+                    "after": [
+                        {
+                            "kind": "subagent_ask",
+                            "subagent": "ses_ctrl_sub",
+                            "id": "call_ctrl_sub_ask",
+                            "tool_kind": "read",
+                            "title": "Read .env",
+                            "raw_input": { "path": "/tmp/.env" }
+                        },
+                        { "kind": "subagent_end", "subagent": "ses_ctrl_sub", "status": "completed" }
+                    ]
+                },
+                {
+                    "match": "mcp-with-subagent",
+                    "steps": [
+                        { "kind": "subagent_start", "id": "ses_mcp_sub", "title": "Helper" },
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_mcp_sub_move",
+                            "tool": "make_project",
+                            "arguments": { "name": "after-sub" },
+                            "reply": "MOVED={mcp_result}"
+                        }
+                    ],
+                    "after": [
+                        {
+                            "kind": "subagent_ask",
+                            "subagent": "ses_mcp_sub",
+                            "id": "call_mcp_sub_ask",
+                            "tool_kind": "read",
+                            "title": "Read config",
+                            "raw_input": { "path": "/tmp/cfg" }
+                        },
+                        { "kind": "subagent_end", "subagent": "ses_mcp_sub", "status": "completed" }
+                    ]
+                },
+                {
+                    "match": "quiet-stop-move",
+                    "steps": [
+                        { "kind": "subagent_start", "id": "ses_qs_sub", "title": "Look" },
+                        { "kind": "subagent_end", "subagent": "ses_qs_sub", "status": "completed" },
+                        { "kind": "text", "text": "Done main." }
+                    ],
+                    "after": [
+                        { "kind": "text", "text": "Harness follow-up." },
+                        { "kind": "pause_ms", "ms": 100 },
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_qs_move",
+                            "tool": "make_project",
+                            "arguments": { "name": "after-quiet-stop" },
+                            "reply": "QS_MOVED={mcp_result}"
+                        }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let extra = stub_extra(&script, &["--wake-quiet-ms", "60000", "--stop-timeout-ms", "300"]);
+    let mut lever = RunningLever::start_with_extra(&dir.0, uid, uid, &extra);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    // Part A: `make-project` control is refused while an outliving subagent/request is active.
+    write_frame(&mut client, &json!({ "op": "send", "text": "ctrl-subagent" })).unwrap();
+    let t1 = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["thread"] == t1);
+    let req1 = read_until(&mut client, |f| {
+        f["event"] == "request" && f["thread"] == t1 && f["state"] == "waiting"
+    });
+    let req1_id = req1["request"].as_str().unwrap().to_string();
+
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": t1, "name": "blocked-by-sub" }),
+    )
+    .unwrap();
+    let refused = read_until(&mut client, |f| f.get("reply").is_some());
+    assert_eq!(refused["reply"], "error");
+    assert_eq!(refused["code"], "working");
+
+    // Answer the subagent's request, wait for the subagent to finish, then `make-project` succeeds.
+    write_frame(
+        &mut client,
+        &json!({ "op": "answer", "thread": t1, "request": req1_id, "answer": "once" }),
+    )
+    .unwrap();
+    let _ = read_until(&mut client, |f| {
+        f["event"] == "subagent" && f["thread"] == t1 && f["state"] == "done"
+    });
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": t1, "name": "blocked-by-sub" }),
+    )
+    .unwrap();
+    let made1 = read_until(&mut client, |f| f.get("reply").is_some());
+    assert_eq!(made1["reply"], "project-made");
+
+    // Part B: MCP `make_project` during a turn with an outliving subagent keeps the old session
+    // attached until the subagent and its request finish, then opens the next turn in the project folder.
+    write_frame(&mut client, &json!({ "op": "send", "text": "mcp-with-subagent" })).unwrap();
+    let t2 = read_until(&mut client, |f| f["reply"] == "sent")["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["thread"] == t2);
+    let req2 = read_until(&mut client, |f| {
+        f["event"] == "request" && f["thread"] == t2 && f["state"] == "waiting"
+    });
+    let req2_id = req2["request"].as_str().unwrap().to_string();
+    write_frame(
+        &mut client,
+        &json!({ "op": "answer", "thread": t2, "request": req2_id, "answer": "once" }),
+    )
+    .unwrap();
+    let _ = read_until(&mut client, |f| {
+        f["event"] == "subagent" && f["thread"] == t2 && f["state"] == "done"
+    });
+
+    write_frame(&mut client, &json!({ "op": "send", "thread": t2, "text": "check-cwd" })).unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let mut t2_answer = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" && f["thread"] == t2 {
+            t2_answer.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["thread"] == t2 && f["turn"] == 2 {
+            break;
+        }
+    }
+    let after_sub_dir = home.join("Projects").join("after-sub");
+    assert!(
+        t2_answer.contains(&format!("CWD={}", after_sub_dir.display())),
+        "{t2_answer}"
+    );
+    assert!(t2_answer.contains("<thread-history>"), "{t2_answer}");
+
+    // Part C: Harness-started turn moves thread via MCP, then person stops it and it goes quiet
+    // (`stopped_quiet` path). The old session must still detach so the next turn runs in the project folder.
+    write_frame(&mut client, &json!({ "op": "send", "text": "quiet-stop-move" })).unwrap();
+    let t3 = read_until(&mut client, |f| f["reply"] == "sent")["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let after_qs_dir = home.join("Projects").join("after-quiet-stop");
+    let _ = read_until(&mut client, |f| {
+        f["event"] == "thread-updated" && f["thread"] == t3 && f["cwd"] == after_qs_dir.to_str().unwrap()
+    });
+    write_frame(&mut client, &json!({ "op": "stop", "thread": t3 })).unwrap();
+    let _ = read_until(&mut client, |f| {
+        f["event"] == "stopped" && f["thread"] == t3 && f["turn"] == 2
+    });
+    write_frame(&mut client, &json!({ "op": "send", "thread": t3, "text": "check-cwd" })).unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let mut t3_answer = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" && f["thread"] == t3 {
+            t3_answer.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["thread"] == t3 && f["turn"] == 3 {
+            break;
+        }
+    }
+    assert!(
+        t3_answer.contains(&format!("CWD={}", after_qs_dir.display())),
+        "{t3_answer}"
+    );
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+}
+
+#[test]
+fn deleting_a_moved_thread_deletes_retired_sessions_and_warns_when_unsupported() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "delete_session": true,
+            "session_prefix": "ses-del-",
+            "turns": [
+                { "steps": [{ "kind": "text", "text": "ok in {cwd}" }] }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let rpc_log_path = dir.0.join("rpc.jsonl");
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, Some(&rpc_log_path), None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    // Thread 1: start turn (ses-del-1), move to project, delete immediately before any post-move turn.
+    write_frame(&mut client, &json!({ "op": "send", "text": "one" })).unwrap();
+    let t1 = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["thread"] == t1);
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": t1, "name": "del-immed" }),
+    )
+    .unwrap();
+    assert_eq!(
+        read_until(&mut client, |f| f.get("reply").is_some())["reply"],
+        "project-made"
+    );
+    write_frame(&mut client, &json!({ "op": "delete", "thread": t1 })).unwrap();
+    let del1 = read_until(&mut client, |f| f["reply"] == "deleted");
+    assert!(del1["warning"].is_null(), "{del1}");
+
+    // Thread 2: start turn (ses-del-2), move to project, run post-move turn (ses-del-3), delete.
+    write_frame(&mut client, &json!({ "op": "send", "text": "two" })).unwrap();
+    let t2 = read_until(&mut client, |f| f["reply"] == "sent")["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["thread"] == t2);
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": t2, "name": "del-after" }),
+    )
+    .unwrap();
+    assert_eq!(
+        read_until(&mut client, |f| f.get("reply").is_some())["reply"],
+        "project-made"
+    );
+    write_frame(&mut client, &json!({ "op": "send", "thread": t2, "text": "two-after" })).unwrap();
+    assert_eq!(read_until(&mut client, |f| f.get("reply").is_some())["reply"], "sent");
+    let _ = read_until(&mut client, |f| {
+        f["event"] == "done" && f["thread"] == t2 && f["turn"] == 2
+    });
+    write_frame(&mut client, &json!({ "op": "delete", "thread": t2 })).unwrap();
+    let del2 = read_until(&mut client, |f| f["reply"] == "deleted");
+    assert!(del2["warning"].is_null(), "{del2}");
+
+    let rpc_log = std::fs::read_to_string(dir.0.join("rpc.jsonl")).unwrap();
+    let deleted_sids: Vec<String> = rpc_log
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|v| v["method"] == "session/delete")
+        .filter_map(|v| v["params"]["sessionId"].as_str().map(str::to_string))
+        .collect();
+    assert!(deleted_sids.contains(&"ses-del-1".to_string()), "{deleted_sids:?}");
+    assert!(deleted_sids.contains(&"ses-del-2".to_string()), "{deleted_sids:?}");
+    assert!(deleted_sids.contains(&"ses-del-3".to_string()), "{deleted_sids:?}");
+
+    lever.signal(libc::SIGTERM);
+    assert_eq!(lever.wait().code(), Some(0));
+
+    // When the harness does NOT support `session/delete`, deleting right after a move still warns.
+    let dir2 = TempDir::new();
+    let home2 = dir2.0.join("lever-home");
+    std::fs::create_dir_all(&home2).unwrap();
+    let script2 = write_script(
+        &dir2.0,
+        &json!({
+            "delete_session": false,
+            "turns": [{ "steps": [{ "kind": "text", "text": "ok" }] }]
+        }),
+    );
+    let mut lever2 = RunningLever::start_with_stub(&dir2.0, uid, &script2, None, None);
+    let mut client2 = handshake(&lever2.person);
+    client2.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write_frame(&mut client2, &json!({ "op": "send", "text": "hi" })).unwrap();
+    let t3 = read_frame(&mut client2).unwrap()["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = read_until(&mut client2, |f| f["event"] == "done" && f["thread"] == t3);
+    write_frame(
+        &mut client2,
+        &json!({ "op": "make-project", "thread": t3, "name": "warn-del" }),
+    )
+    .unwrap();
+    assert_eq!(
+        read_until(&mut client2, |f| f.get("reply").is_some())["reply"],
+        "project-made"
+    );
+    write_frame(&mut client2, &json!({ "op": "delete", "thread": t3 })).unwrap();
+    let del3 = read_until(&mut client2, |f| f["reply"] == "deleted");
+    assert!(del3["warning"].as_str().is_some_and(|w| !w.is_empty()), "{del3}");
+
+    lever2.signal(libc::SIGTERM);
+    assert_eq!(lever2.wait().code(), Some(0));
+}
+
+#[test]
+fn mcp_make_project_rejects_uncreatable_place_and_list_dirs_browses_home() {
+    let dir = TempDir::new();
+    let home = dir.0.join("lever-home");
+    std::fs::create_dir_all(home.join("Projects")).unwrap();
+    std::fs::create_dir_all(home.join("Code")).unwrap();
+    std::fs::create_dir_all(home.join(".hidden")).unwrap();
+    let blocker = home.join("regular-file");
+    std::fs::write(&blocker, "not a dir").unwrap();
+
+    let script = write_script(
+        &dir.0,
+        &json!({
+            "turns": [
+                {
+                    "match": "bad-mcp-place",
+                    "steps": [
+                        {
+                            "kind": "mcp_call",
+                            "id": "call_bad_place",
+                            "tool": "make_project",
+                            "arguments": { "name": "demo", "place": "~/regular-file" },
+                            "reply": "ERR={mcp_result}"
+                        }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let uid = unsafe { libc::geteuid() };
+    let mut lever = RunningLever::start_with_stub(&dir.0, uid, &script, None, None);
+    let mut client = handshake(&lever.person);
+    client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+
+    write_frame(&mut client, &json!({ "op": "send", "text": "bad-mcp-place" })).unwrap();
+    let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let mut answer = String::new();
+    loop {
+        let f = read_frame(&mut client).unwrap();
+        if f["event"] == "text" {
+            answer.push_str(f["text"].as_str().unwrap());
+        }
+        if f["event"] == "done" && f["turn"] == 1 {
+            break;
+        }
+    }
+    assert!(answer.contains("ERR="), "{answer}");
+    assert!(
+        answer.contains("not a directory") || answer.contains("Could not create") || answer.contains("Not a directory"),
+        "{answer}"
+    );
+
+    // Thread remains in `$HOME`.
+    write_frame(&mut client, &json!({ "op": "list" })).unwrap();
+    let list = read_frame(&mut client).unwrap();
+    assert_eq!(list["threads"][0]["cwd"], home.to_str().unwrap());
+
+    // `make-project` rejects combining `name` and `path`.
+    write_frame(
+        &mut client,
+        &json!({ "op": "make-project", "thread": tid, "name": "foo", "path": "~/Code/bar" }),
+    )
+    .unwrap();
+    let combo = read_frame(&mut client).unwrap();
+    assert_eq!(combo["reply"], "error");
+    assert_eq!(combo["code"], "invalid-request");
+
+    // `list-dirs` over the surface socket lists non-hidden subdirectories as the person.
+    let mut surface = handshake(&lever.surface);
+    surface.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write_frame(
+        &mut surface,
+        &json!({ "op": "list-dirs", "path": "~/Projects/not-there-yet" }),
+    )
+    .unwrap();
+    let dirs = read_frame(&mut surface).unwrap();
+    assert_eq!(dirs["reply"], "dirs");
+    assert_eq!(dirs["path"], home.join("Projects").to_str().unwrap());
+    assert_eq!(dirs["home"], home.to_str().unwrap());
+    assert_eq!(dirs["parent"], home.to_str().unwrap());
+
+    write_frame(&mut surface, &json!({ "op": "list-dirs" })).unwrap();
+    let home_dirs = read_frame(&mut surface).unwrap();
+    let names: Vec<&str> = home_dirs["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["name"].as_str())
+        .collect();
+    assert!(names.contains(&"Code"), "{names:?}");
+    assert!(names.contains(&"Projects"), "{names:?}");
+    assert!(!names.contains(&".hidden"), "{names:?}");
 
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));

@@ -34,15 +34,15 @@ impl ProjectError {
 }
 
 /// Validates a project name: must be non-empty after trimming, contain no path
-/// separators or NUL bytes, and not be `.` or `..`.
+/// separators or control characters, and not be `.` or `..`.
 pub fn validate_name(raw: &str) -> Result<&str, ProjectError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(ProjectError::Invalid("Project name must not be empty.".to_string()));
     }
-    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains('\0') {
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.chars().any(char::is_control) {
         return Err(ProjectError::Invalid(
-            "Project name must be a single folder name with no path separators.".to_string(),
+            "Project name must be a single folder name with no path separators or control characters.".to_string(),
         ));
     }
     if trimmed == "." || trimmed == ".." {
@@ -52,19 +52,28 @@ pub fn validate_name(raw: &str) -> Result<&str, ProjectError> {
 }
 
 /// Expands a leading `~` or `~/` against `home`, then normalizes `.` and `..`
-/// lexically. Requires an absolute path after expansion and rejects NUL bytes.
+/// (resolving existing symlinks before traversing `..` so the result matches
+/// real filesystem traversal). Requires an absolute path after expansion and
+/// rejects control characters.
 pub fn expand_absolute_path(raw: &str, home: &Path, label: &str) -> Result<PathBuf, ProjectError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(ProjectError::Invalid(format!("{label} must not be empty.")));
     }
-    if trimmed.contains('\0') {
+    if trimmed.chars().any(char::is_control) {
         return Err(ProjectError::Invalid(format!("{label} contains an invalid character.")));
     }
     let expanded = if trimmed == "~" {
         home.to_path_buf()
     } else if let Some(rest) = trimmed.strip_prefix("~/") {
-        home.join(rest)
+        // Strip repeated slashes after `~/` so `~//Code` stays under `home`
+        // instead of `PathBuf::join` replacing `home` with `/Code`.
+        let relative = rest.trim_start_matches('/');
+        if relative.is_empty() {
+            home.to_path_buf()
+        } else {
+            home.join(relative)
+        }
     } else if trimmed.starts_with('~') {
         return Err(ProjectError::Invalid(format!(
             "{label} must be an absolute path or start with ~/."
@@ -77,7 +86,7 @@ pub fn expand_absolute_path(raw: &str, home: &Path, label: &str) -> Result<PathB
             "{label} must be an absolute path or start with ~/."
         )));
     }
-    let normalized = lexical_normalize(&expanded);
+    let normalized = normalize_path(&expanded, label)?;
     if !normalized.is_absolute() {
         return Err(ProjectError::Invalid(format!("{label} must be an absolute path.")));
     }
@@ -90,15 +99,64 @@ pub fn resolve_project_path(name: &str, place: Option<&str>, home: &Path) -> Res
     let valid_name = validate_name(name)?;
     let parent = match place.map(str::trim).filter(|s| !s.is_empty()) {
         Some(raw) => expand_absolute_path(raw, home, "Project place")?,
-        None => lexical_normalize(&home.join(DEFAULT_PROJECTS_DIR)),
+        None => normalize_path(&home.join(DEFAULT_PROJECTS_DIR), "Project place")?,
     };
-    Ok(lexical_normalize(&parent.join(valid_name)))
+    normalize_path(&parent.join(valid_name), "Project folder")
 }
 
 /// Resolves an explicit target project folder path (used when the person picks
 /// an exact folder in the UI or CLI).
 pub fn resolve_exact_path(path: &str, home: &Path) -> Result<PathBuf, ProjectError> {
     expand_absolute_path(path, home, "Project folder")
+}
+
+/// Bounded directory listing returned for the drawer's inline folder picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirListing {
+    pub path: PathBuf,
+    pub parent: Option<PathBuf>,
+    pub entries: Vec<(String, PathBuf)>,
+}
+
+/// Lists readable, non-hidden subdirectories of `raw` (or `home` when omitted),
+/// walking up to the nearest existing ancestor directory when `raw` does not
+/// exist yet. Capped at 64 entries so a huge directory cannot flood the UI.
+pub fn list_subdirectories(raw: Option<&str>, home: &Path) -> Result<DirListing, ProjectError> {
+    let start = match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(p) => expand_absolute_path(p, home, "Folder")?,
+        None => normalize_path(home, "Folder")?,
+    };
+    let mut cur = start;
+    while !cur.is_dir() {
+        let Some(parent) = cur.parent() else {
+            return Err(ProjectError::Filesystem(format!(
+                "Cannot browse {}: no readable parent directory exists.",
+                cur.display()
+            )));
+        };
+        cur = parent.to_path_buf();
+    }
+    let read =
+        std::fs::read_dir(&cur).map_err(|e| ProjectError::Filesystem(format!("Cannot read {}: {e}", cur.display())))?;
+    let mut entries: Vec<(String, PathBuf)> = read
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                return None;
+            }
+            let path = entry.path();
+            path.is_dir().then_some((name, path))
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()).then_with(|| a.0.cmp(&b.0)));
+    entries.truncate(64);
+    let parent = cur.parent().filter(|p| *p != cur.as_path()).map(Path::to_path_buf);
+    Ok(DirListing {
+        path: cur,
+        parent,
+        entries,
+    })
 }
 
 /// Ensures `path` exists as a directory.
@@ -141,13 +199,40 @@ pub fn ensure_project_dir(path: &Path) -> Result<bool, ProjectError> {
     }
 }
 
-/// Normalizes `.` and `..` lexically without touching the filesystem.
-fn lexical_normalize(path: &Path) -> PathBuf {
+/// Normalizes `.` and `..` while honoring symlinks on disk before popping `..`
+/// so the resolved path matches real filesystem traversal. Paths without `..`
+/// preserve symlink names so a person's `~/Code` link stays displayed under
+/// `~/Code`.
+fn normalize_path(path: &Path, label: &str) -> Result<PathBuf, ProjectError> {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
+                // Before traversing `..`, resolve any existing symlink at `out`
+                // and refuse traversal through an existing non-directory.
+                match std::fs::metadata(&out) {
+                    Ok(meta) if !meta.is_dir() => {
+                        return Err(ProjectError::Filesystem(format!(
+                            "{label} traverses {}, which is not a directory.",
+                            out.display()
+                        )));
+                    }
+                    Ok(_) => {
+                        if let Ok(canon) = std::fs::canonicalize(&out) {
+                            out = canon;
+                        }
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                        if std::fs::symlink_metadata(&out).is_ok() {
+                            return Err(ProjectError::Filesystem(format!(
+                                "{label} traverses {}, which is a broken link.",
+                                out.display()
+                            )));
+                        }
+                    }
+                    Err(_) => {}
+                }
                 // Never pop past root.
                 if out.components().count() > 1 {
                     out.pop();
@@ -156,7 +241,7 @@ fn lexical_normalize(path: &Path) -> PathBuf {
             other => out.push(other),
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -196,8 +281,66 @@ mod tests {
         assert!(resolve_project_path("a/b", None, home).is_err());
         assert!(resolve_project_path("..", None, home).is_err());
         assert!(resolve_project_path(".", None, home).is_err());
+        assert!(resolve_project_path("bad\nname", None, home).is_err());
+        assert!(resolve_project_path("bad\tname", None, home).is_err());
         assert!(resolve_project_path("demo", Some("relative/dir"), home).is_err());
         assert!(resolve_project_path("demo", Some("~other/Code"), home).is_err());
+        assert!(resolve_project_path("demo", Some("~/Code\n/sub"), home).is_err());
+    }
+
+    #[test]
+    fn handles_repeated_tilde_slashes_and_symlinks_with_parent_dir() {
+        let home = Path::new("/home/person");
+        assert_eq!(
+            resolve_project_path("demo", Some("~//Code"), home).unwrap(),
+            PathBuf::from("/home/person/Code/demo")
+        );
+        assert_eq!(
+            resolve_exact_path("~///Work/alpha", home).unwrap(),
+            PathBuf::from("/home/person/Work/alpha")
+        );
+
+        let base = std::env::temp_dir().join(format!("crowbar-proj-link-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let fake_home = base.join("home");
+        let real_parent = base.join("external/nested");
+        std::fs::create_dir_all(&fake_home).unwrap();
+        std::fs::create_dir_all(&real_parent).unwrap();
+        std::os::unix::fs::symlink(&real_parent, fake_home.join("link")).unwrap();
+
+        // Without `..`, the symlink name is kept under home.
+        assert_eq!(
+            resolve_project_path("demo", Some("~/link"), &fake_home).unwrap(),
+            fake_home.join("link/demo")
+        );
+        // With `..`, symlink target is resolved first so traversal matches the OS.
+        let expected = std::fs::canonicalize(base.join("external")).unwrap().join("demo");
+        assert_eq!(
+            resolve_project_path("demo", Some("~/link/.."), &fake_home).unwrap(),
+            expected
+        );
+
+        // Traversing `..` through a regular file fails cleanly.
+        let blocker = fake_home.join("file.txt");
+        std::fs::write(&blocker, "x").unwrap();
+        assert!(resolve_project_path("demo", Some("~/file.txt/.."), &fake_home).is_err());
+
+        // Directory listing walks up from non-existent leaf, skips hidden dirs, and sorts.
+        std::fs::create_dir_all(fake_home.join("Projects")).unwrap();
+        std::fs::create_dir_all(fake_home.join("Code")).unwrap();
+        std::fs::create_dir_all(fake_home.join(".secret")).unwrap();
+        let listing = list_subdirectories(Some("~/Projects/not-created-yet"), &fake_home).unwrap();
+        assert_eq!(listing.path, fake_home.join("Projects"));
+        assert_eq!(listing.parent.as_deref(), Some(fake_home.as_path()));
+        let home_listing = list_subdirectories(None, &fake_home).unwrap();
+        let names: Vec<&str> = home_listing.entries.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"Code"));
+        assert!(names.contains(&"Projects"));
+        assert!(names.contains(&"link"));
+        assert!(!names.contains(&".secret"));
+        assert!(!names.contains(&"file.txt"));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -15,7 +15,7 @@ use crate::composer::{self, Composer};
 use crate::markdown;
 use crate::slash::{self, Menu, MenuKind, Resolve, Run, Take, Wants};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// The most rows of a list shown at once. A longer list moves with the keys.
 const LIST_ROWS: usize = 10;
@@ -31,7 +31,7 @@ pub(crate) enum ThreadAction {
     ConfirmMakeProject,
     PickProjectPlace(String),
     ToggleProjectBrowse,
-    BrowseProjectDir(PathBuf),
+    BrowseProjectDir(String),
     UseProjectFolder(String),
     AskDelete,
     Delete,
@@ -57,9 +57,16 @@ pub(crate) struct AgentSurface {
     making_project: bool,
     project_name_input: Entity<input::TextInput>,
     project_folder_input: Entity<input::TextInput>,
-    project_folder_custom: bool,
-    syncing_project_folder: bool,
-    project_browse_dir: Option<PathBuf>,
+    /// Parent place (`~/Projects`, `~/Code`, `~`, etc.) while the folder field
+    /// tracks `<place>/<name>`; `None` once the person edits Folder directly or
+    /// chooses an exact folder.
+    project_place: Option<String>,
+    project_browse_open: bool,
+    project_browse_loading: bool,
+    project_browse_dir: Option<String>,
+    project_browse_parent: Option<String>,
+    project_browse_home: Option<String>,
+    project_browse_entries: Vec<agent::DirEntry>,
     project_error: Option<String>,
     _project_name_sub: Subscription,
     _project_folder_sub: Subscription,
@@ -217,17 +224,7 @@ fn draft_key(state: &agent::AgentState) -> String {
     state.thread.clone().unwrap_or_default()
 }
 
-/// Default folder offered as the person types a project name.
-fn offered_project_folder(name: &str) -> String {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        "~/Projects".into()
-    } else {
-        format!("~/Projects/{trimmed}")
-    }
-}
-
-/// Joins a base place (`~/Code`, `/home/crowbar`, etc.) with a project name when given.
+/// Joins a base place (`~/Projects`, `~/Code`, `/home/crowbar`, etc.) with a project name when given.
 fn join_project_place(place: &str, name: &str) -> String {
     let base = place.trim().trim_end_matches('/');
     let base = if base.is_empty() { "/" } else { base };
@@ -241,45 +238,59 @@ fn join_project_place(place: &str, name: &str) -> String {
     }
 }
 
-/// Validates the inline "Make this a project" form and returns `(name, path)` for Lever.
+/// Validates the inline "Make this a project" form and returns `(name, place, path)` for Lever.
 fn validate_project_form(
     name: &str,
     folder: &str,
-    custom_folder: bool,
-) -> Result<(Option<String>, Option<String>), String> {
+    place: Option<&str>,
+) -> Result<(Option<String>, Option<String>, Option<String>), String> {
     let name = name.trim();
     let folder = folder.trim();
-    if !custom_folder {
+    if let Some(place) = place {
         if name.is_empty() {
             return Err("Enter a project name.".into());
         }
-        if name == "." || name == ".." || name.contains('/') || name.contains('\\') || name.contains('\0') {
+        if name == "."
+            || name == ".."
+            || name.contains('/')
+            || name.contains('\\')
+            || name.chars().any(char::is_control)
+        {
             return Err("Project name must be a single folder name.".into());
         }
-        return Ok((Some(name.to_string()), None));
+        let place_arg = (place != "~/Projects").then(|| place.to_string());
+        return Ok((Some(name.to_string()), place_arg, None));
     }
     if folder.is_empty() {
         return Err("Enter or choose a folder.".into());
     }
+    if folder.chars().any(char::is_control) {
+        return Err("Folder path contains an invalid character.".into());
+    }
     if !folder.starts_with('/') && folder != "~" && !folder.starts_with("~/") {
         return Err("Enter an absolute folder path or start with ~/.".into());
     }
-    Ok((None, Some(folder.to_string())))
+    Ok((None, None, Some(folder.to_string())))
 }
 
-/// Infers the person's home directory from a known thread path (e.g. `/home/crowbar/...`)
-/// without assuming the shell's own `$HOME`, because `crowbaros-shell` runs under a
-/// separate system account on Base.
-fn inferred_person_home(state: &agent::AgentState) -> Option<String> {
-    let candidate = state
-        .cwd
-        .as_deref()
-        .or_else(|| state.threads.first().map(|t| t.cwd.as_str()))?;
-    if let Some(rest) = candidate.strip_prefix("/home/") {
-        let user = rest.split('/').next().filter(|s| !s.is_empty())?;
-        return Some(format!("/home/{user}"));
+/// Infers the person's home directory from Lever's reported home or a known
+/// thread path (`/home/<user>/...`). Never falls back to `$HOME`, because
+/// `crowbaros-shell` runs under its own account on Base.
+fn inferred_person_home(state: &agent::AgentState, known_home: Option<&str>) -> Option<String> {
+    if let Some(home) = known_home.filter(|h| !h.is_empty()) {
+        return Some(home.to_string());
     }
-    std::env::var("HOME").ok().filter(|h| !h.is_empty())
+    let from_path = |candidate: &str| -> Option<String> {
+        let rest = candidate.strip_prefix("/home/")?;
+        let user = rest.split('/').next().filter(|s| !s.is_empty())?;
+        Some(format!("/home/{user}"))
+    };
+    if let Some(cwd) = state.cwd.as_deref()
+        && let Some(home) = from_path(cwd)
+    {
+        return Some(home);
+    }
+    state.threads.iter().find_map(|t| from_path(&t.cwd))
 }
 
 /// Formats an absolute path using `~` when inside `home`.
@@ -297,8 +308,8 @@ fn display_folder_path(path: &str, home: Option<&str>) -> String {
 
 /// Quick parent places offered in the "Make this a project" form: `~/Projects`,
 /// `~/Code`, `~`, plus any parent folders already holding threads.
-fn place_suggestions(state: &agent::AgentState) -> Vec<String> {
-    let home = inferred_person_home(state);
+fn place_suggestions(state: &agent::AgentState, known_home: Option<&str>) -> Vec<String> {
+    let home = inferred_person_home(state, known_home);
     let mut places = vec!["~/Projects".to_string(), "~/Code".to_string(), "~".to_string()];
     for thread in &state.threads {
         if thread.archived || thread.cwd.is_empty() {
@@ -319,50 +330,6 @@ fn place_suggestions(state: &agent::AgentState) -> Vec<String> {
         }
     }
     places
-}
-
-/// Lists readable, non-hidden subdirectories of `dir` for the inline folder picker.
-fn list_subdirectories(dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("Cannot read {}: {e}", dir.display()))?;
-    let mut dirs: Vec<(String, PathBuf)> = entries
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
-                return None;
-            }
-            let path = entry.path();
-            path.is_dir().then_some((name, path))
-        })
-        .collect();
-    dirs.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-    dirs.truncate(40);
-    Ok(dirs)
-}
-
-/// Expands `~` or `~/...` against `home` for starting the inline directory browser.
-fn expand_browse_start(folder: &str, state: &agent::AgentState) -> Option<PathBuf> {
-    let home = inferred_person_home(state);
-    let trimmed = folder.trim();
-    let candidate = if trimmed == "~" {
-        home.as_deref().map(PathBuf::from)
-    } else if let Some(rest) = trimmed.strip_prefix("~/") {
-        home.as_deref().map(|h| PathBuf::from(h).join(rest))
-    } else if trimmed.starts_with('/') {
-        Some(PathBuf::from(trimmed))
-    } else {
-        None
-    };
-    let mut cur = candidate
-        .or_else(|| state.cwd.as_deref().map(PathBuf::from))
-        .or_else(|| home.map(PathBuf::from))?;
-    while !cur.is_dir() {
-        let Some(parent) = cur.parent() else {
-            return None;
-        };
-        cur = parent.to_path_buf();
-    }
-    Some(cur)
 }
 
 impl AgentSurface {
@@ -422,23 +389,23 @@ impl AgentSurface {
         });
         let project_name_sub = cx.observe(&project_name_input, |this, name_input, cx| {
             this.project_error = None;
-            if !this.project_folder_custom {
-                let offered = offered_project_folder(&name_input.read(cx).query());
+            this.model.update(cx, |m, _| m.agent_state.error = None);
+            if let Some(place) = this.project_place.clone() {
+                let offered = join_project_place(&place, &name_input.read(cx).query());
                 if this.project_folder_input.read(cx).query() != offered {
-                    this.syncing_project_folder = true;
                     this.project_folder_input.update(cx, |folder, cx| folder.set_text(offered, cx));
-                    this.syncing_project_folder = false;
                 }
             }
             cx.notify();
         });
         let project_folder_sub = cx.observe(&project_folder_input, |this, folder_input, cx| {
-            if !this.syncing_project_folder {
-                this.project_error = None;
-                let offered = offered_project_folder(&this.project_name_input.read(cx).query());
+            this.project_error = None;
+            this.model.update(cx, |m, _| m.agent_state.error = None);
+            if let Some(place) = this.project_place.as_deref() {
+                let offered = join_project_place(place, &this.project_name_input.read(cx).query());
                 let current = folder_input.read(cx).query();
                 if current != offered {
-                    this.project_folder_custom = true;
+                    this.project_place = None;
                 }
             }
             cx.notify();
@@ -462,9 +429,13 @@ impl AgentSurface {
             making_project: false,
             project_name_input,
             project_folder_input,
-            project_folder_custom: false,
-            syncing_project_folder: false,
+            project_place: Some("~/Projects".into()),
+            project_browse_open: false,
+            project_browse_loading: false,
             project_browse_dir: None,
+            project_browse_parent: None,
+            project_browse_home: None,
+            project_browse_entries: Vec::new(),
             project_error: None,
             _project_name_sub: project_name_sub,
             _project_folder_sub: project_folder_sub,
@@ -502,20 +473,48 @@ impl AgentSurface {
         self.input.update(cx, |input, cx| input.set_text(text, cx));
     }
 
+    pub(crate) fn close_project_form(&mut self) {
+        self.making_project = false;
+        self.project_browse_open = false;
+        self.project_browse_loading = false;
+        self.project_browse_dir = None;
+        self.project_browse_parent = None;
+        self.project_browse_entries.clear();
+        self.project_error = None;
+    }
+
     pub(crate) fn on_project_made(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.making_project {
-            self.making_project = false;
-            self.project_browse_dir = None;
-            self.project_error = None;
+            self.close_project_form();
             window.focus(&self.input.focus_handle(cx));
             sync_agent_view(&self.model, cx);
             cx.notify();
         }
     }
 
+    pub(crate) fn on_dirs_listed(&mut self, listing: agent::DirListing, cx: &mut Context<Self>) {
+        self.project_browse_loading = false;
+        self.project_browse_home = Some(listing.home);
+        if self.making_project && self.project_browse_open {
+            self.project_browse_dir = Some(listing.path);
+            self.project_browse_parent = listing.parent;
+            self.project_browse_entries = listing.entries;
+            self.project_error = None;
+            sync_agent_view(&self.model, cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn on_agent_error(&mut self, cx: &mut Context<Self>) {
+        if self.project_browse_loading {
+            self.project_browse_loading = false;
+            cx.notify();
+        }
+    }
+
     pub(crate) fn action(&mut self, action: ThreadAction, window: &mut Window, cx: &mut Context<Self>) {
-        // Folding/expanding thread details and Model-source controls remain
-        // usable even while a history read or send is in flight.
+        // Folding/expanding thread details, cancelling the project form, and
+        // Model-source controls remain usable even while a request is in flight.
         let allowed_while_busy = matches!(
             action,
             ThreadAction::Act(_)
@@ -527,6 +526,7 @@ impl AgentSurface {
                 | ThreadAction::ChooseFreeModels(_)
                 | ThreadAction::RefreshModels
                 | ThreadAction::Unqueue(_)
+                | ThreadAction::CancelMakeProject
         );
         let busy = {
             let s = &self.model.read(cx).agent_state;
@@ -541,9 +541,7 @@ impl AgentSurface {
                 self.scroll.set_offset(point(px(0.), px(0.)));
                 self.model.update(cx, |m, _| m.agent_state.list_view = true);
                 self.confirm_delete = false;
-                self.making_project = false;
-                self.project_browse_dir = None;
-                self.project_error = None;
+                self.close_project_form();
                 window.focus(&self.focus);
             }
             ThreadAction::New | ThreadAction::Open(_) => {
@@ -551,9 +549,7 @@ impl AgentSurface {
                     return;
                 }
                 self.confirm_delete = false;
-                self.making_project = false;
-                self.project_browse_dir = None;
-                self.project_error = None;
+                self.close_project_form();
                 let thread = match action {
                     ThreadAction::Open(t) => Some(t),
                     _ => None,
@@ -591,75 +587,76 @@ impl AgentSurface {
                     return;
                 }
                 self.confirm_delete = false;
+                self.close_project_form();
                 self.making_project = true;
-                self.project_folder_custom = false;
-                self.project_browse_dir = None;
-                self.project_error = None;
+                self.project_place = Some("~/Projects".into());
                 self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.syncing_project_folder = true;
                 self.project_name_input.update(cx, |i, cx| i.set_text("", cx));
                 self.project_folder_input.update(cx, |i, cx| i.set_text("~/Projects", cx));
-                self.syncing_project_folder = false;
                 window.focus(&self.project_name_input.focus_handle(cx));
             }
             ThreadAction::CancelMakeProject => {
-                self.making_project = false;
-                self.project_browse_dir = None;
-                self.project_error = None;
+                self.close_project_form();
                 self.model.update(cx, |m, _| m.agent_state.error = None);
                 window.focus(&self.input.focus_handle(cx));
             }
             ThreadAction::PickProjectPlace(place) => {
                 let name = self.project_name_input.read(cx).query();
                 let next = join_project_place(&place, &name);
-                self.project_folder_custom = place != "~/Projects";
+                self.project_place = Some(place);
+                self.project_browse_open = false;
+                self.project_browse_loading = false;
                 self.project_error = None;
-                self.syncing_project_folder = true;
+                self.model.update(cx, |m, _| m.agent_state.error = None);
                 self.project_folder_input.update(cx, |i, cx| i.set_text(next, cx));
-                self.syncing_project_folder = false;
-                window.focus(&self.project_folder_input.focus_handle(cx));
+                if name.trim().is_empty() {
+                    window.focus(&self.project_name_input.focus_handle(cx));
+                } else {
+                    window.focus(&self.project_folder_input.focus_handle(cx));
+                }
             }
             ThreadAction::ToggleProjectBrowse => {
-                if self.project_browse_dir.is_some() {
-                    self.project_browse_dir = None;
+                if self.project_browse_open {
+                    self.project_browse_open = false;
+                    self.project_browse_loading = false;
                 } else {
                     let folder = self.project_folder_input.read(cx).query();
-                    let start = expand_browse_start(&folder, &self.model.read(cx).agent_state);
-                    match start.and_then(|d| list_subdirectories(&d).ok().map(|_| d)) {
-                        Some(dir) => {
-                            self.project_error = None;
-                            self.project_browse_dir = Some(dir);
-                        }
-                        None => {
-                            self.project_error = Some(
-                                "Folder browser cannot read this account's folders. Type any path in Folder (for example ~/Code/my-project).".into(),
-                            );
-                            window.focus(&self.project_folder_input.focus_handle(cx));
-                        }
+                    let tx = self.model.read(cx).agent_tx.clone();
+                    if let Some(tx) = tx {
+                        self.project_error = None;
+                        self.project_browse_open = true;
+                        self.project_browse_loading = true;
+                        let start = folder.trim();
+                        let path = (!start.is_empty()).then(|| start.to_string());
+                        tx.list_dirs(path);
+                    } else {
+                        self.project_error = Some("The Agent is not reachable right now.".into());
                     }
                 }
             }
             ThreadAction::BrowseProjectDir(dir) => {
-                if list_subdirectories(&dir).is_ok() {
+                if let Some(tx) = self.model.read(cx).agent_tx.clone() {
                     self.project_error = None;
-                    self.project_browse_dir = Some(dir);
+                    self.project_browse_open = true;
+                    self.project_browse_loading = true;
+                    tx.list_dirs(Some(dir));
                 }
             }
             ThreadAction::UseProjectFolder(folder) => {
-                self.project_folder_custom = true;
-                self.project_browse_dir = None;
+                self.project_place = None;
+                self.project_browse_open = false;
+                self.project_browse_loading = false;
                 self.project_error = None;
-                self.syncing_project_folder = true;
+                self.model.update(cx, |m, _| m.agent_state.error = None);
                 self.project_folder_input.update(cx, |i, cx| i.set_text(folder, cx));
-                self.syncing_project_folder = false;
                 window.focus(&self.project_folder_input.focus_handle(cx));
             }
             ThreadAction::ConfirmMakeProject => {
                 let name = self.project_name_input.read(cx).query();
                 let folder = self.project_folder_input.read(cx).query();
-                let validated = validate_project_form(&name, &folder, self.project_folder_custom);
-                let (req_name, req_path) = match validated {
-                    Ok(pair) => pair,
+                let validated = validate_project_form(&name, &folder, self.project_place.as_deref());
+                let (req_name, req_place, req_path) = match validated {
+                    Ok(triple) => triple,
                     Err(why) => {
                         self.project_error = Some(why);
                         sync_agent_view(&self.model, cx);
@@ -679,13 +676,11 @@ impl AgentSurface {
                     Some((tx, thread))
                 });
                 if let Some((tx, thread)) = tx_and_thread {
-                    tx.make_project(thread, req_name, None, req_path);
+                    tx.make_project(thread, req_name, req_place, req_path);
                 }
             }
             ThreadAction::AskDelete => {
-                self.making_project = false;
-                self.project_browse_dir = None;
-                self.project_error = None;
+                self.close_project_form();
                 self.confirm_delete = true;
                 window.focus(&self.focus);
             }
@@ -811,7 +806,7 @@ impl AgentSurface {
             ThreadAction::ConfirmMakeProject => "confirm-make-project".into(),
             ThreadAction::PickProjectPlace(place) => format!("project-place:{place}"),
             ThreadAction::ToggleProjectBrowse => "project-browse".into(),
-            ThreadAction::BrowseProjectDir(dir) => format!("project-dir:{}", dir.display()),
+            ThreadAction::BrowseProjectDir(dir) => format!("project-dir:{dir}"),
             ThreadAction::UseProjectFolder(path) => format!("project-use:{path}"),
             ThreadAction::AskDelete => "delete".into(),
             ThreadAction::Delete => "confirm-delete".into(),
@@ -2379,6 +2374,7 @@ impl Render for AgentSurface {
             .gap(px(18.))
             .bg(rgb(p.canvas));
 
+        let showing_project_form = self.making_project && state.thread.is_some() && !state.list_view;
         if self.confirm_delete {
             body = body
                 .child(
@@ -2404,14 +2400,15 @@ impl Render for AgentSurface {
                             cx,
                         )),
                 );
-        } else if self.making_project {
+        } else if showing_project_form {
             let name_text = self.project_name_input.read(cx).query();
             let folder_text = self.project_folder_input.read(cx).query();
             let can_confirm = state.connected
+                && !state.loading
                 && !state.mode_locked()
-                && validate_project_form(&name_text, &folder_text, self.project_folder_custom).is_ok();
-            let home = inferred_person_home(&state);
-            let places = place_suggestions(&state);
+                && validate_project_form(&name_text, &folder_text, self.project_place.as_deref()).is_ok();
+            let home = inferred_person_home(&state, self.project_browse_home.as_deref());
+            let places = place_suggestions(&state, self.project_browse_home.as_deref());
             let mut place_row = div().flex().flex_wrap().gap(px(6.));
             for place in places {
                 let id = SharedString::from(format!("project-place-btn-{place}"));
@@ -2489,13 +2486,13 @@ impl Render for AgentSurface {
                                 )
                                 .child(self.button(
                                     "toggle-project-browse",
-                                    if self.project_browse_dir.is_some() {
+                                    if self.project_browse_open {
                                         "Hide folders"
                                     } else {
                                         "Choose folder…"
                                     },
                                     ThreadAction::ToggleProjectBrowse,
-                                    true,
+                                    state.connected,
                                     p,
                                     cx,
                                 )),
@@ -2515,8 +2512,7 @@ impl Render for AgentSurface {
                         )
                         .child(place_row),
                 );
-            if let Some(browse_dir) = self.project_browse_dir.clone() {
-                let shown_dir = display_folder_path(&browse_dir.to_string_lossy(), home.as_deref());
+            if self.project_browse_open {
                 let mut picker = div()
                     .w_full()
                     .p(px(10.))
@@ -2526,8 +2522,10 @@ impl Render for AgentSurface {
                     .border_color(rgb(p.line))
                     .flex()
                     .flex_col()
-                    .gap(px(6.))
-                    .child(
+                    .gap(px(6.));
+                if let Some(browse_dir) = self.project_browse_dir.clone() {
+                    let shown_dir = display_folder_path(&browse_dir, home.as_deref());
+                    picker = picker.child(
                         div()
                             .font_family("IBM Plex Mono")
                             .text_size(px(11.))
@@ -2535,49 +2533,35 @@ impl Render for AgentSurface {
                             .text_ellipsis()
                             .child(shown_dir.clone()),
                     );
-                let mut use_row = div().flex().flex_wrap().gap(px(6.)).child(self.button(
-                    "project-use-exact",
-                    format!("Use {shown_dir}"),
-                    ThreadAction::UseProjectFolder(shown_dir.clone()),
-                    true,
-                    p,
-                    cx,
-                ));
-                let trimmed_name = name_text.trim();
-                if !trimmed_name.is_empty() {
-                    let with_name = join_project_place(&shown_dir, trimmed_name);
-                    if with_name != shown_dir {
-                        use_row = use_row.child(self.button(
-                            "project-use-with-name",
-                            format!("Use {with_name}"),
-                            ThreadAction::UseProjectFolder(with_name),
-                            true,
-                            p,
-                            cx,
-                        ));
-                    }
-                }
-                picker = picker.child(use_row);
-                if let Some(parent) = browse_dir.parent() {
-                    picker = picker.child(
-                        self.button(
-                            "project-dir-parent",
-                            ".. (up one folder)",
-                            ThreadAction::BrowseProjectDir(parent.to_path_buf()),
-                            true,
-                            p,
-                            cx,
-                        )
-                        .w_full(),
-                    );
-                }
-                if let Ok(entries) = list_subdirectories(&browse_dir) {
-                    for (ix, (entry_name, entry_path)) in entries.into_iter().enumerate() {
+                    let mut use_row = div().flex().flex_wrap().gap(px(6.)).child(self.button(
+                        "project-use-exact",
+                        format!("Use {shown_dir}"),
+                        ThreadAction::UseProjectFolder(shown_dir.clone()),
+                        true,
+                        p,
+                        cx,
+                    ));
+                    let trimmed_name = name_text.trim();
+                    let with_name_label = if trimmed_name.is_empty() {
+                        format!("Put project in {shown_dir}")
+                    } else {
+                        format!("Use {}", join_project_place(&shown_dir, trimmed_name))
+                    };
+                    use_row = use_row.child(self.button(
+                        "project-use-with-name",
+                        with_name_label,
+                        ThreadAction::PickProjectPlace(shown_dir.clone()),
+                        true,
+                        p,
+                        cx,
+                    ));
+                    picker = picker.child(use_row);
+                    if let Some(parent) = self.project_browse_parent.clone() {
                         picker = picker.child(
                             self.button(
-                                SharedString::from(format!("project-dir-entry-{ix}")),
-                                format!("{entry_name}/"),
-                                ThreadAction::BrowseProjectDir(entry_path),
+                                "project-dir-parent",
+                                ".. (up one folder)",
+                                ThreadAction::BrowseProjectDir(parent),
                                 true,
                                 p,
                                 cx,
@@ -2585,6 +2569,26 @@ impl Render for AgentSurface {
                             .w_full(),
                         );
                     }
+                    for (ix, entry) in self.project_browse_entries.iter().enumerate() {
+                        picker = picker.child(
+                            self.button(
+                                SharedString::from(format!("project-dir-entry-{ix}")),
+                                format!("{}/", entry.name),
+                                ThreadAction::BrowseProjectDir(entry.path.clone()),
+                                true,
+                                p,
+                                cx,
+                            )
+                            .w_full(),
+                        );
+                    }
+                } else if self.project_browse_loading {
+                    picker = picker.child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(rgb(p.muted))
+                            .child("Loading folders…"),
+                    );
                 }
                 body = body.child(picker);
             }
@@ -3170,20 +3174,24 @@ impl Render for AgentSurface {
             );
         }
 
-        let in_thread = !needs_choice && !state.list_view && !self.confirm_delete && !self.making_project;
+        let in_thread = !needs_choice && !state.list_view && !self.confirm_delete && !showing_project_form;
         // Scrolled up from a thread's newest line: a way back to it.
         let show_newest = in_thread && !state.turns.is_empty() && !self.near_bottom();
-        let error = state.error.clone().or_else(|| {
-            if state.turns.is_empty() {
-                None
-            } else if !state.configured || !state.connected {
-                Some("The Agent isn't running right now. Reconnecting automatically.".into())
-            } else if state.no_harness {
-                None
-            } else {
-                state.missing_model.clone()
-            }
-        });
+        let error = if showing_project_form {
+            None
+        } else {
+            state.error.clone().or_else(|| {
+                if state.turns.is_empty() {
+                    None
+                } else if !state.configured || !state.connected {
+                    Some("The Agent isn't running right now. Reconnecting automatically.".into())
+                } else if state.no_harness {
+                    None
+                } else {
+                    state.missing_model.clone()
+                }
+            })
+        };
 
         div()
             .size_full()
@@ -3324,7 +3332,7 @@ impl Render for AgentSurface {
             .when(in_thread, |root| {
                 // Which thread this is, the folder it lives in, and the way
                 // back to the list or to make it a project.
-                let home = inferred_person_home(&state);
+                let home = inferred_person_home(&state, self.project_browse_home.as_deref());
                 let folder_label = state
                     .cwd
                     .as_deref()
@@ -3608,7 +3616,7 @@ impl Render for AgentSurface {
 #[cfg(test)]
 mod tests {
     use super::{
-        display_folder_path, join_project_place, list_for_key, offered_project_folder,
+        display_folder_path, inferred_person_home, join_project_place, list_for_key,
         place_suggestions, reconcile_draft_on_sent, should_answer_with_alt_digit,
         should_reset_offer_on_menu_close, should_take_composer_enter, validate_project_form,
     };
@@ -3717,31 +3725,51 @@ mod tests {
 
     #[test]
     fn make_project_form_offers_projects_folder_and_allows_custom_folder() {
-        assert_eq!(offered_project_folder(""), "~/Projects");
-        assert_eq!(offered_project_folder("  notes "), "~/Projects/notes");
+        assert_eq!(join_project_place("~/Projects", ""), "~/Projects");
+        assert_eq!(join_project_place("~/Projects", "  notes "), "~/Projects/notes");
         assert_eq!(join_project_place("~/Code", "notes"), "~/Code/notes");
         assert_eq!(join_project_place("~/Code/", ""), "~/Code");
         assert_eq!(display_folder_path("/home/crowbar/Projects/notes", Some("/home/crowbar")), "~/Projects/notes");
         assert_eq!(display_folder_path("/home/crowbar", Some("/home/crowbar")), "~");
 
+        // Default place (`~/Projects`) sends name only.
         assert_eq!(
-            validate_project_form("notes", "~/Projects/notes", false),
-            Ok((Some("notes".into()), None))
+            validate_project_form("notes", "~/Projects/notes", Some("~/Projects")),
+            Ok((Some("notes".into()), None, None))
         );
-        assert!(validate_project_form("", "~/Projects", false).is_err());
-        assert!(validate_project_form("a/b", "~/Projects/a/b", false).is_err());
-        assert_eq!(
-            validate_project_form("notes", "~/Code/notes", true),
-            Ok((None, Some("~/Code/notes".into())))
-        );
-        assert_eq!(
-            validate_project_form("", "/home/crowbar/ExistingWork", true),
-            Ok((None, Some("/home/crowbar/ExistingWork".into())))
-        );
-        assert!(validate_project_form("", "relative/path", true).is_err());
+        assert!(validate_project_form("", "~/Projects", Some("~/Projects")).is_err());
+        assert!(validate_project_form("a/b", "~/Projects/a/b", Some("~/Projects")).is_err());
+        assert!(validate_project_form("bad\nname", "~/Projects/bad", Some("~/Projects")).is_err());
 
+        // Picking a place chip (e.g. `~/Code` or `~`) keeps place separate from an exact folder:
+        // empty name is refused, and typing a name sends `(name, place, None)`.
+        assert!(validate_project_form("", "~/Code", Some("~/Code")).is_err());
+        assert!(validate_project_form("", "~", Some("~")).is_err());
+        assert_eq!(
+            validate_project_form("notes", "~/Code/notes", Some("~/Code")),
+            Ok((Some("notes".into()), Some("~/Code".into()), None))
+        );
+
+        // Custom exact folder (place = None) sends `(None, None, Some(folder))`.
+        assert_eq!(
+            validate_project_form("notes", "~/Code/notes", None),
+            Ok((None, None, Some("~/Code/notes".into())))
+        );
+        assert_eq!(
+            validate_project_form("", "/home/crowbar/ExistingWork", None),
+            Ok((None, None, Some("/home/crowbar/ExistingWork".into())))
+        );
+        assert!(validate_project_form("", "relative/path", None).is_err());
+
+        // `inferred_person_home` never falls back to the shell account's `$HOME`;
+        // it searches all threads when the active thread is outside `/home/`.
         let mut state = agent::AgentState::new(true);
-        state.cwd = Some("/home/crowbar".into());
+        state.cwd = Some("/tmp/scratch".into());
+        assert_eq!(inferred_person_home(&state, None), None);
+        assert_eq!(
+            display_folder_path("/tmp/scratch", inferred_person_home(&state, None).as_deref()),
+            "/tmp/scratch"
+        );
         state.threads.push(agent::ThreadSummary {
             archived: false,
             thread: "t-1".into(),
@@ -3757,6 +3785,7 @@ mod tests {
             subagents: 0,
             mode: None,
         });
-        assert_eq!(place_suggestions(&state), vec!["~/Projects", "~/Code", "~", "~/Work"]);
+        assert_eq!(inferred_person_home(&state, None).as_deref(), Some("/home/crowbar"));
+        assert_eq!(place_suggestions(&state, None), vec!["~/Projects", "~/Code", "~", "~/Work"]);
     }
 }

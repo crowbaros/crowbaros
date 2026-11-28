@@ -3030,6 +3030,45 @@ fn run(options: Options) -> Result<(), String> {
                         Step::Ask(step) => {
                             let _ = ask(&writer, &session_id, &asking, None, step);
                         }
+                        Step::McpCall {
+                            id,
+                            server,
+                            tool,
+                            arguments,
+                            send_meta_session,
+                            shared_by_cwd,
+                            reply,
+                        } => {
+                            let servers = if *shared_by_cwd {
+                                cwd_mcps_ref
+                                    .lock()
+                                    .unwrap()
+                                    .get(&session_cwd)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            } else {
+                                session_mcps_ref
+                                    .lock()
+                                    .unwrap()
+                                    .get(&sid_key)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            };
+                            let after_cancel = CancelFlag::new();
+                            let _ = run_mcp_call(
+                                &writer,
+                                &session_id,
+                                &asking,
+                                &after_cancel,
+                                &servers,
+                                id,
+                                server,
+                                tool,
+                                arguments,
+                                *send_meta_session,
+                                reply.as_deref(),
+                            );
+                        }
                         Step::SubagentStart { .. }
                         | Step::SubagentText { .. }
                         | Step::SubagentAct { .. }

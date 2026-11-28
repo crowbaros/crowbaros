@@ -2960,6 +2960,7 @@ print(json.dumps(sorted(seen)))
             # project folder and prior history handed over.
             self.key('meta_l', 'spc')
             self.wait('drawer opens for project check', lambda: self.agent_view()['drawer_up'])
+            threads_before_ctrl = len(self.agent_view()['state']['threads'])
             self.key('ctrl', 'n')
             self.wait('new thread opens for control project check',
                       lambda: (v := self.agent_view()) and not v['state']['list_view'] and v['state']['thread'] is None)
@@ -3003,6 +3004,7 @@ print(json.dumps(sorted(seen)))
             )
             ctrl_dir_ok = self.guest.ssh(f'test -d {ctrl_proj_dir}', check=False).returncode == 0
             ctrl_count = sum(1 for t in ctrl_moved['state']['threads'] if t['thread'] == ctrl_tid)
+            ctrl_total_after_move = len(ctrl_moved['state']['threads'])
             self.type('please project-pwd-check')
             self.key('ret')
             def finish_pwd_turn(tid, expected_dir, label):
@@ -3017,13 +3019,17 @@ print(json.dumps(sorted(seen)))
                             if r.get('state') == 'waiting' and r['request'] not in answered:
                                 answered.add(r['request'])
                                 click_control(f"answer:{r['request']}:once")
-                        if t2['state']['kind'] == 'done':
+                        kind = t2['state']['kind']
+                        if kind == 'done':
                             return v
+                        if kind in ('failed', 'stopped', 'interrupted'):
+                            raise AssertionError(f'{label} ended {kind}: {t2}')
                     time.sleep(0.25)
                 raise AssertionError(f'timed out waiting for {label} in {expected_dir}')
 
             ctrl_after = finish_pwd_turn(ctrl_tid, ctrl_proj_dir, 'control project pwd turn')
             ctrl_turn2_answer = ctrl_after['state']['turns'][-1].get('answer', '')
+            ctrl_total_after_turn = len(ctrl_after['state']['threads'])
             ctrl_pwd_reqs = [
                 r for r in stub_requests()
                 if 'project-pwd-check' in (r.get('prompt') or '')
@@ -3038,11 +3044,16 @@ print(json.dumps(sorted(seen)))
                 'and runs the next command in the project folder with prior history',
                 ctrl_dir_ok
                 and ctrl_count == 1
+                and ctrl_total_after_move == threads_before_ctrl + 1
+                and ctrl_total_after_turn == threads_before_ctrl + 1
                 and f'PROJECT_PWD={ctrl_proj_dir}' in ctrl_turn2_answer
                 and bool(ctrl_pwd_reqs),
                 json.dumps({
                     'dir_ok': ctrl_dir_ok,
                     'thread_count': ctrl_count,
+                    'threads_before': threads_before_ctrl,
+                    'threads_after_move': ctrl_total_after_move,
+                    'threads_after_turn': ctrl_total_after_turn,
                     'cwd': ctrl_moved['state'].get('cwd'),
                     'answer': ctrl_turn2_answer,
                     'saw_history': bool(ctrl_pwd_reqs),
@@ -3051,6 +3062,7 @@ print(json.dumps(sorted(seen)))
 
             # Part B: Agent's MCP `make_project` tool with a named place (`~/Code`),
             # respecting Ask first mode and opening no network port.
+            threads_before_tool = len(self.agent_view()['state']['threads'])
             self.key('ctrl', 'n')
             self.wait('new thread opens for MCP project check',
                       lambda: (v := self.agent_view()) and not v['state']['list_view'] and v['state']['thread'] is None)
@@ -3123,6 +3135,8 @@ print(json.dumps(found))
             self.key('ret')
             tool_after = finish_pwd_turn(tool_tid, tool_proj_dir, 'MCP project pwd turn')
             tool_turn2_answer = tool_after['state']['turns'][-1].get('answer', '')
+            tool_total_after_move = len(tool_moved['state']['threads'])
+            tool_total_after_turn = len(tool_after['state']['threads'])
             tool_pwd_reqs = [
                 r for r in stub_requests()
                 if 'project-pwd-check' in (r.get('prompt') or '')
@@ -3134,6 +3148,8 @@ print(json.dumps(found))
                 not_created_before_approval
                 and tool_dir_ok
                 and not lever_ports
+                and tool_total_after_move == threads_before_tool + 1
+                and tool_total_after_turn == threads_before_tool + 1
                 and '~/Code/tool-proj' in (mcp_req.get('detail') or '')
                 and f'PROJECT_PWD={tool_proj_dir}' in tool_turn2_answer
                 and bool(tool_pwd_reqs),
@@ -3142,6 +3158,9 @@ print(json.dumps(found))
                     'req_detail': mcp_req.get('detail'),
                     'tool_dir_ok': tool_dir_ok,
                     'lever_ports': lever_ports,
+                    'threads_before': threads_before_tool,
+                    'threads_after_move': tool_total_after_move,
+                    'threads_after_turn': tool_total_after_turn,
                     'answer': tool_turn2_answer,
                     'saw_history': bool(tool_pwd_reqs),
                 }),

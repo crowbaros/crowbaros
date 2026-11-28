@@ -1,11 +1,9 @@
 //! Harness-agnostic Model Context Protocol (MCP) server specification, tool
 //! definitions, and stdio JSON-RPC 2.0 bridge.
 //!
-//! Every harness — ACP harnesses (OpenCode, Antigravity, Gemini CLI, Goose,
-//! Cursor), Codex (`mcp_servers`), Claude Code (`--mcp-config`), Pi (via a
-//! stdio MCP bridge extension), and `crowbar-stub-harness` — receives the same
-//! [`McpServerSpec`]: `crowbar-lever mcp-bridge`, communicating over standard
-//! input and output.
+//! Every ACP harness today (OpenCode and `crowbar-stub-harness`, and future
+//! harness adapters) receives the same [`McpServerSpec`]:
+//! `crowbar-lever mcp-bridge`, communicating over standard input and output.
 //!
 //! The bridge opens **no network port**. It forwards `tools/call` requests to
 //! Lever's private `SO_PEERCRED`-checked Unix domain socket using credentials
@@ -33,8 +31,10 @@ pub const ENV_MCP_AUTH: &str = "CROWBAR_MCP_AUTH";
 /// thread for harnesses that spawn one MCP server per session.
 pub const ENV_MCP_SESSION: &str = "CROWBAR_MCP_SESSION";
 
-/// Supported MCP protocol version advertised when the client does not specify
-/// one.
+/// Supported MCP protocol versions, newest first. During `initialize`, if the
+/// client proposes one of these, Lever echoes it; otherwise Lever responds with
+/// its newest supported version (or `DEFAULT_MCP_PROTOCOL_VERSION` if omitted).
+const SUPPORTED_MCP_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const DEFAULT_MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
 /// Read/write timeout for a single bridge call to Lever's local Unix socket.
@@ -73,7 +73,7 @@ pub fn tool_definitions() -> Value {
     json!([
         {
             "name": TOOL_MAKE_PROJECT,
-            "description": "Make the current thread a project by tying it to a folder. Creates the folder if it does not exist, or uses an existing folder as-is without changing anything in it. Defaults to ~/Projects/<name> unless 'place' is given (for example '~/Code' puts the project at '~/Code/<name>'). After this call, subsequent turns run in the project's folder automatically with the thread's prior conversation preserved; if you run a command in the same turn, use the returned 'path'.",
+            "description": "Make the current thread a project by tying it to a folder. Creates the folder if it does not exist, or uses an existing folder as-is without changing anything in it. Defaults to ~/Projects/<name> unless 'place' is given (for example '~/Code' puts the project at '~/Code/<name>'). After this call, subsequent turns run in the project's folder automatically with the thread's prior conversation preserved; if you run a command in the same turn, use the returned path.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -114,28 +114,27 @@ pub fn extract_meta_session(params: &Value) -> Option<String> {
 
 /// Formats a human-readable detail line for a `make_project` tool call request
 /// (shown in Ask first request cards without exposing raw JSON or internal IDs).
-pub fn format_make_project_detail(input: &Value) -> Option<String> {
+/// Uses the same path resolver as `make_project` execution so the destination
+/// shown to the person matches the folder Lever will actually create or use.
+pub fn format_make_project_detail(input: &Value, home: &Path) -> Option<String> {
     let obj = input.as_object()?;
-    let name = obj.get("name").and_then(Value::as_str)?.trim();
-    if name.is_empty() {
-        return None;
-    }
-    match obj
-        .get("place")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        Some(place) => {
-            let trimmed = place.trim_end_matches('/');
-            if trimmed.is_empty() {
-                Some(format!("/{name}"))
-            } else {
-                Some(format!("{trimmed}/{name}"))
-            }
+    let name = obj.get("name").and_then(Value::as_str)?;
+    let place = match obj.get("place") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.as_str()),
+        Some(_) => return None,
+    };
+    let resolved = crate::project::resolve_project_path(name, place, home).ok()?;
+    let home_norm = crate::project::expand_absolute_path("~", home, "Home").ok();
+    if let Some(ref h) = home_norm {
+        if resolved == *h {
+            return Some("~".to_string());
         }
-        None => Some(format!("~/Projects/{name}")),
+        if let Ok(rel) = resolved.strip_prefix(h) {
+            return Some(format!("~/{}", rel.display()));
+        }
     }
+    Some(resolved.display().to_string())
 }
 
 /// Entry point for `crowbar-lever mcp-bridge`: speaks MCP JSON-RPC 2.0 over
@@ -208,11 +207,15 @@ where
         let params = obj.get("params").cloned().unwrap_or(Value::Null);
         let response = match method {
             "initialize" => {
-                let version = params
+                let version = match params
                     .get("protocolVersion")
                     .and_then(Value::as_str)
                     .filter(|s| !s.is_empty())
-                    .unwrap_or(DEFAULT_MCP_PROTOCOL_VERSION);
+                {
+                    Some(req) if SUPPORTED_MCP_PROTOCOL_VERSIONS.contains(&req) => req,
+                    Some(_) => SUPPORTED_MCP_PROTOCOL_VERSIONS[0],
+                    None => DEFAULT_MCP_PROTOCOL_VERSION,
+                };
                 json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -438,15 +441,52 @@ mod tests {
     }
 
     #[test]
-    fn formats_make_project_request_detail() {
+    fn negotiates_supported_protocol_version() {
+        let input = [
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2099-01-01"}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"initialize","params":{}}"#,
+        ]
+        .join("\n")
+            + "\n";
+        let mut out = Vec::new();
+        serve_stdio(input.as_bytes(), &mut out, |_, _, _| ToolCallOutcome {
+            ok: true,
+            text: String::new(),
+        })
+        .unwrap();
+        let lines: Vec<Value> = String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
         assert_eq!(
-            format_make_project_detail(&json!({"name": "demo"})).as_deref(),
+            lines[0]["result"]["protocolVersion"],
+            SUPPORTED_MCP_PROTOCOL_VERSIONS[0]
+        );
+        assert_eq!(lines[1]["result"]["protocolVersion"], "2024-11-05");
+        assert_eq!(lines[2]["result"]["protocolVersion"], DEFAULT_MCP_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn formats_make_project_request_detail() {
+        let home = Path::new("/home/person");
+        assert_eq!(
+            format_make_project_detail(&json!({"name": "demo"}), home).as_deref(),
             Some("~/Projects/demo")
         );
         assert_eq!(
-            format_make_project_detail(&json!({"name": "demo", "place": "~/Code/"})).as_deref(),
+            format_make_project_detail(&json!({"name": "demo", "place": "~/Code/"}), home).as_deref(),
             Some("~/Code/demo")
         );
-        assert_eq!(format_make_project_detail(&json!({"name": "   "})), None);
+        assert_eq!(
+            format_make_project_detail(&json!({"name": "demo", "place": "~//Code"}), home).as_deref(),
+            Some("~/Code/demo")
+        );
+        assert_eq!(
+            format_make_project_detail(&json!({"name": "demo", "place": "~/Code/../../../tmp"}), home).as_deref(),
+            Some("/tmp/demo")
+        );
+        assert_eq!(format_make_project_detail(&json!({"name": "   "}), home), None);
     }
 }

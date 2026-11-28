@@ -24,7 +24,7 @@ crowbar-agent --resume ID --mode MODE  # set a thread's mode
 crowbar-agent --mode MODE "<request>"  # start a thread in a mode
 crowbar-agent --resume ID --answer R A # answer a thread's request R with A
 crowbar-agent --resume ID --unqueue Q  # take back message Q that waits in a thread
-crowbar-agent --resume ID --project N [--place DIR | --path DIR]
+crowbar-agent --resume ID (--project N [--place DIR] | --path DIR)
                                        # make a thread a project in ~/Projects/N or DIR
 crowbar-agent --stop ID                # stop the working turn of a thread
 crowbar-agent models                   # list the Models the harness offers

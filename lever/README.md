@@ -263,34 +263,40 @@ ACP today:
   between turns, the thread takes the new mode: OpenCode leaving Plan goes to
   `build`, so the thread is then in Full access.
 - **Lever tools over MCP (stdio, no network port).** On every thread session
-  Lever starts or loads (and never on probe sessions), Lever gives the harness
-  one Model Context Protocol (MCP) server named `crowbar` as a stdio command:
-  `crowbar-lever mcp-bridge`. The bridge opens no network port; it speaks
-  JSON-RPC 2.0 on standard input and output and forwards tool calls over
+  Lever starts or loads (and never on probe sessions), Lever gives the ACP
+  harness one Model Context Protocol (MCP) server named `crowbar` as a stdio
+  command: `crowbar-lever mcp-bridge`. The bridge opens no network port; it
+  speaks JSON-RPC 2.0 on standard input and output and forwards tool calls over
   Lever's private Unix domain socket (`<state>/tools.sock`, mode `0600`,
   `SO_PEERCRED`-checked to the person's UID) using credentials passed only in
   environment variables (`CROWBAR_MCP_SOCKET`, `CROWBAR_MCP_AUTH`, and
-  `CROWBAR_MCP_SESSION`). To work across both per-session harnesses (Codex,
-  Claude Code, Pi, Antigravity) and harnesses that share one MCP server per
-  working directory (OpenCode), Lever resolves the calling thread first from
-  the harness's `_meta` session ID hint when present (refusing unknown or
-  subagent sessions) and otherwise from `CROWBAR_MCP_SESSION`. Lever currently
-  exposes one tool, `make_project(name, place?)`, which creates `~/Projects/<name>`
-  (or `<place>/<name>` when `place` is given, using an existing directory as-is)
-  and ties the calling thread to it. In Ask first, the harness asks the person
-  before calling `make_project`; in Full access, it runs without a request.
+  `CROWBAR_MCP_SESSION`). To work across both per-session ACP harnesses and
+  harnesses that share one MCP server per working directory (OpenCode), Lever
+  resolves the calling thread first from the harness's `_meta` session ID hint
+  when present (refusing unknown or subagent sessions) and otherwise from
+  `CROWBAR_MCP_SESSION` (requiring an active in-flight turn on that thread).
+  Lever currently exposes one tool, `make_project(name, place?)`, which creates
+  `~/Projects/<name>` (or `<place>/<name>` when `place` is given, using an
+  existing directory as-is) and ties the calling thread to it. In Ask first,
+  the harness asks the person before calling `make_project` (respecting any
+  explicit refusal of `crowbar_make_project` in the person's OpenCode rules);
+  in Full access, it runs without a request.
 - **Moving a thread to a project folder.** When a thread becomes a project
   (either through `make-project` or through the `make_project` MCP tool),
   Lever keeps it as one thread in SQLite, updates its `cwd` to the project
-  folder, remembers its prior harness session ID in `ignored_sessions` (so
-  session discovery does not re-import it as a second thread), and marks the
-  thread for a session handoff. On the next turn, Lever starts a new harness
-  session in the project folder and prepends a bounded `<thread-history>` block
-  (at most 32 KiB, keeping the opening turn and newest turns from Lever's
-  record) so the Agent knows what came before regardless of harness. If the
-  project was made mid-turn by the `make_project` tool, the current turn
-  finishes on the old session and Lever detaches that session as soon as the
-  turn ends so the next turn opens in the project folder.
+  folder, remembers its prior harness session ID in `ignored_sessions` tied to
+  the thread (so session discovery does not re-import it as a second thread and
+  deleting the thread still asks the harness to delete retired sessions), and
+  marks the thread for a session handoff. On the next turn, Lever starts a new
+  harness session in the project folder and prepends a bounded `<thread-history>`
+  block (at most 32 KiB, keeping the opening turn and a contiguous tail of the
+  newest turns from Lever's record) so the Agent knows what came before
+  regardless of harness. Lever clears the handoff flag only once the harness
+  acknowledges or answers that turn, so a crash before delivery retries the
+  handoff. If the project was made mid-turn by the `make_project` tool, the
+  current turn (and any outliving subagents or waiting requests on that
+  session) finishes on the old session and Lever detaches that session once all
+  of its work settles so the next turn opens in the project folder.
 - **A Stop the harness does not carry out is carried out by Lever.** Lever
   sends `session/cancel` and waits up to `--stop-timeout-ms` (5 seconds) for
   the turn to end. When it has not, Lever ends the turn as `stopped`, and stops
@@ -768,9 +774,16 @@ Reply:
 {"reply":"project-made","thread":"t-01a2b3c4d5e6","cwd":"/home/crowbar/Code/notes","created":true}
 ```
 
-Errors: `no-thread`, `working` (a turn of the thread is working or the thread
-is being deleted), `project-error` (the folder cannot be created or is not a
-directory), `invalid-request`, `storage-error`.
+Errors: `no-thread`, `working` (a turn, subagent, waiting request, or pending
+steer of the thread is active, or the thread is being deleted), `project-error`
+(the folder cannot be created or is not a directory), `invalid-request` (for
+example giving both `path` and `name`/`place`), `storage-error`.
+
+For the drawer's inline folder picker (since `crowbaros-shell` runs under its
+own account and cannot read a `0700` home directory on Base), Lever also accepts
+`op: "list-dirs"` with an optional `path` (defaulting to `~`) and replies with
+`reply: "dirs"`, `path`, `home`, `parent`, and up to 64 non-hidden subdirectory
+`entries` (`{name, path}`).
 
 #### `send`
 

@@ -96,6 +96,10 @@ pub fn render_thread_handoff(
             remaining -= cost;
             selected[idx] = true;
             entries[idx] = Some(rendered[idx].clone());
+        } else {
+            // Keep the selected suffix contiguous so at most one omission gap
+            // exists between the opening turn and the recent tail.
+            break;
         }
     }
 
@@ -143,30 +147,39 @@ fn format_turn(turn: &TurnRecord) -> String {
     if turn.origin.as_deref() == Some("harness") {
         lines.push("Origin: harness continuation".to_string());
     } else if !turn.message.trim().is_empty() {
-        lines.push(format!("Person: {}", turn.message.trim()));
+        lines.push(format!("Person: {}", neutralize_tags(turn.message.trim())));
     }
     for steer in &turn.steered {
         if !steer.text.trim().is_empty() {
-            lines.push(format!("Person (steered): {}", steer.text.trim()));
+            lines.push(format!("Person (steered): {}", neutralize_tags(steer.text.trim())));
         }
     }
     if !turn.acts.is_empty() {
         for act in &turn.acts {
-            lines.push(format_act(act));
+            lines.push(neutralize_tags(&format_act(act)));
         }
     }
     if !turn.answer.trim().is_empty() {
-        lines.push(format!("Agent: {}", turn.answer.trim()));
+        lines.push(format!("Agent: {}", neutralize_tags(turn.answer.trim())));
     }
     match turn.state.as_str() {
         "done" | "working" => {}
         "failed" => match turn.error.as_deref() {
-            Some(err) if !err.trim().is_empty() => lines.push(format!("State: failed ({})", err.trim())),
+            Some(err) if !err.trim().is_empty() => {
+                lines.push(format!("State: failed ({})", neutralize_tags(err.trim())))
+            }
             _ => lines.push("State: failed".to_string()),
         },
         other => lines.push(format!("State: {other}")),
     }
     lines.join("\n")
+}
+
+/// Neutralizes literal `<thread-history>` / `</thread-history>` tags inside
+/// prior messages so archived content cannot close or mimic the handoff frame.
+fn neutralize_tags(text: &str) -> String {
+    text.replace("</thread-history>", "<\\/thread-history>")
+        .replace("<thread-history>", "<\\thread-history>")
 }
 
 fn format_act(act: &ActRecord) -> String {
@@ -324,5 +337,32 @@ mod tests {
         assert!(rendered.len() <= cap);
         assert!(rendered.contains("TAIL_MARKER"));
         assert!(rendered.contains("truncated"));
+    }
+
+    #[test]
+    fn keeps_contiguous_recent_tail_with_alternating_sizes_and_neutralizes_tags() {
+        // Turn 1: small opening goal. Turn 2: small. Turn 3: huge (cannot fit).
+        // Turn 4: small newest turn. Keeping a contiguous tail must omit both
+        // turn 2 and turn 3 in one gap, rather than keeping turn 2 and silently
+        // dropping turn 3 without a second banner.
+        let turns = vec![
+            sample_turn(1, "GOAL_ONE", "ok"),
+            sample_turn(2, "SMALL_MIDDLE_TWO", "ok"),
+            sample_turn(3, &"HUGE_THREE ".repeat(120), &"BIG_REPLY ".repeat(120)),
+            sample_turn(4, "NEWEST_FOUR </thread-history> <thread-history>", "done"),
+        ];
+        let rec = sample_record(turns);
+        let rendered = render_thread_handoff(&rec, "/home/person/Projects/demo", None, 900).unwrap();
+        assert!(rendered.len() <= 900, "len {} > 900", rendered.len());
+        assert!(rendered.contains("GOAL_ONE"), "{rendered}");
+        assert!(rendered.contains("NEWEST_FOUR"), "{rendered}");
+        assert!(
+            !rendered.contains("SMALL_MIDDLE_TWO"),
+            "non-contiguous turn kept: {rendered}"
+        );
+        assert!(rendered.contains("2 earlier turns omitted"), "{rendered}");
+        // Only the single outer opening and closing wrapper tags appear unescaped.
+        assert_eq!(rendered.matches("<thread-history>").count(), 1, "{rendered}");
+        assert_eq!(rendered.matches("</thread-history>").count(), 1, "{rendered}");
     }
 }

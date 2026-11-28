@@ -167,12 +167,17 @@ fn matches_wildcard(input: &str, pattern: &str) -> bool {
 
 /// The Ask first agent's `permission`: it asks before a command, an edit, or
 /// one of Lever's own MCP tools (`crowbar_*`), except where the person's own
-/// rules say otherwise.
+/// rules say otherwise. Emits the concrete tool key (`crowbar_make_project`)
+/// after `crowbar_*` so a person's explicit rule for `crowbar_make_project`
+/// (or a narrower pattern like `crowbar_make_*`) is never overridden by the
+/// wildcard `crowbar_*` ask rule.
 pub fn ask_first_permission(documents: &[Value]) -> Value {
     let mut permission = Map::new();
     permission.insert("bash".to_string(), rules_for(documents, "shell"));
     permission.insert("edit".to_string(), rules_for(documents, "edit"));
     permission.insert("crowbar_*".to_string(), rules_for(documents, "crowbar_*"));
+    let make_project = format!("{}_{}", crate::mcp::MCP_SERVER_NAME, crate::mcp::TOOL_MAKE_PROJECT);
+    permission.insert(make_project.clone(), rules_for(documents, &make_project));
     Value::Object(permission)
 }
 
@@ -692,7 +697,8 @@ mod tests {
             json!({
                 "bash": { "*": "ask" },
                 "edit": { "*": "ask" },
-                "crowbar_*": { "*": "ask" }
+                "crowbar_*": { "*": "ask" },
+                "crowbar_make_project": { "*": "ask" }
             })
         );
 
@@ -710,7 +716,8 @@ mod tests {
             json!({
                 "bash": { "*": "ask", "git status": "allow", "rm *": "deny" },
                 "edit": { "*": "ask", "secret/**": "deny" },
-                "crowbar_*": { "*": "ask" }
+                "crowbar_*": { "*": "ask" },
+                "crowbar_make_project": { "*": "ask" }
             })
         );
         // Order is what decides, so it is kept.
@@ -739,7 +746,8 @@ mod tests {
             json!({
                 "bash": { "*": "deny", "git status": "allow" },
                 "edit": { "*": "deny" },
-                "crowbar_*": { "*": "deny" }
+                "crowbar_*": { "*": "deny" },
+                "crowbar_make_project": { "*": "deny" }
             })
         );
         let listed = json!({ "permissions": [
@@ -752,8 +760,24 @@ mod tests {
             json!({
                 "bash": { "*": "ask", "rm *": "deny" },
                 "edit": { "*": "ask", "secret/**": "deny" },
-                "crowbar_*": { "*": "ask" }
+                "crowbar_*": { "*": "ask" },
+                "crowbar_make_project": { "*": "ask" }
             })
+        );
+
+        // An explicit refusal of `crowbar_make_project` (or a narrower pattern)
+        // stays refused even though Ask first adds `crowbar_*: ask`.
+        let deny_make = json!({ "permission": { "crowbar_make_project": "deny" } });
+        let perm_deny_make = ask_first_permission(&[deny_make]);
+        assert_eq!(perm_deny_make["crowbar_*"], json!({ "*": "ask" }));
+        assert_eq!(perm_deny_make["crowbar_make_project"], json!({ "*": "deny" }));
+
+        let deny_pattern = json!({ "permissions": [
+            { "action": "crowbar_make_*", "resource": "*", "effect": "deny" }
+        ] });
+        assert_eq!(
+            ask_first_permission(&[deny_pattern])["crowbar_make_project"],
+            json!({ "*": "deny" })
         );
 
         // An action is a pattern, as OpenCode has it.
@@ -766,7 +790,8 @@ mod tests {
             json!({
                 "bash": { "*": "ask", "rm *": "deny" },
                 "edit": { "*": "ask", "secret/**": "deny" },
-                "crowbar_*": { "*": "ask" }
+                "crowbar_*": { "*": "ask" },
+                "crowbar_make_project": { "*": "ask" }
             })
         );
         // Older names are renamed whole before any pattern is matched: `ba*`
@@ -779,7 +804,8 @@ mod tests {
             json!({
                 "bash": { "*": "ask", "rm *": "deny" },
                 "edit": { "*": "ask", "secret/**": "deny" },
-                "crowbar_*": { "*": "ask" }
+                "crowbar_*": { "*": "ask" },
+                "crowbar_make_project": { "*": "ask" }
             })
         );
         assert!(matches_wildcard("shell", "*"));

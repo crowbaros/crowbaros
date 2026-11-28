@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout};
 use std::time::{Duration, Instant};
 
@@ -366,6 +366,7 @@ enum PendingRpc {
         thread_id: String,
         turn: u64,
         afresh: bool,
+        epoch: u64,
     },
     LoadSession {
         thread_id: String,
@@ -373,6 +374,7 @@ enum PendingRpc {
         session_id: String,
         cwd: String,
         mcp_servers: Vec<McpServerSpec>,
+        epoch: u64,
     },
     /// Loads an externally-started session via `session/load` and captures its
     /// replayed updates into a [`SessionHistory`].
@@ -469,6 +471,13 @@ pub struct AcpHarness {
     next_permission: u64,
     /// Each session's mode, as Lever's mode ID.
     session_modes: HashMap<String, String>,
+    /// Home directory of the harness process, used to resolve `~` in request
+    /// details identically to `project::resolve_project_path`.
+    home: PathBuf,
+    /// Per-thread session generation bumped on `forget_session`/`detach_session`
+    /// so stale in-flight `session/new` or `session/load` replies from before a
+    /// project move are discarded and closed instead of re-binding an old folder.
+    session_gen: HashMap<String, u64>,
     thread_to_session: HashMap<String, String>,
     session_to_thread: HashMap<String, String>,
     session_models: HashMap<String, String>,
@@ -570,6 +579,15 @@ impl AcpHarness {
             ));
         }
 
+        let home = config
+            .env
+            .iter()
+            .rev()
+            .find(|(k, _)| k == "HOME")
+            .map(|(_, v)| PathBuf::from(v))
+            .filter(|p| !p.as_os_str().is_empty())
+            .or_else(|| std::env::var("HOME").ok().filter(|s| !s.is_empty()).map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("/"));
         let started = sys::start_time(child.id()).unwrap_or(0);
         let mut harness = Self {
             started,
@@ -597,6 +615,8 @@ impl AcpHarness {
             permissions: HashMap::new(),
             next_permission: 1,
             session_modes: HashMap::new(),
+            home,
+            session_gen: HashMap::new(),
             thread_to_session: HashMap::new(),
             session_to_thread: HashMap::new(),
             session_models: HashMap::new(),
@@ -701,8 +721,16 @@ impl AcpHarness {
         self.child_launchers.get(child_session_id).map(String::as_str)
     }
 
-    /// Lets go of a thread's session, which Lever will not use.
+    fn current_session_gen(&self, thread_id: &str) -> u64 {
+        self.session_gen.get(thread_id).copied().unwrap_or(0)
+    }
+
+    /// Lets go of a thread's session, which Lever will not use. Bumps the
+    /// thread's session generation so any in-flight `session/new` or
+    /// `session/load` RPC from before the detach is discarded when it answers.
     pub fn forget_session(&mut self, thread_id: &str) {
+        let entry = self.session_gen.entry(thread_id.to_string()).or_insert(0);
+        *entry = entry.wrapping_add(1);
         self.transport_failures.remove(thread_id);
         if let Some(session_id) = self.thread_to_session.remove(thread_id) {
             self.session_to_thread.remove(&session_id);
@@ -1015,18 +1043,21 @@ impl AcpHarness {
         existing_session_id: Option<&str>,
         mcp_servers: &[McpServerSpec],
     ) {
+        let cur_epoch = self.current_session_gen(thread_id);
         for pending in self.pending.values_mut() {
             match pending {
                 PendingRpc::NewSession {
                     thread_id: waiting,
                     turn: waiting_turn,
+                    epoch,
                     ..
                 }
                 | PendingRpc::LoadSession {
                     thread_id: waiting,
                     turn: waiting_turn,
+                    epoch,
                     ..
-                } if waiting == thread_id => {
+                } if waiting == thread_id && *epoch == cur_epoch => {
                     *waiting_turn = turn;
                     return;
                 }
@@ -1034,7 +1065,7 @@ impl AcpHarness {
             }
         }
         let Some(sid) = existing_session_id else {
-            self.request_new_session(thread_id, turn, cwd, false, mcp_servers);
+            self.request_new_session(thread_id, turn, cwd, false, mcp_servers, cur_epoch);
             return;
         };
         // A session another thread holds, or is loading, is not this thread's
@@ -1045,7 +1076,7 @@ impl AcpHarness {
             || self.loading_sessions.contains(sid)
             || self.history_loads.contains_key(sid);
         if !self.supports_load_session || taken {
-            self.request_new_session(thread_id, turn, cwd, true, mcp_servers);
+            self.request_new_session(thread_id, turn, cwd, true, mcp_servers, cur_epoch);
             return;
         }
         self.loading_sessions.insert(sid.to_string());
@@ -1060,6 +1091,7 @@ impl AcpHarness {
                 session_id: sid.to_string(),
                 cwd: cwd.to_string(),
                 mcp_servers: mcp_servers.to_vec(),
+                epoch: cur_epoch,
             },
         );
         let _ = self.on_writable();
@@ -1072,6 +1104,7 @@ impl AcpHarness {
         cwd: &str,
         afresh: bool,
         mcp_servers: &[McpServerSpec],
+        epoch: u64,
     ) {
         let req = NewSessionRequest::new(PathBuf::from(cwd)).mcp_servers(to_acp_mcp_servers(mcp_servers));
         let id = self.send_request(AGENT_METHOD_NAMES.session_new, &req);
@@ -1081,6 +1114,7 @@ impl AcpHarness {
                 thread_id: thread_id.to_string(),
                 turn,
                 afresh,
+                epoch,
             },
         );
         let _ = self.on_writable();
@@ -1491,7 +1525,7 @@ impl AcpHarness {
         let kind = call.fields.kind.map(|k| map_tool_kind(k).to_string());
         // The command or the change is shown as the Model wrote it, as an
         // act's is: the person answers for exactly that.
-        let (detail, path) = request_detail(call.fields.kind, &call.fields);
+        let (detail, path) = request_detail(call.fields.kind, &call.fields, &self.home);
         let raw_title = call
             .fields
             .title
@@ -1605,14 +1639,18 @@ impl AcpHarness {
                     }
                 }
                 PendingRpc::CloseProbe => {}
-                PendingRpc::NewSession { thread_id, turn, .. } => {
-                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
-                    events.push(AcpEvent::SessionFailed {
-                        thread_id,
-                        turn,
-                        message,
-                        no_models,
-                    });
+                PendingRpc::NewSession {
+                    thread_id, turn, epoch, ..
+                } => {
+                    if epoch == self.current_session_gen(&thread_id) {
+                        let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                        events.push(AcpEvent::SessionFailed {
+                            thread_id,
+                            turn,
+                            message,
+                            no_models,
+                        });
+                    }
                 }
                 PendingRpc::LoadSession {
                     thread_id,
@@ -1620,9 +1658,12 @@ impl AcpHarness {
                     session_id,
                     cwd,
                     mcp_servers,
+                    epoch,
                 } => {
                     self.loading_sessions.remove(&session_id);
-                    self.request_new_session(&thread_id, turn, &cwd, true, &mcp_servers);
+                    if epoch == self.current_session_gen(&thread_id) {
+                        self.request_new_session(&thread_id, turn, &cwd, true, &mcp_servers, epoch);
+                    }
                 }
                 PendingRpc::LoadHistory { thread_id, session_id } => {
                     self.history_loads.remove(&session_id);
@@ -1788,80 +1829,102 @@ impl AcpHarness {
                 thread_id,
                 turn,
                 afresh,
-            } => match serde_json::from_value::<NewSessionResponse>(result) {
-                // A session with no ID is no session: Lever could neither
-                // tell it from another nor load it again.
-                Ok(resp) if !resp.session_id.0.is_empty() => {
-                    let sid = resp.session_id.0.as_ref().to_string();
-                    let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
-                    let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
-                    if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
-                        self.model_config_id = Some(cid.clone());
+                epoch,
+            } => {
+                if epoch != self.current_session_gen(&thread_id) {
+                    if let Ok(resp) = serde_json::from_value::<NewSessionResponse>(result)
+                        && !resp.session_id.0.is_empty()
+                    {
+                        self.close_probe(resp.session_id);
                     }
-                    if self.bind_session(&thread_id, &sid) {
-                        if let Some(ref m) = current_model {
-                            self.session_models.insert(sid.clone(), m.clone());
+                } else {
+                    match serde_json::from_value::<NewSessionResponse>(result) {
+                        // A session with no ID is no session: Lever could neither
+                        // tell it from another nor load it again.
+                        Ok(resp) if !resp.session_id.0.is_empty() => {
+                            let sid = resp.session_id.0.as_ref().to_string();
+                            let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
+                            let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
+                            if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
+                                self.model_config_id = Some(cid.clone());
+                            }
+                            if self.bind_session(&thread_id, &sid) {
+                                if let Some(ref m) = current_model {
+                                    self.session_models.insert(sid.clone(), m.clone());
+                                }
+                                self.take_effort(&sid, resp.config_options.as_deref().unwrap_or(&[]));
+                                let modes = self.take_modes(&sid, resp.config_options.as_deref());
+                                if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
+                                    cat.modes = selector.modes.clone();
+                                }
+                                events.push(AcpEvent::SessionReady {
+                                    thread_id,
+                                    session_id: sid,
+                                    afresh,
+                                    catalog,
+                                    current_model,
+                                });
+                            } else {
+                                events.push(AcpEvent::SessionFailed {
+                                    thread_id,
+                                    turn,
+                                    message: "The harness gave this thread a session that another thread is using."
+                                        .to_string(),
+                                    no_models: false,
+                                });
+                            }
                         }
-                        self.take_effort(&sid, resp.config_options.as_deref().unwrap_or(&[]));
-                        let modes = self.take_modes(&sid, resp.config_options.as_deref());
-                        if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
-                            cat.modes = selector.modes.clone();
-                        }
-                        events.push(AcpEvent::SessionReady {
-                            thread_id,
-                            session_id: sid,
-                            afresh,
-                            catalog,
-                            current_model,
-                        });
-                    } else {
-                        events.push(AcpEvent::SessionFailed {
+                        _ => events.push(AcpEvent::SessionFailed {
                             thread_id,
                             turn,
-                            message: "The harness gave this thread a session that another thread is using.".to_string(),
+                            message: "The harness could not start a thread.".to_string(),
                             no_models: false,
-                        });
+                        }),
                     }
                 }
-                _ => events.push(AcpEvent::SessionFailed {
-                    thread_id,
-                    turn,
-                    message: "The harness could not start a thread.".to_string(),
-                    no_models: false,
-                }),
-            },
+            }
             PendingRpc::LoadSession {
                 thread_id,
                 turn,
                 session_id,
                 cwd,
                 mcp_servers,
+                epoch,
             } => {
                 self.loading_sessions.remove(&session_id);
-                match serde_json::from_value::<LoadSessionResponse>(result) {
-                    Ok(resp) if self.bind_session(&thread_id, &session_id) => {
-                        let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
-                        let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
-                        if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
-                            self.model_config_id = Some(cid.clone());
-                        }
-                        if let Some(ref m) = current_model {
-                            self.session_models.insert(session_id.clone(), m.clone());
-                        }
-                        self.take_effort(&session_id, resp.config_options.as_deref().unwrap_or(&[]));
-                        let modes = self.take_modes(&session_id, resp.config_options.as_deref());
-                        if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
-                            cat.modes = selector.modes.clone();
-                        }
-                        events.push(AcpEvent::SessionReady {
-                            thread_id,
-                            session_id,
-                            afresh: false,
-                            catalog,
-                            current_model,
-                        });
+                if epoch != self.current_session_gen(&thread_id) {
+                    if self.supports_close_session {
+                        let close = CloseSessionRequest::new(SessionId::new(session_id));
+                        let id = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
+                        self.pending.insert(id, PendingRpc::CloseProbe);
+                        let _ = self.on_writable();
                     }
-                    _ => self.request_new_session(&thread_id, turn, &cwd, true, &mcp_servers),
+                } else {
+                    match serde_json::from_value::<LoadSessionResponse>(result) {
+                        Ok(resp) if self.bind_session(&thread_id, &session_id) => {
+                            let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
+                            let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
+                            if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
+                                self.model_config_id = Some(cid.clone());
+                            }
+                            if let Some(ref m) = current_model {
+                                self.session_models.insert(session_id.clone(), m.clone());
+                            }
+                            self.take_effort(&session_id, resp.config_options.as_deref().unwrap_or(&[]));
+                            let modes = self.take_modes(&session_id, resp.config_options.as_deref());
+                            if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
+                                cat.modes = selector.modes.clone();
+                            }
+                            events.push(AcpEvent::SessionReady {
+                                thread_id,
+                                session_id,
+                                afresh: false,
+                                catalog,
+                                current_model,
+                            });
+                        }
+                        _ => self.request_new_session(&thread_id, turn, &cwd, true, &mcp_servers, epoch),
+                    }
                 }
             }
             PendingRpc::LoadHistory { thread_id, session_id } => {
@@ -3556,6 +3619,7 @@ fn extract_modes(options: &[SessionConfigOption]) -> Option<ModeSelector> {
 fn request_detail(
     kind: Option<ToolKind>,
     fields: &agent_client_protocol_schema::v1::ToolCallUpdateFields,
+    home: &Path,
 ) -> (Option<String>, Option<String>) {
     let content = fields.content.as_deref().unwrap_or(&[]);
     let diffs: Vec<_> = content
@@ -3620,7 +3684,7 @@ fn request_detail(
                 .title
                 .as_deref()
                 .filter(|t| *t == mcp::TOOL_MAKE_PROJECT || t.ends_with(&format!("_{}", mcp::TOOL_MAKE_PROJECT)))
-                .and_then(|_| input.and_then(mcp::format_make_project_detail));
+                .and_then(|_| input.and_then(|v| mcp::format_make_project_detail(v, home)));
             (mcp_detail.or_else(|| tool_detail(content, None, input)), None)
         }
     }
@@ -4130,7 +4194,12 @@ mod tests {
         let ask_first = json!({
             "mode": "primary",
             "description": "Asks before it runs a command or edits a file.",
-            "permission": { "bash": { "*": "ask" }, "edit": { "*": "ask" }, "crowbar_*": { "*": "ask" } },
+            "permission": {
+                "bash": { "*": "ask" },
+                "edit": { "*": "ask" },
+                "crowbar_*": { "*": "ask" },
+                "crowbar_make_project": { "*": "ask" }
+            },
         });
         assert_eq!(
             serde_json::from_str::<Value>(&opencode_config_content(None, &[])).unwrap(),
@@ -4415,8 +4484,9 @@ mod tests {
             "rawInput": { "command": "echo hi && id -un", "cwd": "/tmp" }
         }))
         .unwrap();
+        let home = Path::new("/home/person");
         assert_eq!(
-            request_detail(Some(ToolKind::Execute), &command),
+            request_detail(Some(ToolKind::Execute), &command, home),
             (Some("echo hi && id -un".to_string()), None)
         );
         let edit: agent_client_protocol_schema::v1::ToolCallUpdateFields = serde_json::from_value(json!({
@@ -4426,7 +4496,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            request_detail(Some(ToolKind::Edit), &edit),
+            request_detail(Some(ToolKind::Edit), &edit, home),
             (
                 Some("-alpha line\n+beta line".to_string()),
                 Some("/w/seed.txt".to_string())
@@ -4437,7 +4507,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            request_detail(Some(ToolKind::Edit), &raw_edit),
+            request_detail(Some(ToolKind::Edit), &raw_edit, home),
             (Some("+hello".to_string()), Some("/w/new.txt".to_string()))
         );
         // Lines taken out, with nothing put in their place, are the change.
@@ -4446,7 +4516,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            request_detail(Some(ToolKind::Edit), &deletion),
+            request_detail(Some(ToolKind::Edit), &deletion, home),
             (Some("-remove me".to_string()), Some("/w/old.txt".to_string()))
         );
     }

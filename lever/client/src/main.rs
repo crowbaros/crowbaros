@@ -29,7 +29,7 @@ usage: crowbar-agent                          talk with the Agent, a line at a t
        crowbar-agent --mode MODE \"<request>\"  start a thread in a mode
        crowbar-agent --resume ID --answer R A answer a thread's request R with A
        crowbar-agent --resume ID --unqueue Q  take back message Q that waits in a thread
-       crowbar-agent --resume ID --project N [--place DIR | --path DIR]
+       crowbar-agent --resume ID (--project N [--place DIR] | --path DIR)
                                               make a thread a project in ~/Projects/N or DIR
        crowbar-agent --stop ID                stop the working turn of a thread
        crowbar-agent models                   list the Models the harness offers
@@ -303,8 +303,8 @@ fn command(args: &[String]) -> Result<Command, String> {
             let Some(thread) = resumed else {
                 return Err("--project needs --resume ID, the thread to make a project".to_string());
             };
-            if place.is_some() && path.is_some() {
-                return Err("use either --place or --path, not both".to_string());
+            if path.is_some() && (project.is_some() || place.is_some()) {
+                return Err("use either --path or --project [--place], not both".to_string());
             }
             if project.is_none() && path.is_none() {
                 return Err("--place needs --project NAME".to_string());
@@ -316,7 +316,7 @@ fn command(args: &[String]) -> Result<Command, String> {
                 || unqueue.is_some()
                 || !words.is_empty()
             {
-                return Err("--project takes nothing but --resume and an optional --place or --path".to_string());
+                return Err("--project takes nothing but --resume and an optional --place".to_string());
             }
             return Ok(Command::MakeProject {
                 thread,
@@ -793,6 +793,7 @@ mod tests {
             &["--resume", "t-k3f9q2xz", "--project"],
             &["--resume", "t-k3f9q2xz", "--project", " "],
             &["--resume", "t-k3f9q2xz", "--place", "~/Code"],
+            &["--resume", "t-k3f9q2xz", "--project", "a", "--path", "~/x"],
             &[
                 "--resume",
                 "t-k3f9q2xz",
