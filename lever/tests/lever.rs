@@ -13169,7 +13169,7 @@ fn failed_delete_and_rejected_model_preserve_pending_session_reset() {
 fn mcp_make_project_works_with_relative_and_long_state_directories() {
     let uid = unsafe { libc::geteuid() };
 
-    for (label, use_relative) in [("relative", true), ("long", false)] {
+    for mode in ["relative", "long", "colliding-surface", "colliding-fallback"] {
         let dir = TempDir::new();
         let home = dir.0.join("lever-home");
         let launch_dir = dir.0.join("launch");
@@ -13178,17 +13178,40 @@ fn mcp_make_project_works_with_relative_and_long_state_directories() {
         let surface_dir = dir.0.join("s");
         let person_dir = dir.0.join("p");
         std::fs::create_dir_all(&surface_dir).unwrap();
-        let surface = surface_dir.join("s");
         let person = person_dir.join("p");
 
-        let (state_arg, state_abs) = if use_relative {
-            ("rel-state".to_string(), launch_dir.join("rel-state"))
-        } else {
-            let long_state = dir.0.join("a".repeat(40)).join("b".repeat(40)).join("c".repeat(40));
-            (long_state.to_str().unwrap().to_string(), long_state)
+        let (state_arg, state_abs, surface) = match mode {
+            "relative" => (
+                "rel-state".to_string(),
+                launch_dir.join("rel-state"),
+                surface_dir.join("s"),
+            ),
+            "long" => {
+                let long_state = dir.0.join("a".repeat(40)).join("b".repeat(40)).join("c".repeat(40));
+                (
+                    long_state.to_str().unwrap().to_string(),
+                    long_state,
+                    surface_dir.join("s"),
+                )
+            }
+            "colliding-surface" => {
+                let st = dir.0.join("st");
+                std::fs::create_dir_all(&st).unwrap();
+                (st.to_str().unwrap().to_string(), st.clone(), st.join("tools.sock"))
+            }
+            "colliding-fallback" => {
+                let long_state = dir.0.join("a".repeat(40)).join("b".repeat(40)).join("c".repeat(40));
+                std::fs::create_dir_all(&person_dir).unwrap();
+                (
+                    long_state.to_str().unwrap().to_string(),
+                    long_state,
+                    person_dir.join("tools.sock"),
+                )
+            }
+            _ => unreachable!(),
         };
 
-        let proj_name = format!("proj-{label}-state");
+        let proj_name = format!("proj-{mode}-state");
         let script = write_script(
             &dir.0,
             &json!({
@@ -13256,6 +13279,16 @@ fn mcp_make_project_works_with_relative_and_long_state_directories() {
 
         let mut client = handshake(&lever.person);
         client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        // Verify the surface listener is ALSO still reachable and wasn't replaced by MCP.
+        let mut surface_client = handshake(&lever.surface);
+        surface_client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        write_frame(&mut surface_client, &json!({ "op": "status" })).unwrap();
+        let status = read_until(&mut surface_client, |f| f["reply"] == "status");
+        assert!(
+            status.get("harnesses").is_some(),
+            "{mode}: surface status failed: {status}"
+        );
+
         write_frame(&mut client, &json!({ "op": "send", "text": "make project" })).unwrap();
         let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
         let mut text = String::new();
@@ -13271,7 +13304,7 @@ fn mcp_make_project_works_with_relative_and_long_state_directories() {
         let expected_dir = home.join("Projects").join(&proj_name);
         assert!(
             expected_dir.is_dir(),
-            "{label}: expected {} to exist; text={text}",
+            "{mode}: expected {} to exist; text={text}",
             expected_dir.display()
         );
         write_frame(&mut client, &json!({ "op": "resume", "thread": tid })).unwrap();

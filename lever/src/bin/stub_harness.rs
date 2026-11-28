@@ -1784,6 +1784,7 @@ fn emit_step(
 fn run_mcp_call(
     writer: &Writer,
     session_id: &SessionId,
+    session_cwd: &str,
     asking: &Asking<'_>,
     cancel: &CancelFlag,
     mcp_servers: &[McpServer],
@@ -1906,7 +1907,13 @@ fn run_mcp_call(
         return Asked::Went;
     };
 
-    let outcome = invoke_stdio_mcp(stdio, tool, arguments, send_meta_session.then_some(sid.as_str()));
+    let outcome = invoke_stdio_mcp(
+        stdio,
+        session_cwd,
+        tool,
+        arguments,
+        send_meta_session.then_some(sid.as_str()),
+    );
     call.status = if outcome.0 {
         ToolCallStatus::Completed
     } else {
@@ -1925,11 +1932,15 @@ fn run_mcp_call(
 
 fn invoke_stdio_mcp(
     stdio: &agent_client_protocol_schema::v1::McpServerStdio,
+    session_cwd: &str,
     tool: &str,
     arguments: &Value,
     meta_session: Option<&str>,
 ) -> (bool, String) {
     let mut cmd = std::process::Command::new(&stdio.command);
+    if !session_cwd.is_empty() && std::path::Path::new(session_cwd).is_dir() {
+        cmd.current_dir(session_cwd);
+    }
     cmd.args(&stdio.args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -2950,6 +2961,7 @@ fn run(options: Options) -> Result<(), String> {
                             let asked = run_mcp_call(
                                 &writer,
                                 &session_id,
+                                &session_cwd,
                                 &asking,
                                 heard,
                                 &servers,
@@ -3076,6 +3088,7 @@ fn run(options: Options) -> Result<(), String> {
                             let _ = run_mcp_call(
                                 &writer,
                                 &session_id,
+                                &session_cwd,
                                 &asking,
                                 &after_cancel,
                                 &servers,
