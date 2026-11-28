@@ -157,12 +157,16 @@ pub fn list_subdirectories(raw: Option<&str>, home: &Path) -> Result<DirListing,
     let mut entries: Vec<(String, PathBuf)> = read
         .flatten()
         .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
+            // Skip names or paths that cannot round-trip cleanly through the
+            // UTF-8 JSON protocol (non-UTF-8 bytes or control characters).
+            let raw_name = entry.file_name();
+            let name = raw_name.to_str()?;
+            if name.starts_with('.') || name.chars().any(char::is_control) {
                 return None;
             }
             let path = entry.path();
-            path.is_dir().then_some((name, path))
+            path.to_str()?;
+            path.is_dir().then_some((name.to_string(), path))
         })
         .collect();
     entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()).then_with(|| a.0.cmp(&b.0)));
@@ -387,6 +391,23 @@ mod tests {
             resolve_project_path("my-app", Some(&trailing.to_string_lossy()), &base).unwrap(),
             trailing.join("my-app")
         );
+
+        // Non-UTF-8 directory names are omitted so every listed folder can
+        // round-trip through the UTF-8 JSON protocol.
+        #[cfg(unix)]
+        {
+            use std::ffi::OsStr;
+            use std::os::unix::ffi::OsStrExt;
+            let bad = base.join(OsStr::from_bytes(b"bad-\xff-dir"));
+            if std::fs::create_dir_all(&bad).is_ok() {
+                let listed = list_subdirectories(Some(&base.to_string_lossy()), &base).unwrap();
+                assert!(
+                    !listed.entries.iter().any(|(n, _)| n.starts_with("bad-")),
+                    "non-UTF-8 dir should be excluded: {:?}",
+                    listed.entries
+                );
+            }
+        }
 
         let _ = std::fs::remove_dir_all(&base);
     }

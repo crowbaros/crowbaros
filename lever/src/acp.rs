@@ -484,7 +484,8 @@ pub struct AcpHarness {
     /// Pre-move root session IDs detached from a thread, kept with the turn
     /// number that last ran on that session until the thread is forgotten or
     /// the session ID is deleted/reassigned, so late subagent updates from the
-    /// old session still route to the thread and attach to their original turn.
+    /// old session still route to the thread (direct children attach to this
+    /// turn; nested children resolve their parent subagent's recorded turn).
     retired_root_to_thread: HashMap<String, (String, Option<u64>)>,
     /// Original turn number recorded for a subagent routed from a retired
     /// pre-move session.
@@ -2532,10 +2533,11 @@ impl AcpHarness {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty());
+        let had_child = self.child_to_thread.contains_key(child_sid);
         if !self.register_child(&thread_id, child_sid, title) {
             return;
         }
-        if let Some(turn) = retired_turn {
+        if !had_child && let Some(turn) = retired_turn {
             self.child_retired_turn.entry(child_sid.to_string()).or_insert(turn);
         }
         // A child of another of the thread's subagents was launched by it,

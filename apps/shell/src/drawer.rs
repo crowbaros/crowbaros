@@ -225,7 +225,8 @@ fn draft_key(state: &agent::AgentState) -> String {
 }
 
 /// Joins a base place (`~/Projects`, `~/Code`, `/home/crowbar`, etc.) with a project name when given.
-/// Preserves trailing spaces in `place` (such as a picked folder named `notes `).
+/// Preserves trailing spaces in `place` (such as a picked folder named `notes `);
+/// Lever keeps them when that exact directory exists and trims otherwise.
 fn join_project_place(place: &str, name: &str) -> String {
     let base = place.trim_start().trim_end_matches('/');
     let base = if base.trim().is_empty() { "/" } else { base };

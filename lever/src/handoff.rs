@@ -99,15 +99,15 @@ pub fn render_thread_handoff(
             let pair_budget = remaining.saturating_sub(first_sep + newest_sep);
             if pair_budget > 64 {
                 let default_first = (pair_budget / 3).max(128).min(pair_budget / 2);
+                let (first_head, _) = format_turn_parts(prior[0], None);
+                let first_min = first_head.len().min(default_first).max(64.min(pair_budget / 2));
                 let first_cap = if rendered[newest].len() <= pair_budget {
                     let spare = pair_budget - rendered[newest].len();
-                    rendered[0].len().min(spare.max(default_first))
+                    rendered[0].len().min(spare.max(first_min))
                 } else {
                     // When both turns are large, preserve Turn 1's opening goal
                     // without letting a verbose Turn 1 answer crowd out Turn N's
                     // person message if both headers + answer tail fit together.
-                    let (first_head, _) = format_turn_parts(prior[0], None);
-                    let first_min = first_head.len().min(default_first).max(64.min(pair_budget / 2));
                     let (newest_head, newest_body) = format_turn_parts(prior[newest], None);
                     let newest_min_body = if newest_body.is_empty() {
                         0
@@ -620,7 +620,7 @@ mod tests {
         let t1_verbose = sample_turn(1, "ORIGINAL_GOAL_TOKEN", &"a".repeat(20 * 1024));
         let long_person_26k = format!("PROMPT26_START {} PROMPT26_END", "p".repeat(26 * 1024));
         let t2_26k = sample_turn(2, &long_person_26k, &huge_answer);
-        let rec_both = sample_record(vec![t1_verbose, t2_26k]);
+        let rec_both = sample_record(vec![t1_verbose.clone(), t2_26k]);
         let rendered_both =
             render_thread_handoff(&rec_both, "/home/person/Projects/demo", None, MAX_HANDOFF_BYTES).unwrap();
         assert!(rendered_both.len() <= MAX_HANDOFF_BYTES);
@@ -628,5 +628,17 @@ mod tests {
         assert!(rendered_both.contains("PROMPT26_START"));
         assert!(rendered_both.contains("PROMPT26_END"));
         assert!(rendered_both.contains("FINAL_ANSWER_TAIL"));
+
+        // Monotonicity check: the same 26 KiB newest person message with a short
+        // answer (so Turn 2 fits within pair_budget) must also survive intact.
+        let t2_short = sample_turn(2, &long_person_26k, "ok SHORT_TAIL");
+        let rec_short = sample_record(vec![t1_verbose, t2_short]);
+        let rendered_short =
+            render_thread_handoff(&rec_short, "/home/person/Projects/demo", None, MAX_HANDOFF_BYTES).unwrap();
+        assert!(rendered_short.len() <= MAX_HANDOFF_BYTES);
+        assert!(rendered_short.contains("ORIGINAL_GOAL_TOKEN"));
+        assert!(rendered_short.contains("PROMPT26_START"));
+        assert!(rendered_short.contains("PROMPT26_END"));
+        assert!(rendered_short.contains("SHORT_TAIL"));
     }
 }
