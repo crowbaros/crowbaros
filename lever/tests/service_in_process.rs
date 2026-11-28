@@ -1226,7 +1226,7 @@ fn in_process_mode_and_model_set_failures_preserve_prior_session_state() {
 }
 
 #[test]
-fn in_process_declining_steer_falls_back_to_queue_and_failed_fallback_leaves_no_orphan_on_restart() {
+fn in_process_steering_checks_before_commit_and_failed_commit_neither_dispatches_nor_replays() {
     let dir = TempDir::new();
     let (mut svc, handle, mut log, db_path) = build_service(&dir, full_capabilities(), None);
 
@@ -1240,29 +1240,39 @@ fn in_process_declining_steer_falls_back_to_queue_and_failed_fallback_leaves_no_
     drive_init_and_session(&mut svc, &handle, &mut log, &tid, "s-1", "ask-first");
     handle.take_calls();
 
-    // 1. Adapter advertises steering, but steer() declines (returns false):
-    //    Service falls back cleanly to queueing without leaving a PendingSteer.
+    // 1. Adapter advertises steering globally, but declines steering for this session
+    //    (`can_steer == false`): Service queues directly without calling `steer()`.
     handle.set_decline_steer(true);
     let fallback = svc
         .handle_request(
             2,
             true,
             false,
-            &json!({ "op": "send", "thread": tid, "text": "queued via fallback" }),
+            &json!({ "op": "send", "thread": tid, "text": "queued via can_steer" }),
             &mut log,
         )
         .reply
         .unwrap();
     assert_eq!(fallback["reply"], "queued");
+    assert!(
+        !handle
+            .take_calls()
+            .iter()
+            .any(|c| matches!(c, RecordedCall::Steer { .. })),
+        "declining session must never receive steer()"
+    );
 
-    // 2. Now fail BOTH UPDATE and DELETE on `queued` while steer() declines:
-    //    Because steering reservation and fallback run inside one transaction,
-    //    the transaction rolls back cleanly without needing DELETE, returning
-    //    storage-error and leaving zero rows for restart recovery to resurrect.
+    // 2. Adapter accepts steering (`can_steer == true`), and SQLite fails AFTER the
+    //    `INSERT INTO queued` succeeds (at `touch_thread` inside the transaction, with
+    //    both UPDATE and DELETE on `queued` also blocked):
+    //    - Transaction rolls back cleanly -> no row committed or resurrected on restart.
+    //    - `steer()` is NEVER called because reservation failed to commit.
+    handle.set_decline_steer(false);
     let db = rusqlite::Connection::open(&db_path).unwrap();
     db.execute_batch("DELETE FROM queued;").unwrap();
     db.execute_batch(
-        "CREATE TRIGGER deny_queued_update BEFORE UPDATE ON queued BEGIN SELECT RAISE(ABORT, 'disk full'); END;\
+        "CREATE TRIGGER deny_thread_touch BEFORE UPDATE ON threads BEGIN SELECT RAISE(ABORT, 'disk full'); END;\
+         CREATE TRIGGER deny_queued_update BEFORE UPDATE ON queued BEGIN SELECT RAISE(ABORT, 'disk full'); END;\
          CREATE TRIGGER deny_queued_delete BEFORE DELETE ON queued BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
     )
     .unwrap();
@@ -1271,21 +1281,30 @@ fn in_process_declining_steer_falls_back_to_queue_and_failed_fallback_leaves_no_
             3,
             true,
             false,
-            &json!({ "op": "send", "thread": tid, "text": "must not resurrect" }),
+            &json!({ "op": "send", "thread": tid, "text": "must not steer or resurrect" }),
             &mut log,
         )
         .reply
         .unwrap();
     assert_eq!(failed["reply"], "error");
     assert_eq!(failed["code"], "storage-error");
-    db.execute_batch("DROP TRIGGER deny_queued_update; DROP TRIGGER deny_queued_delete;")
-        .unwrap();
+    assert!(
+        !handle
+            .take_calls()
+            .iter()
+            .any(|c| matches!(c, RecordedCall::Steer { .. })),
+        "failed steering commit must never dispatch steer() to the harness"
+    );
+    db.execute_batch(
+        "DROP TRIGGER deny_thread_touch; DROP TRIGGER deny_queued_update; DROP TRIGGER deny_queued_delete;",
+    )
+    .unwrap();
 
     // Reopen SQLite as a fresh Lever startup: no orphaned row may appear.
     let reopened = Store::open(&db_path, unix_now()).unwrap();
     assert!(
         reopened.queued_of(&tid, true).unwrap().is_empty(),
-        "failed steering fallback must not leave a row that restart turns into queued"
+        "failed steering transaction must not leave a row that restart turns into queued"
     );
 }
 

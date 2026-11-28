@@ -463,10 +463,16 @@ pub trait Harness {
 
     /// Sends a person's prompt turn to `session_id`.
     fn send_prompt(&mut self, thread_id: &str, turn: u64, session_id: &str, context: Option<&str>, text: &str);
-    /// Steers a message into the running turn of `session_id`. Returns `false`
-    /// if the adapter cannot send a steering request (for example when the
-    /// harness lacks steering support), so Lever can fall back to queueing.
-    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) -> bool;
+    /// Whether `session_id` can accept a steering request right now. Checked
+    /// before Lever commits a steering reservation to SQLite so an adapter
+    /// decline needs no post-commit fallback write and a failed commit never
+    /// dispatches a steer to the harness.
+    fn can_steer(&self, _session_id: &str) -> bool {
+        self.capabilities().supports_steering
+    }
+    /// Steers a message into the running turn of `session_id`. Callers check
+    /// [`Self::can_steer`] and commit the steering reservation first.
+    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str);
     /// Requests cancellation of an active turn or subagent session.
     fn cancel_session(&mut self, session_id: &str);
     /// Answers (or withdraws with `None`) a waiting permission request.

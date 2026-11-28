@@ -926,8 +926,8 @@ fn generic_acp_dialect_maps_canonical_modes_and_declines_steer_cleanly() {
     let mut harness =
         AcpHarness::spawn_with_dialect(&cfg, HarnessLaunchOptions::default(), Box::new(GenericAcpDialect)).unwrap();
     assert!(harness.bind_session("t1", "s-1"));
-    // GenericAcpDialect has no steering method -> steer() returns false cleanly.
-    assert!(!harness.steer("t1", 1, "s-1", None, "hi"));
+    // GenericAcpDialect has no steering method -> can_steer() returns false cleanly.
+    assert!(!harness.can_steer("s-1"));
 
     // Requesting `ask-first` when the generic harness keeps `full-access` yields ModeSetFailed.
     harness.set_session_mode("t1", Some(1), "s-1", "ask-first");

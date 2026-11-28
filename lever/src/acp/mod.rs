@@ -505,7 +505,7 @@ impl Harness for AcpHarness {
     fn capabilities(&self) -> HarnessCapabilities {
         HarnessCapabilities {
             supports_modes: self.mode_config_id.is_some(),
-            supports_steering: self.initialized && self.supports_steering,
+            supports_steering: self.initialized && self.supports_steering && self.dialect.steering_method().is_some(),
             supports_list_sessions: self.initialized && self.supports_list_sessions,
             supports_load_session: self.initialized && self.supports_load_session,
             supports_delete_session: self.initialized && self.supports_delete_session,
@@ -735,12 +735,12 @@ impl Harness for AcpHarness {
         let _ = self.transport.on_writable();
     }
 
-    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) -> bool {
+    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) {
         if !self.initialized || !self.supports_steering {
-            return false;
+            return;
         }
         let Some(method) = self.dialect.steering_method() else {
-            return false;
+            return;
         };
         let params = json!({
             "sessionId": session_id,
@@ -755,7 +755,6 @@ impl Harness for AcpHarness {
             },
         );
         let _ = self.transport.on_writable();
-        true
     }
 
     fn cancel_session(&mut self, session_id: &str) {

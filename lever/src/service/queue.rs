@@ -42,12 +42,9 @@ impl Service {
         wanted: Wanted<'_>,
         log: &mut Log,
     ) -> RequestOutcome {
-        // A harness that cannot steer has the message wait behind the turn.
-        // So does a thread whose subagent asks, for every harness (ADR 0037).
-        if !self
-            .harness
-            .as_ref()
-            .is_some_and(|h| h.capabilities().supports_steering)
+        // A harness that cannot steer this session has the message wait behind
+        // the turn. So does a thread whose subagent asks, for every harness (ADR 0037).
+        if !self.harness.as_ref().is_some_and(|h| h.can_steer(session_id))
             || self.turns.has_waiting_subagent_request(thread_id)
         {
             return self.queue_message(peer_id, is_person, thread_id, meta, text, wanted, log);
@@ -58,35 +55,23 @@ impl Service {
         }
         let (context, context_prompt) = self.desktop_context(is_person);
         let context_json = context.as_ref().map(Value::to_string);
+        // Commit the steering reservation before sending the RPC so a failed
+        // write or commit never dispatches a steer to the harness.
+        let queued =
+            match self
+                .store
+                .insert_queued(thread_id, turn, text, context_json.as_deref(), "steering", unix_now())
+            {
+                Ok(queued) => queued,
+                Err(err) => {
+                    store_failed(log, &err);
+                    return error_outcome("storage-error", &err);
+                }
+            };
         let steer = self.turns.next_steer;
         self.turns.next_steer += 1;
-        let harness = &mut self.harness;
-        let (sent, queued) = match self.store.insert_steering_or_queue(
-            thread_id,
-            turn,
-            text,
-            context_json.as_deref(),
-            unix_now(),
-            || {
-                harness
-                    .as_mut()
-                    .is_some_and(|h| h.steer(thread_id, steer, session_id, context_prompt.as_deref(), text))
-            },
-        ) {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                store_failed(log, &err);
-                return error_outcome("storage-error", &err);
-            }
-        };
-        if !sent {
-            let effects = self.announce_queued(Some(peer_id), thread_id, turn, &queued, context_prompt);
-            let reply = effects.replies.into_iter().next();
-            return RequestOutcome {
-                reply: reply.as_ref().map(|r| r.message.clone()),
-                subscribe: reply.and_then(|r| r.subscribe),
-                broadcasts: effects.broadcasts,
-            };
+        if let Some(harness) = self.harness.as_mut() {
+            harness.steer(thread_id, steer, session_id, context_prompt.as_deref(), text);
         }
         self.turns.pending_steers.push(PendingSteer {
             steer,

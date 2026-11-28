@@ -575,10 +575,15 @@ impl Harness for FakeHarness {
         });
     }
 
-    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) -> bool {
+    fn can_steer(&self, _session_id: &str) -> bool {
+        let g = self.handle.inner.lock().unwrap();
+        g.initialized && g.capabilities.supports_steering && !g.decline_steer
+    }
+
+    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) {
         let mut g = self.handle.inner.lock().unwrap();
         if !g.initialized || !g.capabilities.supports_steering || g.decline_steer {
-            return false;
+            return;
         }
         g.calls.push(RecordedCall::Steer {
             thread_id: thread_id.to_string(),
@@ -587,7 +592,6 @@ impl Harness for FakeHarness {
             context: context.map(str::to_string),
             text: text.to_string(),
         });
-        true
     }
 
     fn cancel_session(&mut self, session_id: &str) {
