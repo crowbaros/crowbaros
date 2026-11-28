@@ -225,9 +225,10 @@ fn draft_key(state: &agent::AgentState) -> String {
 }
 
 /// Joins a base place (`~/Projects`, `~/Code`, `/home/crowbar`, etc.) with a project name when given.
+/// Preserves trailing spaces in `place` (such as a picked folder named `notes `).
 fn join_project_place(place: &str, name: &str) -> String {
-    let base = place.trim().trim_end_matches('/');
-    let base = if base.is_empty() { "/" } else { base };
+    let base = place.trim_start().trim_end_matches('/');
+    let base = if base.trim().is_empty() { "/" } else { base };
     let trimmed = name.trim();
     if trimmed.is_empty() {
         base.to_string()
@@ -236,6 +237,12 @@ fn join_project_place(place: &str, name: &str) -> String {
     } else {
         format!("{base}/{trimmed}")
     }
+}
+
+/// Normalizes a folder input for `list-dirs` browsing while preserving trailing
+/// spaces so picked folders like `~/notes ` reopen in the same directory.
+fn browse_start_path(folder: &str) -> Option<String> {
+    (!folder.trim().is_empty()).then(|| folder.trim_start().to_string())
 }
 
 /// Validates the inline "Make this a project" form and returns `(name, place, path)` for Lever.
@@ -636,8 +643,7 @@ impl AgentSurface {
                         self.project_error = None;
                         self.project_browse_open = true;
                         self.project_browse_loading = true;
-                        let path = (!folder.trim().is_empty()).then(|| folder.trim_start().to_string());
-                        tx.list_dirs(path);
+                        tx.list_dirs(browse_start_path(&folder));
                     } else {
                         self.project_error = Some("The Agent is not reachable right now.".into());
                     }
@@ -3627,8 +3633,8 @@ impl Render for AgentSurface {
 #[cfg(test)]
 mod tests {
     use super::{
-        display_folder_path, inferred_person_home, join_project_place, list_for_key,
-        place_suggestions, reconcile_draft_on_sent, should_answer_with_alt_digit,
+        browse_start_path, display_folder_path, inferred_person_home, join_project_place,
+        list_for_key, place_suggestions, reconcile_draft_on_sent, should_answer_with_alt_digit,
         should_reset_offer_on_menu_close, should_take_composer_enter, validate_project_form,
     };
     use crate::slash::MenuKind;
@@ -3740,6 +3746,10 @@ mod tests {
         assert_eq!(join_project_place("~/Projects", "  notes "), "~/Projects/notes");
         assert_eq!(join_project_place("~/Code", "notes"), "~/Code/notes");
         assert_eq!(join_project_place("~/Code/", ""), "~/Code");
+        assert_eq!(join_project_place("~/notes ", "my-app"), "~/notes /my-app");
+        assert_eq!(join_project_place("~/notes ", ""), "~/notes ");
+        assert_eq!(browse_start_path("  ~/notes "), Some("~/notes ".into()));
+        assert_eq!(browse_start_path("   "), None);
         assert_eq!(display_folder_path("/home/crowbar/Projects/notes", Some("/home/crowbar")), "~/Projects/notes");
         assert_eq!(display_folder_path("/home/crowbar", Some("/home/crowbar")), "~");
 

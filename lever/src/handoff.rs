@@ -98,13 +98,25 @@ pub fn render_thread_handoff(
             // rest of the budget to the newest turn while keeping its Person line.
             let pair_budget = remaining.saturating_sub(first_sep + newest_sep);
             if pair_budget > 64 {
+                let default_first = (pair_budget / 3).max(128).min(pair_budget / 2);
                 let first_cap = if rendered[newest].len() <= pair_budget {
                     let spare = pair_budget - rendered[newest].len();
-                    rendered[0]
-                        .len()
-                        .min(spare.max((pair_budget / 3).max(128).min(pair_budget / 2)))
+                    rendered[0].len().min(spare.max(default_first))
                 } else {
-                    rendered[0].len().min((pair_budget / 3).max(128).min(pair_budget / 2))
+                    // When both turns are large, preserve Turn 1's opening goal
+                    // without letting a verbose Turn 1 answer crowd out Turn N's
+                    // person message if both headers + answer tail fit together.
+                    let (first_head, _) = format_turn_parts(prior[0], None);
+                    let first_min = first_head.len().min(default_first).max(64.min(pair_budget / 2));
+                    let (newest_head, newest_body) = format_turn_parts(prior[newest], None);
+                    let newest_min_body = if newest_body.is_empty() {
+                        0
+                    } else {
+                        (pair_budget / 4).clamp(64, 2048).min(pair_budget / 2)
+                    };
+                    let newest_need = newest_head.len() + newest_min_body + usize::from(!newest_body.is_empty());
+                    let max_first_for_newest = pair_budget.saturating_sub(newest_need).max(first_min);
+                    rendered[0].len().min(default_first.min(max_first_for_newest))
                 };
                 let first_entry = if rendered[0].len() <= first_cap {
                     rendered[0].clone()
@@ -602,5 +614,19 @@ mod tests {
         assert!(rendered_long.contains("PERSON_START"));
         assert!(rendered_long.contains("PERSON_END"));
         assert!(rendered_long.contains("FINAL_ANSWER_TAIL"));
+
+        // Even when Turn 1 also has a verbose answer, a 26 KiB newest person
+        // message that fits alongside the opening goal and answer tail survives.
+        let t1_verbose = sample_turn(1, "ORIGINAL_GOAL_TOKEN", &"a".repeat(20 * 1024));
+        let long_person_26k = format!("PROMPT26_START {} PROMPT26_END", "p".repeat(26 * 1024));
+        let t2_26k = sample_turn(2, &long_person_26k, &huge_answer);
+        let rec_both = sample_record(vec![t1_verbose, t2_26k]);
+        let rendered_both =
+            render_thread_handoff(&rec_both, "/home/person/Projects/demo", None, MAX_HANDOFF_BYTES).unwrap();
+        assert!(rendered_both.len() <= MAX_HANDOFF_BYTES);
+        assert!(rendered_both.contains("ORIGINAL_GOAL_TOKEN"));
+        assert!(rendered_both.contains("PROMPT26_START"));
+        assert!(rendered_both.contains("PROMPT26_END"));
+        assert!(rendered_both.contains("FINAL_ANSWER_TAIL"));
     }
 }

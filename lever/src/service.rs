@@ -6439,12 +6439,17 @@ impl Service {
     }
 
     /// The turn a subagent's update belongs to: a nested subagent's is the
-    /// turn of the subagent that launched it, a delayed subagent from a
-    /// retired pre-move session keeps that session's turn, and otherwise the
-    /// thread's current or latest turn.
+    /// turn of the subagent that launched it (whether still working or already
+    /// recorded in SQLite), a delayed direct subagent from a retired pre-move
+    /// session keeps that session's turn, and otherwise the thread's current or
+    /// latest turn.
     fn turn_for_subagent(&self, thread_id: &str, harness_subagent_id: &str) -> Option<u64> {
         self.launcher(thread_id, harness_subagent_id)
             .map(|s| s.turn)
+            .or_else(|| {
+                let launcher_sid = self.harness.as_ref()?.launcher_of(harness_subagent_id)?;
+                self.store.subagent_turn(thread_id, launcher_sid).ok().flatten()
+            })
             .or_else(|| {
                 self.harness
                     .as_ref()

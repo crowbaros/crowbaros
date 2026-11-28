@@ -2096,6 +2096,18 @@ impl Store {
             .map_err(|e| format!("could not query subagent: {e}"))
     }
 
+    /// Returns the turn number a recorded subagent belongs to, if known.
+    pub fn subagent_turn(&self, thread_id: &str, harness_session_id: &str) -> Result<Option<u64>, String> {
+        self.conn
+            .query_row(
+                "SELECT turn_number FROM subagents WHERE thread_id = ?1 AND harness_session_id = ?2",
+                params![thread_id, harness_session_id],
+                |r| Ok(r.get::<_, i64>(0)? as u64),
+            )
+            .optional()
+            .map_err(|e| format!("could not query subagent turn: {e}"))
+    }
+
     pub fn upsert_subagent(&self, patch: &SubagentPatch<'_>, now: i64) -> Result<(u64, SubagentRecord), String> {
         // All of it, or none: the record never holds half a change.
         self.all_or_none("keep a subagent", || self.upsert_subagent_unguarded(patch, now))

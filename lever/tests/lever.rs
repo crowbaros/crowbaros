@@ -12837,8 +12837,6 @@ fn queued_message_draining_after_move_still_routes_delayed_old_session_subagent(
                 {
                     "match": "move-and-queue",
                     "steps": [
-                        { "kind": "subagent_start", "id": "ses_parent_t1", "title": "Turn 1 parent" },
-                        { "kind": "subagent_end", "subagent": "ses_parent_t1", "status": "completed" },
                         {
                             "kind": "mcp_call",
                             "id": "call_q_move",
@@ -12862,6 +12860,14 @@ fn queued_message_draining_after_move_still_routes_delayed_old_session_subagent(
                         { "kind": "subagent_text", "subagent": "ses_nested_late", "text": "LATE_NESTED_RESULT" },
                         { "kind": "subagent_end", "subagent": "ses_nested_late", "status": "completed" }
                     ]
+                },
+                {
+                    "match": "turn1-parent",
+                    "steps": [
+                        { "kind": "subagent_start", "id": "ses_parent_t1", "title": "Turn 1 parent" },
+                        { "kind": "subagent_end", "subagent": "ses_parent_t1", "status": "completed" },
+                        { "kind": "text", "text": "Turn 1 parent finished" }
+                    ]
                 }
             ]
         }),
@@ -12872,10 +12878,18 @@ fn queued_message_draining_after_move_still_routes_delayed_old_session_subagent(
     let mut client = handshake(&lever.person);
     client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
 
-    // Start Turn 1, wait until `make_project` broadcasts `thread-updated`, then
-    // queue a follow-up message while Turn 1 is still finishing its pause.
-    write_frame(&mut client, &json!({ "op": "send", "text": "move-and-queue" })).unwrap();
+    // Turn 1 runs a parent subagent that finishes on Turn 1.
+    write_frame(&mut client, &json!({ "op": "send", "text": "turn1-parent" })).unwrap();
     let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+    let _ = read_until(&mut client, |f| f["event"] == "done" && f["turn"] == 1);
+
+    // Turn 2 calls `make_project`, and while Turn 2 is finishing its pause we
+    // queue Turn 3 behind it.
+    write_frame(
+        &mut client,
+        &json!({ "op": "send", "thread": tid, "text": "move-and-queue" }),
+    )
+    .unwrap();
     let _ = read_until(&mut client, |f| {
         f["event"] == "thread-updated" && f.get("cwd").is_some()
     });
@@ -12888,78 +12902,96 @@ fn queued_message_draining_after_move_still_routes_delayed_old_session_subagent(
     let q_reply = read_until(&mut client, |f| f.get("reply").is_some());
     assert_eq!(q_reply["reply"], "queued", "{q_reply}");
 
-    // Turn 1 ends, queued Turn 2 drains immediately into `proj-queued`, AND both
-    // the direct delayed subagent and a nested child of Turn 1's finished parent
-    // arriving 150ms later must still route and stay under Turn 1.
+    // Turn 2 ends, queued Turn 3 drains immediately into `proj-queued`, AND:
+    // - `Delayed helper` (direct child of retired `ses-1` on Turn 2) lands on Turn 2,
+    // - `Delayed nested helper` (child of Turn 1's finished parent) lands on Turn 1,
+    // - Turn 3 owns neither.
     let proj_q = home.join("Projects").join("proj-queued");
     let mut saw_direct_done = false;
     let mut saw_nested_done = false;
     let mut saw_subagent_text = false;
     let mut saw_nested_text = false;
-    let mut saw_turn2_done = false;
-    let mut turn2_text = String::new();
-    while !(saw_direct_done && saw_nested_done && saw_turn2_done) {
+    let mut saw_turn3_done = false;
+    let mut turn3_text = String::new();
+    while !(saw_direct_done && saw_nested_done && saw_turn3_done) {
         let f = read_frame(&mut client).unwrap();
-        if f["event"] == "text" && f["turn"] == 2 {
-            turn2_text.push_str(f["text"].as_str().unwrap());
+        if f["event"] == "text" && f["turn"] == 3 {
+            turn3_text.push_str(f["text"].as_str().unwrap());
         }
         if f["event"] == "subagent-text" {
             let text = f["text"].as_str().unwrap_or("");
             if text.contains("LATE_QUEUED_CHILD_RESULT") {
                 assert_eq!(
-                    f["turn"], 1,
-                    "delayed old-session subagent-text must belong to Turn 1, not Turn 2: {f}"
+                    f["turn"], 2,
+                    "delayed direct child of Turn 2 must belong to Turn 2: {f}"
                 );
                 saw_subagent_text = true;
             }
             if text.contains("LATE_NESTED_RESULT") {
                 assert_eq!(
                     f["turn"], 1,
-                    "delayed nested old-session subagent-text must belong to Turn 1, not Turn 2: {f}"
+                    "delayed nested child of Turn 1 parent must belong to Turn 1: {f}"
                 );
                 saw_nested_text = true;
             }
         }
         if f["event"] == "subagent" {
-            assert_eq!(
-                f["turn"], 1,
-                "delayed old-session subagent event must belong to Turn 1, not Turn 2: {f}"
-            );
-            if f["state"] == "done" {
-                match f["title"].as_str() {
-                    Some("Delayed helper") => saw_direct_done = true,
-                    Some("Delayed nested helper") => saw_nested_done = true,
-                    _ => {}
+            match f["title"].as_str() {
+                Some("Delayed helper") => {
+                    assert_eq!(f["turn"], 2, "direct delayed child must belong to Turn 2: {f}");
+                    if f["state"] == "done" {
+                        saw_direct_done = true;
+                    }
                 }
+                Some("Delayed nested helper") => {
+                    assert_eq!(f["turn"], 1, "nested delayed child must belong to Turn 1: {f}");
+                    if f["state"] == "done" {
+                        saw_nested_done = true;
+                    }
+                }
+                _ => {}
             }
         }
-        if f["event"] == "done" && f["turn"] == 2 {
-            saw_turn2_done = true;
+        if f["event"] == "done" && f["turn"] == 3 {
+            saw_turn3_done = true;
         }
     }
     assert!(
-        turn2_text.contains(&format!("CWD={}", proj_q.display())),
-        "{turn2_text}"
+        turn3_text.contains(&format!("CWD={}", proj_q.display())),
+        "{turn3_text}"
     );
     assert!(saw_subagent_text, "late subagent text was not routed");
     assert!(saw_nested_text, "late nested subagent text was not routed");
 
-    // Verify saved record also records all Turn 1 subagents (including the delayed
-    // direct and nested children) under Turn 1 only.
+    // Verify saved record attributes each subagent to its true turn.
     write_frame(&mut client, &json!({ "op": "resume", "thread": tid })).unwrap();
     let resumed = read_until(&mut client, |f| f["reply"] == "resumed");
-    let turn1_subs = resumed["turns"][0]["subagents"].as_array().unwrap();
-    let turn2_subs = resumed["turns"][1]["subagents"].as_array().unwrap();
-    let turn1_titles: Vec<&str> = turn1_subs.iter().filter_map(|s| s["title"].as_str()).collect();
-    assert!(
-        turn1_titles.contains(&"Turn 1 parent")
-            && turn1_titles.contains(&"Delayed helper")
-            && turn1_titles.contains(&"Delayed nested helper"),
-        "expected all three Turn 1 subagents under Turn 1: {resumed}"
+    let turn1_titles: Vec<&str> = resumed["turns"][0]["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["title"].as_str())
+        .collect();
+    let turn2_titles: Vec<&str> = resumed["turns"][1]["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["title"].as_str())
+        .collect();
+    let turn3_subs = resumed["turns"][2]["subagents"].as_array().unwrap();
+    assert_eq!(
+        turn1_titles,
+        vec!["Turn 1 parent", "Delayed nested helper"],
+        "Turn 1 must own its parent and delayed nested child: {resumed}"
+    );
+    assert_eq!(
+        turn2_titles,
+        vec!["Delayed helper"],
+        "Turn 2 must own its delayed direct child: {resumed}"
     );
     assert!(
-        turn2_subs.is_empty(),
-        "Turn 2 must not own Turn 1's subagents: {resumed}"
+        turn3_subs.is_empty(),
+        "Turn 3 must not own pre-move subagents: {resumed}"
     );
 
     lever.signal(libc::SIGTERM);

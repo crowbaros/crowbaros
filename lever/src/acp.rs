@@ -710,13 +710,6 @@ impl AcpHarness {
         *entry = entry.wrapping_add(1);
         self.transport_failures.remove(thread_id);
         let session_id = self.thread_to_session.remove(thread_id);
-        if let Some(turn) = retired_turn {
-            for (cid, owner) in &self.child_to_thread {
-                if owner == thread_id {
-                    self.child_retired_turn.entry(cid.clone()).or_insert(turn);
-                }
-            }
-        }
         if let Some(sid) = session_id {
             self.session_to_thread.remove(&sid);
             self.session_models.remove(&sid);
@@ -2499,10 +2492,20 @@ impl AcpHarness {
         };
         let root_sid = obj.get("rootSessionId").and_then(Value::as_str);
         let parent_sid = obj.get("parentSessionId").and_then(Value::as_str);
-        let retired_turn = root_sid
-            .and_then(|s| self.retired_root_to_thread.get(s).and_then(|(_, turn)| *turn))
-            .or_else(|| parent_sid.and_then(|s| self.retired_root_to_thread.get(s).and_then(|(_, turn)| *turn)))
-            .or_else(|| parent_sid.and_then(|s| self.child_retired_turn.get(s).copied()));
+        let retired_turn = parent_sid
+            .and_then(|s| self.child_retired_turn.get(s).copied())
+            .or_else(|| {
+                let parent_is_child = parent_sid.is_some_and(|s| self.child_to_thread.contains_key(s));
+                if parent_is_child {
+                    None
+                } else {
+                    root_sid
+                        .and_then(|s| self.retired_root_to_thread.get(s).and_then(|(_, turn)| *turn))
+                        .or_else(|| {
+                            parent_sid.and_then(|s| self.retired_root_to_thread.get(s).and_then(|(_, turn)| *turn))
+                        })
+                }
+            });
         let thread_id = self
             .child_to_thread
             .get(child_sid)
