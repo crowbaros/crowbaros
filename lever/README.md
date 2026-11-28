@@ -268,11 +268,10 @@ ACP today:
   command: `crowbar-lever mcp-bridge`. The bridge opens no network port; it
   speaks JSON-RPC 2.0 on standard input and output and forwards tool calls over
   Lever's private Unix domain socket (`<state>/tools.sock`, falling back to a
-  non-colliding path beside `--person-socket` when `--state` exceeds the Unix
-  socket pathname limit; mode `0600`, `SO_PEERCRED`-checked to the person's UID)
-  using credentials passed only in
-  environment variables (`CROWBAR_MCP_SOCKET`, `CROWBAR_MCP_AUTH`, and
-  `CROWBAR_MCP_SESSION`). To work across both per-session ACP harnesses and
+  unique unoccupied path beside `--person-socket` when `--state` exceeds the
+  Unix socket pathname limit or collides; mode `0600`, `SO_PEERCRED`-checked to
+  the person's UID) using credentials passed only in environment variables
+  (`CROWBAR_MCP_SOCKET`, `CROWBAR_MCP_AUTH`, and `CROWBAR_MCP_SESSION`). To work across both per-session ACP harnesses and
   harnesses that share one MCP server per working directory (OpenCode), Lever
   resolves the calling thread first from the harness's `_meta` session ID hint
   when present (refusing unknown or subagent sessions) and otherwise from

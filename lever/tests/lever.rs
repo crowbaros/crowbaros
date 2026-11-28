@@ -13169,7 +13169,13 @@ fn failed_delete_and_rejected_model_preserve_pending_session_reset() {
 fn mcp_make_project_works_with_relative_and_long_state_directories() {
     let uid = unsafe { libc::geteuid() };
 
-    for mode in ["relative", "long", "colliding-surface", "colliding-fallback"] {
+    for mode in [
+        "relative",
+        "long",
+        "colliding-surface",
+        "colliding-fallback",
+        "occupied-fallback",
+    ] {
         let dir = TempDir::new();
         let home = dir.0.join("lever-home");
         let launch_dir = dir.0.join("launch");
@@ -13180,6 +13186,7 @@ fn mcp_make_project_works_with_relative_and_long_state_directories() {
         std::fs::create_dir_all(&surface_dir).unwrap();
         let person = person_dir.join("p");
 
+        let mut occupied_listener: Option<(std::path::PathBuf, std::os::unix::net::UnixListener)> = None;
         let (state_arg, state_abs, surface) = match mode {
             "relative" => (
                 "rel-state".to_string(),
@@ -13206,6 +13213,19 @@ fn mcp_make_project_works_with_relative_and_long_state_directories() {
                     long_state.to_str().unwrap().to_string(),
                     long_state,
                     person_dir.join("tools.sock"),
+                )
+            }
+            "occupied-fallback" => {
+                let long_state = dir.0.join("a".repeat(40)).join("b".repeat(40)).join("c".repeat(40));
+                std::fs::create_dir_all(&person_dir).unwrap();
+                let occupied_path = person_dir.join("tools.sock");
+                let listener = std::os::unix::net::UnixListener::bind(&occupied_path).unwrap();
+                listener.set_nonblocking(true).unwrap();
+                occupied_listener = Some((occupied_path, listener));
+                (
+                    long_state.to_str().unwrap().to_string(),
+                    long_state,
+                    surface_dir.join("s"),
                 )
             }
             _ => unreachable!(),
@@ -13310,6 +13330,16 @@ fn mcp_make_project_works_with_relative_and_long_state_directories() {
         write_frame(&mut client, &json!({ "op": "resume", "thread": tid })).unwrap();
         let resumed = read_until(&mut client, |f| f["reply"] == "resumed");
         assert_eq!(resumed["cwd"], expected_dir.to_string_lossy().as_ref());
+
+        if let Some((occupied_path, listener)) = occupied_listener {
+            let probe = std::os::unix::net::UnixStream::connect(&occupied_path)
+                .expect("unrelated live socket at fallback tools.sock must stay reachable");
+            let (_accepted, _) = listener
+                .accept()
+                .expect("unrelated listener at fallback tools.sock must accept the connection");
+            drop(probe);
+            drop(listener);
+        }
 
         lever.signal(libc::SIGTERM);
         assert_eq!(lever.wait().code(), Some(0));

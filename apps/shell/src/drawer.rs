@@ -281,29 +281,22 @@ fn validate_project_form(
     Ok((None, None, Some(folder.to_string())))
 }
 
-/// Infers the person's home directory from Lever's reported home or a known
-/// thread path (`/home/<user>/...`). Never falls back to `$HOME`, because
-/// `crowbaros-shell` runs under its own account on Base.
-fn inferred_person_home(state: &agent::AgentState, known_home: Option<&str>) -> Option<String> {
-    if let Some(home) = known_home.filter(|h| !h.is_empty()) {
-        return Some(home.to_string());
-    }
-    let from_path = |candidate: &str| -> Option<String> {
-        let rest = candidate.strip_prefix("/home/")?;
-        let user = rest.split('/').next().filter(|s| !s.is_empty())?;
-        Some(format!("/home/{user}"))
-    };
-    if let Some(cwd) = state.cwd.as_deref()
-        && let Some(home) = from_path(cwd)
-    {
-        return Some(home);
-    }
-    state.threads.iter().find_map(|t| from_path(&t.cwd))
+/// A suggested parent folder in the "Make this a project" form.
+/// `label` may shorten Lever's reported home directory to `~`, while `value`
+/// always holds the exact destination sent to Lever (`~/Projects`, `~/Code`,
+/// `~`, or the thread parent's absolute path).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlaceSuggestion {
+    label: String,
+    value: String,
 }
 
-/// Formats an absolute path using `~` when inside `home`.
-fn display_folder_path(path: &str, home: Option<&str>) -> String {
-    if let Some(home) = home.map(|h| h.trim_end_matches('/')).filter(|h| !h.is_empty()) {
+/// Formats an absolute path using `~` only when Lever has supplied the person's
+/// actual home directory. Never guesses from `/home/<name>` or `$HOME`, because
+/// `crowbaros-shell` runs under its own account on Base and a thread may live
+/// under another directory in `/home/`.
+fn display_folder_path(path: &str, known_home: Option<&str>) -> String {
+    if let Some(home) = known_home.map(|h| h.trim_end_matches('/')).filter(|h| !h.is_empty()) {
         if path == home {
             return "~".into();
         }
@@ -316,9 +309,21 @@ fn display_folder_path(path: &str, home: Option<&str>) -> String {
 
 /// Quick parent places offered in the "Make this a project" form: `~/Projects`,
 /// `~/Code`, `~`, plus any parent folders already holding threads.
-fn place_suggestions(state: &agent::AgentState, known_home: Option<&str>) -> Vec<String> {
-    let home = inferred_person_home(state, known_home);
-    let mut places = vec!["~/Projects".to_string(), "~/Code".to_string(), "~".to_string()];
+fn place_suggestions(state: &agent::AgentState, known_home: Option<&str>) -> Vec<PlaceSuggestion> {
+    let mut places = vec![
+        PlaceSuggestion {
+            label: "~/Projects".into(),
+            value: "~/Projects".into(),
+        },
+        PlaceSuggestion {
+            label: "~/Code".into(),
+            value: "~/Code".into(),
+        },
+        PlaceSuggestion {
+            label: "~".into(),
+            value: "~".into(),
+        },
+    ];
     for thread in &state.threads {
         if thread.archived || thread.cwd.is_empty() {
             continue;
@@ -329,9 +334,12 @@ fn place_suggestions(state: &agent::AgentState, known_home: Option<&str>) -> Vec
         if parent == "/" || parent.is_empty() {
             continue;
         }
-        let shown = display_folder_path(parent, home.as_deref());
-        if !places.contains(&shown) {
-            places.push(shown);
+        let label = display_folder_path(parent, known_home);
+        if !places.iter().any(|p| p.label == label || p.value == parent) {
+            places.push(PlaceSuggestion {
+                label,
+                value: parent.to_string(),
+            });
         }
         if places.len() >= 6 {
             break;
@@ -2424,15 +2432,15 @@ impl Render for AgentSurface {
                 && !state.loading
                 && !state.mode_locked()
                 && validate_project_form(&name_text, &folder_text, self.project_place.as_deref()).is_ok();
-            let home = inferred_person_home(&state, self.project_browse_home.as_deref());
-            let places = place_suggestions(&state, self.project_browse_home.as_deref());
+            let known_home = self.project_browse_home.as_deref();
+            let places = place_suggestions(&state, known_home);
             let mut place_row = div().flex().flex_wrap().gap(px(6.));
             for place in places {
-                let id = SharedString::from(format!("project-place-btn-{place}"));
+                let id = SharedString::from(format!("project-place-btn-{}", place.value));
                 place_row = place_row.child(self.button(
                     id,
-                    place.clone(),
-                    ThreadAction::PickProjectPlace(place),
+                    place.label,
+                    ThreadAction::PickProjectPlace(place.value),
                     true,
                     p,
                     cx,
@@ -2541,7 +2549,7 @@ impl Render for AgentSurface {
                     .flex_col()
                     .gap(px(6.));
                 if let Some(browse_dir) = self.project_browse_dir.clone() {
-                    let shown_dir = display_folder_path(&browse_dir, home.as_deref());
+                    let shown_dir = display_folder_path(&browse_dir, known_home);
                     picker = picker.child(
                         div()
                             .font_family("IBM Plex Mono")
@@ -2553,7 +2561,7 @@ impl Render for AgentSurface {
                     let mut use_row = div().flex().flex_wrap().gap(px(6.)).child(self.button(
                         "project-use-exact",
                         format!("Use {shown_dir}"),
-                        ThreadAction::UseProjectFolder(shown_dir.clone()),
+                        ThreadAction::UseProjectFolder(browse_dir.clone()),
                         true,
                         p,
                         cx,
@@ -2567,7 +2575,7 @@ impl Render for AgentSurface {
                     use_row = use_row.child(self.button(
                         "project-use-with-name",
                         with_name_label,
-                        ThreadAction::PickProjectPlace(shown_dir.clone()),
+                        ThreadAction::PickProjectPlace(browse_dir),
                         true,
                         p,
                         cx,
@@ -3350,11 +3358,10 @@ impl Render for AgentSurface {
             .when(in_thread, |root| {
                 // Which thread this is, the folder it lives in, and the way
                 // back to the list or to make it a project.
-                let home = inferred_person_home(&state, self.project_browse_home.as_deref());
                 let folder_label = state
                     .cwd
                     .as_deref()
-                    .map(|cwd| display_folder_path(cwd, home.as_deref()));
+                    .map(|cwd| display_folder_path(cwd, self.project_browse_home.as_deref()));
                 let can_project = state.thread.is_some() && state.connected && !state.mode_locked();
                 root.child(
                     div()
@@ -3634,8 +3641,8 @@ impl Render for AgentSurface {
 #[cfg(test)]
 mod tests {
     use super::{
-        browse_start_path, display_folder_path, inferred_person_home, join_project_place,
-        list_for_key, place_suggestions, reconcile_draft_on_sent, should_answer_with_alt_digit,
+        browse_start_path, display_folder_path, join_project_place, list_for_key,
+        place_suggestions, PlaceSuggestion, reconcile_draft_on_sent, should_answer_with_alt_digit,
         should_reset_offer_on_menu_close, should_take_composer_enter, validate_project_form,
     };
     use crate::slash::MenuKind;
@@ -3792,20 +3799,21 @@ mod tests {
         );
         assert!(validate_project_form("", "relative/path", None).is_err());
 
-        // `inferred_person_home` never falls back to the shell account's `$HOME`;
-        // it searches all threads when the active thread is outside `/home/`.
+        // Never guesses `~` from `/home/<name>` or `$HOME`; only shortens
+        // labels when Lever has supplied the person's actual home directory,
+        // and always keeps the exact absolute path as the action value.
         let mut state = agent::AgentState::new(true);
-        state.cwd = Some("/tmp/scratch".into());
-        assert_eq!(inferred_person_home(&state, None), None);
+        state.cwd = Some("/home/shared/team/app".into());
+        assert_eq!(display_folder_path("/home/shared/team/app", None), "/home/shared/team/app");
         assert_eq!(
-            display_folder_path("/tmp/scratch", inferred_person_home(&state, None).as_deref()),
-            "/tmp/scratch"
+            display_folder_path("/home/shared/team/app", Some("/home/person")),
+            "/home/shared/team/app"
         );
         state.threads.push(agent::ThreadSummary {
             archived: false,
             thread: "t-1".into(),
             title: "t".into(),
-            cwd: "/home/crowbar/Work/app".into(),
+            cwd: "/home/shared/team/app".into(),
             model: None,
             started: 0,
             updated: 0,
@@ -3816,7 +3824,93 @@ mod tests {
             subagents: 0,
             mode: None,
         });
-        assert_eq!(inferred_person_home(&state, None).as_deref(), Some("/home/crowbar"));
-        assert_eq!(place_suggestions(&state, None), vec!["~/Projects", "~/Code", "~", "~/Work"]);
+        state.threads.push(agent::ThreadSummary {
+            archived: false,
+            thread: "t-2".into(),
+            title: "t2".into(),
+            cwd: "/home/person/Work/app".into(),
+            model: None,
+            started: 0,
+            updated: 0,
+            turns: 1,
+            state: "done".into(),
+            working: false,
+            waiting: false,
+            subagents: 0,
+            mode: None,
+        });
+        state.threads.push(agent::ThreadSummary {
+            archived: false,
+            thread: "t-3".into(),
+            title: "t3".into(),
+            cwd: "/home/person/Projects/existing".into(),
+            model: None,
+            started: 0,
+            updated: 0,
+            turns: 1,
+            state: "done".into(),
+            working: false,
+            waiting: false,
+            subagents: 0,
+            mode: None,
+        });
+        // Without Lever's home, thread parents keep full absolute labels and values.
+        assert_eq!(
+            place_suggestions(&state, None),
+            vec![
+                PlaceSuggestion {
+                    label: "~/Projects".into(),
+                    value: "~/Projects".into(),
+                },
+                PlaceSuggestion {
+                    label: "~/Code".into(),
+                    value: "~/Code".into(),
+                },
+                PlaceSuggestion {
+                    label: "~".into(),
+                    value: "~".into(),
+                },
+                PlaceSuggestion {
+                    label: "/home/shared/team".into(),
+                    value: "/home/shared/team".into(),
+                },
+                PlaceSuggestion {
+                    label: "/home/person/Work".into(),
+                    value: "/home/person/Work".into(),
+                },
+                PlaceSuggestion {
+                    label: "/home/person/Projects".into(),
+                    value: "/home/person/Projects".into(),
+                },
+            ]
+        );
+        // With Lever's reported home, only paths under that actual home use `~`
+        // in their label, `~/Projects` deduplicates against the built-in chip,
+        // and the action value stays the exact absolute path.
+        assert_eq!(
+            place_suggestions(&state, Some("/home/person")),
+            vec![
+                PlaceSuggestion {
+                    label: "~/Projects".into(),
+                    value: "~/Projects".into(),
+                },
+                PlaceSuggestion {
+                    label: "~/Code".into(),
+                    value: "~/Code".into(),
+                },
+                PlaceSuggestion {
+                    label: "~".into(),
+                    value: "~".into(),
+                },
+                PlaceSuggestion {
+                    label: "/home/shared/team".into(),
+                    value: "/home/shared/team".into(),
+                },
+                PlaceSuggestion {
+                    label: "~/Work".into(),
+                    value: "/home/person/Work".into(),
+                },
+            ]
+        );
     }
 }

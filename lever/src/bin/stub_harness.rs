@@ -1940,6 +1940,8 @@ fn invoke_stdio_mcp(
     let mut cmd = std::process::Command::new(&stdio.command);
     if !session_cwd.is_empty() && std::path::Path::new(session_cwd).is_dir() {
         cmd.current_dir(session_cwd);
+    } else {
+        eprintln!("stub_harness: session_cwd {session_cwd:?} is not an existing directory; inheriting cwd");
     }
     cmd.args(&stdio.args)
         .stdin(std::process::Stdio::piped())
