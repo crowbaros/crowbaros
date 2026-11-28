@@ -3354,6 +3354,12 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 );
                 let is_disconnected = matches!(agent_event, agent::AgentEvent::Disconnected);
                 let is_lifecycle = matches!(agent_event, agent::AgentEvent::Lifecycle { .. });
+                let is_project_made = matches!(agent_event, agent::AgentEvent::ProjectMade { .. });
+                let is_error = matches!(agent_event, agent::AgentEvent::Error { .. });
+                let dirs_listing = match &agent_event {
+                    agent::AgentEvent::Dirs(listing) => Some(listing.clone()),
+                    _ => None,
+                };
                 let should_scroll = matches!(
                     agent_event,
                     agent::AgentEvent::Message { .. }
@@ -3412,9 +3418,31 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                         let _ = w.update(cx, |_, _, cx| cx.notify());
                     }
                 }
-                if is_lifecycle && let Some(w) = model.read(cx).agent {
+                if let Some(w) = model.read(cx).agent {
                     let _ = w.update(cx, |view, window, cx| {
-                        if view.model.read(cx).agent_state.list_view { window.focus(&view.focus); }
+                        let (list_view, no_thread) = {
+                            let s = &view.model.read(cx).agent_state;
+                            (s.list_view, s.thread.is_none())
+                        };
+                        if (list_view || no_thread) && view.close_project_form() {
+                            cx.notify();
+                        }
+                        if is_lifecycle && list_view {
+                            window.focus(&view.focus);
+                        }
+                        if is_disconnected || is_error {
+                            view.on_agent_error(cx);
+                        }
+                    });
+                }
+                if is_project_made && let Some(w) = model.read(cx).agent {
+                    let _ = w.update(cx, |view, window, cx| {
+                        view.on_project_made(window, cx);
+                    });
+                }
+                if let Some(listing) = dirs_listing && let Some(w) = model.read(cx).agent {
+                    let _ = w.update(cx, |view, _, cx| {
+                        view.on_dirs_listed(listing, cx);
                     });
                 }
                 if is_disconnected {

@@ -21,6 +21,7 @@ pub enum Own {
     SignIn,
     New,
     Threads,
+    Project,
     Stop,
     Archive,
     Delete,
@@ -28,7 +29,7 @@ pub enum Own {
 
 impl Own {
     /// Every command of the drawer's, in the order the list has them.
-    pub const ALL: [Own; 11] = [
+    pub const ALL: [Own; 12] = [
         Own::Model,
         Own::Effort,
         Own::Mode,
@@ -37,6 +38,7 @@ impl Own {
         Own::SignIn,
         Own::New,
         Own::Threads,
+        Own::Project,
         Own::Stop,
         Own::Archive,
         Own::Delete,
@@ -52,6 +54,7 @@ impl Own {
             Own::SignIn => "sign-in",
             Own::New => "new",
             Own::Threads => "threads",
+            Own::Project => "project",
             Own::Stop => "stop",
             Own::Archive => "archive",
             Own::Delete => "delete",
@@ -68,6 +71,7 @@ impl Own {
             Own::SignIn => "Sign in to a Model provider in a terminal",
             Own::New => "Start a new thread",
             Own::Threads => "Go to the list of threads",
+            Own::Project => "Make this thread a project",
             Own::Stop => "Stop the turn the Agent is working on",
             Own::Archive => "Put this thread away, and keep it",
             Own::Delete => "Delete this thread for good",
@@ -90,7 +94,7 @@ impl Own {
     fn offered(self, state: &AgentState) -> bool {
         match self {
             Own::Stop => state.can_stop(),
-            Own::Archive | Own::Delete => state.thread.is_some(),
+            Own::Project | Own::Archive | Own::Delete => state.thread.is_some(),
             _ => true,
         }
     }
@@ -114,9 +118,10 @@ impl Own {
                     .then(|| format!("{} has no effort levels.", state.model_label(&model)))
             }
             Own::Stop if !state.can_stop() => Some("Nothing is working.".into()),
-            Own::Archive | Own::Delete if state.thread.is_none() => {
+            Own::Project | Own::Archive | Own::Delete if state.thread.is_none() => {
                 Some("This thread has not begun.".into())
             }
+            Own::Project if state.mode_locked() => Some(WORKING.into()),
             Own::Delete if state.can_stop() => {
                 Some("Stop the turn before deleting the thread.".into())
             }
@@ -195,6 +200,7 @@ pub enum Run {
     SignIn,
     New,
     Threads,
+    MakeProject,
     Stop,
     Archive,
     Delete,
@@ -353,6 +359,7 @@ fn commands(query: &str, state: &AgentState) -> Menu {
                 Own::SignIn => Run::SignIn,
                 Own::New => Run::New,
                 Own::Threads => Run::Threads,
+                Own::Project => Run::MakeProject,
                 Own::Stop => Run::Stop,
                 Own::Archive => Run::Archive,
                 _ => Run::Delete,
@@ -662,6 +669,7 @@ pub fn resolve(text: &str, state: &AgentState) -> Resolve {
             Own::SignIn => Run::SignIn,
             Own::New => Run::New,
             Own::Threads => Run::Threads,
+            Own::Project => Run::MakeProject,
             Own::Stop => Run::Stop,
             Own::Archive => Run::Archive,
             _ => Run::Delete,
@@ -811,7 +819,7 @@ mod tests {
         state.thread = Some("t-1".into());
         state.mode = Some("ask-first".into());
         let idle = menu("/", &state, None).unwrap();
-        assert!(labels(&idle).contains(&"/archive") && labels(&idle).contains(&"/delete"));
+        assert!(labels(&idle).contains(&"/project") && labels(&idle).contains(&"/archive") && labels(&idle).contains(&"/delete"));
         assert!(!labels(&idle).contains(&"/stop"));
 
         // While it works: Stop is offered, and the thread's settings rest.
@@ -823,7 +831,7 @@ mod tests {
             .filter(|item| item.refusal.is_some())
             .map(|item| item.label.as_str())
             .collect();
-        assert_eq!(refused, ["/model", "/effort", "/mode", "/new", "/threads"]);
+        assert_eq!(refused, ["/model", "/effort", "/mode", "/new", "/threads", "/project"]);
         assert!(matches!(&working.items[0].take, Take::Refuse(why) if why.contains("/stop")));
         assert_eq!(resolve("/mode plan", &state), Resolve::Refuse(Own::Mode.refusal(&state).unwrap()));
 
@@ -948,6 +956,7 @@ mod tests {
         assert_eq!(resolve("/mode", &state), Resolve::Fill("/mode ".into()));
         assert_eq!(resolve("/new", &state), Resolve::Run(Run::New));
         assert_eq!(resolve("/threads", &state), Resolve::Run(Run::Threads));
+        assert_eq!(resolve("/project", &state), Resolve::Run(Run::MakeProject));
         assert_eq!(resolve("/archive", &state), Resolve::Run(Run::Archive));
         assert_eq!(resolve("/delete", &state), Resolve::Run(Run::Delete));
         // What cannot be carried out says why, and changes nothing.

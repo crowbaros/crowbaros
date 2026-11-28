@@ -34,6 +34,7 @@ pub struct Channel {
     pub whose: &'static str,
     pub uid: u32,
     pub is_person: bool,
+    pub is_tool: bool,
 }
 
 pub struct Peer {
@@ -388,7 +389,7 @@ impl Peer {
             return;
         };
 
-        let outcome = service.handle_request(self.id, self.channel.is_person, &value, log);
+        let outcome = service.handle_request(self.id, self.channel.is_person, self.channel.is_tool, &value, log);
         if let Some(thread_id) = outcome.subscribe {
             self.subscriptions.insert(thread_id);
         }

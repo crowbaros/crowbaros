@@ -703,12 +703,19 @@ pub enum LeverMessage {
     ThreadUpdated {
         thread: String,
         title: Option<String>,
+        cwd: Option<String>,
         mode: Option<String>,
         model: Option<String>,
         /// The thread's effort, when the event says it: `Some(None)` for a
         /// thread that now has none.
         effort: Option<Option<String>>,
     },
+    ProjectMade {
+        thread: String,
+        cwd: String,
+        created: bool,
+    },
+    Dirs(DirListing),
     Done {
         thread: String,
         turn: u64,
@@ -751,6 +758,23 @@ pub enum LeverMessage {
         working: Vec<String>,
         waiting: Vec<String>,
     },
+}
+
+/// One subdirectory entry returned by Lever's `list-dirs` operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirEntry {
+    pub name: String,
+    pub path: String,
+}
+
+/// A bounded directory listing returned by Lever's `list-dirs` operation for
+/// the drawer's inline folder picker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirListing {
+    pub path: String,
+    pub home: String,
+    pub parent: Option<String>,
+    pub entries: Vec<DirEntry>,
 }
 
 /// Events sent from the surface-socket client to the shell's UI loop.
@@ -847,10 +871,17 @@ pub enum AgentEvent {
     ThreadUpdated {
         thread: String,
         title: Option<String>,
+        cwd: Option<String>,
         mode: Option<String>,
         model: Option<String>,
         effort: Option<Option<String>>,
     },
+    ProjectMade {
+        thread: String,
+        cwd: String,
+        created: bool,
+    },
+    Dirs(DirListing),
     Done {
         thread: String,
         turn: u64,
@@ -981,16 +1012,28 @@ impl LeverMessage {
             LeverMessage::ThreadUpdated {
                 thread,
                 title,
+                cwd,
                 mode,
                 model,
                 effort,
             } => Some(AgentEvent::ThreadUpdated {
                 thread,
                 title,
+                cwd,
                 mode,
                 model,
                 effort,
             }),
+            LeverMessage::ProjectMade {
+                thread,
+                cwd,
+                created,
+            } => Some(AgentEvent::ProjectMade {
+                thread,
+                cwd,
+                created,
+            }),
+            LeverMessage::Dirs(listing) => Some(AgentEvent::Dirs(listing)),
             LeverMessage::Models(offer) => Some(AgentEvent::Offer(offer)),
             LeverMessage::FreeModels {
                 enabled,
@@ -1041,6 +1084,15 @@ impl LeverMessage {
 pub enum AgentCommand {
     Select { thread: Option<String> },
     Lifecycle { thread: String, delete: bool },
+    MakeProject {
+        thread: String,
+        name: Option<String>,
+        place: Option<String>,
+        path: Option<String>,
+    },
+    ListDirs {
+        path: Option<String>,
+    },
     Send {
         thread: Option<String>,
         text: String,
@@ -1104,6 +1156,12 @@ pub struct CommandSender {
 impl CommandSender {
     pub fn select(&self, thread: Option<String>) { let _ = self.tx.send(AgentCommand::Select { thread }); }
     pub fn lifecycle(&self, thread: String, delete: bool) { let _ = self.tx.send(AgentCommand::Lifecycle { thread, delete }); }
+    pub fn make_project(&self, thread: String, name: Option<String>, place: Option<String>, path: Option<String>) {
+        let _ = self.tx.send(AgentCommand::MakeProject { thread, name, place, path });
+    }
+    pub fn list_dirs(&self, path: Option<String>) {
+        let _ = self.tx.send(AgentCommand::ListDirs { path });
+    }
 
     /// Sends a message. `mode` is the mode a new thread starts in.
     #[cfg(test)]
@@ -1212,6 +1270,8 @@ pub struct AgentState {
     pub missing_model: Option<String>,
     pub thread: Option<String>,
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_turn: Option<u64>,
     pub turns: Vec<Turn>,
@@ -1717,6 +1777,7 @@ impl AgentState {
             self.thread_commands = None;
         }
         self.thread = Some(resumed.thread);
+        self.cwd = (!resumed.cwd.is_empty()).then_some(resumed.cwd);
         self.model = resumed.model;
         self.effort = resumed.effort;
         self.mode = resumed.mode;
@@ -1760,6 +1821,7 @@ impl AgentState {
     fn clear_thread(&mut self) {
         self.thread = None;
         self.title = None;
+        self.cwd = None;
         self.model = None;
         self.effort = None;
         self.mode = None;
@@ -1811,6 +1873,9 @@ impl AgentState {
                 let busy = threads.iter().any(|t| t.working || t.waiting);
                 if let Some(selected) = threads.iter().find(|t| Some(t.thread.as_str()) == self.thread.as_deref()) {
                     self.title = (!selected.title.is_empty()).then(|| selected.title.clone());
+                    if !selected.cwd.is_empty() {
+                        self.cwd = Some(selected.cwd.clone());
+                    }
                     if selected.model.is_some() {
                         self.model = selected.model.clone();
                     }
@@ -2220,14 +2285,29 @@ impl AgentState {
             AgentEvent::ThreadUpdated {
                 thread,
                 title,
+                cwd,
                 mode,
                 model,
                 effort,
             } => {
-                if self.thread.as_deref() != Some(thread.as_str()) {
-                    return false;
-                }
                 let mut changed = false;
+                if let Some(cwd_val) = &cwd {
+                    if let Some(summary) = self.threads.iter_mut().find(|t| t.thread == thread)
+                        && summary.cwd != *cwd_val
+                    {
+                        summary.cwd = cwd_val.clone();
+                        changed = true;
+                    }
+                }
+                if self.thread.as_deref() != Some(thread.as_str()) {
+                    return changed;
+                }
+                if let Some(cwd) = cwd
+                    && self.cwd.as_deref() != Some(cwd.as_str())
+                {
+                    self.cwd = Some(cwd);
+                    changed = true;
+                }
                 if let Some(model) = model
                     && self.model.as_deref() != Some(model.as_str())
                 {
@@ -2255,6 +2335,22 @@ impl AgentState {
                 }
                 changed
             }
+            AgentEvent::ProjectMade {
+                thread,
+                cwd,
+                ..
+            } => {
+                self.loading = false;
+                self.error = None;
+                if let Some(summary) = self.threads.iter_mut().find(|t| t.thread == thread) {
+                    summary.cwd = cwd.clone();
+                }
+                if self.thread.as_deref() == Some(thread.as_str()) {
+                    self.cwd = Some(cwd);
+                }
+                true
+            }
+            AgentEvent::Dirs(_) => false,
             AgentEvent::ModeSet { thread, mode } => {
                 if self.thread.as_deref() != Some(thread.as_str())
                     || self.mode.as_deref() == Some(mode.as_str())
@@ -3072,6 +3168,36 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
                 thread: msg.get("thread")?.as_str()?.into(), deleted: reply == "deleted",
                 warning: msg.get("warning").and_then(|v| v.as_str()).map(str::to_string),
             }),
+            "project-made" => Some(LeverMessage::ProjectMade {
+                thread: msg.get("thread")?.as_str()?.to_string(),
+                cwd: msg.get("cwd")?.as_str()?.to_string(),
+                created: msg.get("created").and_then(|v| v.as_bool()).unwrap_or(false),
+            }),
+            "dirs" => {
+                let path = msg.get("path")?.as_str()?.to_string();
+                let home = msg.get("home")?.as_str()?.to_string();
+                let parent = msg.get("parent").and_then(|v| v.as_str()).map(str::to_string);
+                let entries = msg
+                    .get("entries")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|e| {
+                                Some(DirEntry {
+                                    name: e.get("name")?.as_str()?.to_string(),
+                                    path: e.get("path")?.as_str()?.to_string(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(LeverMessage::Dirs(DirListing {
+                    path,
+                    home,
+                    parent,
+                    entries,
+                }))
+            }
             "ok" => Some(LeverMessage::Ok),
             "error" => Some(LeverMessage::Error {
                 code: msg
@@ -3121,6 +3247,7 @@ pub fn parse_lever_message(msg: &serde_json::Value) -> Option<LeverMessage> {
         return Some(LeverMessage::ThreadUpdated {
             thread,
             title: opt_str(msg, "title"),
+            cwd: opt_str(msg, "cwd"),
             mode: opt_str(msg, "mode"),
             model: opt_str(msg, "model"),
             // `"effort": null` says the thread has none now.
@@ -3718,6 +3845,8 @@ fn start_with_stream_clone(
             let op = match &cmd {
                 AgentCommand::Select { .. } => "resume",
                 AgentCommand::Lifecycle { .. } => "lifecycle",
+                AgentCommand::MakeProject { .. } => "make-project",
+                AgentCommand::ListDirs { .. } => "list-dirs",
                 AgentCommand::Send { .. } => "send",
                 AgentCommand::SetModel { .. } => "set-model",
                 AgentCommand::SetEffort { .. } => "set-effort",
@@ -3735,6 +3864,18 @@ fn start_with_stream_clone(
             let request = match cmd {
                 AgentCommand::Select { thread } => serde_json::json!({"op":"resume","thread":thread}),
                 AgentCommand::Lifecycle { thread, delete } => serde_json::json!({"op":if delete {"delete"} else {"archive"},"thread":thread}),
+                AgentCommand::MakeProject { thread, name, place, path } => {
+                    let mut req = serde_json::json!({"op": "make-project", "thread": thread});
+                    if let Some(name) = name { req["name"] = serde_json::Value::String(name); }
+                    if let Some(place) = place { req["place"] = serde_json::Value::String(place); }
+                    if let Some(path) = path { req["path"] = serde_json::Value::String(path); }
+                    req
+                }
+                AgentCommand::ListDirs { path } => {
+                    let mut req = serde_json::json!({"op": "list-dirs"});
+                    if let Some(path) = path { req["path"] = serde_json::Value::String(path); }
+                    req
+                }
                 AgentCommand::Send {
                     thread,
                     text,
@@ -3827,7 +3968,7 @@ fn start_with_stream_clone(
             };
             if !matches!(write_outcome, Some(Ok(()))) {
                 match op {
-                    "send" | "resume" | "lifecycle" => {
+                    "send" | "resume" | "lifecycle" | "make-project" | "list-dirs" => {
                         let _ = events_for_cmds.send(session::Event::Agent(AgentEvent::Error {
                             code: "disconnected".into(),
                             message: "The Agent is not reachable right now.".into(),
@@ -4569,7 +4710,7 @@ mod tests {
             parse_lever_message(&serde_json::json!({
                 "event": "thread-updated", "thread": "t-1", "title": "Inspect workspace"
             })),
-            Some(LeverMessage::ThreadUpdated { model: None, effort: None,
+            Some(LeverMessage::ThreadUpdated { model: None, effort: None, cwd: None,
                 thread: "t-1".into(),
                 title: Some("Inspect workspace".into()),
                 mode: None,
@@ -4663,7 +4804,7 @@ mod tests {
             true,
         );
         state.apply(
-            AgentEvent::ThreadUpdated { model: None, effort: None,
+            AgentEvent::ThreadUpdated { model: None, effort: None, cwd: None,
                 thread: "t-abc".into(),
                 title: Some("Focus check".into()),
                 mode: None,
@@ -6121,7 +6262,7 @@ mod tests {
             parse_lever_message(&serde_json::json!({
                 "event": "thread-updated", "thread": "t-1", "mode": "plan"
             })),
-            Some(LeverMessage::ThreadUpdated { model: None, effort: None, thread: "t-1".into(), title: None, mode: Some("plan".into()) })
+            Some(LeverMessage::ThreadUpdated { model: None, effort: None, cwd: None, thread: "t-1".into(), title: None, mode: Some("plan".into()) })
         );
         assert_eq!(
             parse_lever_message(&serde_json::json!({
@@ -6484,13 +6625,13 @@ mod tests {
         state.apply(AgentEvent::ModeSet { thread: "t-1".into(), mode: "full-access".into() }, true);
         assert_eq!(state.mode.as_deref(), Some("full-access"));
         state.apply(
-            AgentEvent::ThreadUpdated { model: None, effort: None, thread: "t-1".into(), title: Some("Plan".into()), mode: None },
+            AgentEvent::ThreadUpdated { model: None, effort: None, cwd: None, thread: "t-1".into(), title: Some("Plan".into()), mode: None },
             true,
         );
         assert_eq!(state.mode.as_deref(), Some("full-access"));
         assert_eq!(state.title.as_deref(), Some("Plan"));
         state.apply(
-            AgentEvent::ThreadUpdated { model: None, effort: None, thread: "t-1".into(), title: None, mode: Some("plan".into()) },
+            AgentEvent::ThreadUpdated { model: None, effort: None, cwd: None, thread: "t-1".into(), title: None, mode: Some("plan".into()) },
             true,
         );
         assert_eq!(state.mode.as_deref(), Some("plan"));
@@ -6940,21 +7081,48 @@ mod tests {
             parse_lever_message(&serde_json::json!({ "reply": "effort-set", "thread": "t-1", "effort": null })),
             Some(LeverMessage::EffortSet { thread: "t-1".into(), effort: None })
         );
-        // `thread-updated` says a Model, and an effort or that there is none.
+        // `thread-updated` says a Model, cwd, and an effort or that there is none.
         assert_eq!(
             parse_lever_message(&serde_json::json!({ "event": "thread-updated", "thread": "t-1", "model": "acme/large" })),
             Some(LeverMessage::ThreadUpdated {
-                thread: "t-1".into(), title: None, mode: None, model: Some("acme/large".into()), effort: None,
+                thread: "t-1".into(), title: None, cwd: None, mode: None, model: Some("acme/large".into()), effort: None,
             })
         );
         assert_eq!(
+            parse_lever_message(&serde_json::json!({ "event": "thread-updated", "thread": "t-1", "cwd": "/home/crowbar/Projects/demo" })),
+            Some(LeverMessage::ThreadUpdated {
+                thread: "t-1".into(), title: None, cwd: Some("/home/crowbar/Projects/demo".into()), mode: None, model: None, effort: None,
+            })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({ "reply": "project-made", "thread": "t-1", "cwd": "/home/crowbar/Projects/demo", "created": true })),
+            Some(LeverMessage::ProjectMade {
+                thread: "t-1".into(), cwd: "/home/crowbar/Projects/demo".into(), created: true,
+            })
+        );
+        assert_eq!(
+            parse_lever_message(&serde_json::json!({
+                "reply": "dirs",
+                "path": "/home/crowbar/Code",
+                "home": "/home/crowbar",
+                "parent": "/home/crowbar",
+                "entries": [{ "name": "demo", "path": "/home/crowbar/Code/demo" }]
+            })),
+            Some(LeverMessage::Dirs(DirListing {
+                path: "/home/crowbar/Code".into(),
+                home: "/home/crowbar".into(),
+                parent: Some("/home/crowbar".into()),
+                entries: vec![DirEntry { name: "demo".into(), path: "/home/crowbar/Code/demo".into() }],
+            }))
+        );
+        assert_eq!(
             parse_lever_message(&serde_json::json!({ "event": "thread-updated", "thread": "t-1", "effort": null })),
-            Some(LeverMessage::ThreadUpdated { thread: "t-1".into(), title: None, mode: None, model: None, effort: Some(None) })
+            Some(LeverMessage::ThreadUpdated { thread: "t-1".into(), title: None, cwd: None, mode: None, model: None, effort: Some(None) })
         );
         assert_eq!(
             parse_lever_message(&serde_json::json!({ "event": "thread-updated", "thread": "t-1", "effort": "high" })),
             Some(LeverMessage::ThreadUpdated {
-                thread: "t-1".into(), title: None, mode: None, model: None, effort: Some(Some("high".into())),
+                thread: "t-1".into(), title: None, cwd: None, mode: None, model: None, effort: Some(Some("high".into())),
             })
         );
         // A record says when each turn began and ended.
@@ -7084,6 +7252,7 @@ mod tests {
         let told = |model: Option<&str>, effort: Option<Option<&str>>| AgentEvent::ThreadUpdated {
             thread: "t-1".into(),
             title: None,
+            cwd: None,
             mode: None,
             model: model.map(str::to_string),
             effort: effort.map(|e| e.map(str::to_string)),
@@ -7097,9 +7266,35 @@ mod tests {
         assert_eq!(state.shown_effort(), None);
         // What is said of another thread is not this one's.
         let other = AgentEvent::ThreadUpdated {
-            thread: "t-2".into(), title: None, mode: None, model: Some("other/tiny".into()), effort: None,
+            thread: "t-2".into(), title: None, cwd: None, mode: None, model: Some("other/tiny".into()), effort: None,
         };
         assert!(!state.apply(other, true));
+
+        // ProjectMade and ThreadUpdated(cwd) move the thread's folder cleanly in both active state and list.
+        state.threads.push(summary("t-1", "/home/crowbar", false));
+        assert!(state.apply(
+            AgentEvent::ProjectMade {
+                thread: "t-1".into(),
+                cwd: "/home/crowbar/Projects/demo".into(),
+                created: true,
+            },
+            true,
+        ));
+        assert_eq!(state.cwd.as_deref(), Some("/home/crowbar/Projects/demo"));
+        assert_eq!(state.threads[0].cwd, "/home/crowbar/Projects/demo");
+        assert!(state.apply(
+            AgentEvent::ThreadUpdated {
+                thread: "t-1".into(),
+                title: None,
+                cwd: Some("/home/crowbar/Code/demo".into()),
+                mode: None,
+                model: None,
+                effort: None,
+            },
+            true,
+        ));
+        assert_eq!(state.cwd.as_deref(), Some("/home/crowbar/Code/demo"));
+        assert_eq!(state.threads[0].cwd, "/home/crowbar/Code/demo");
 
         // While the thread works its settings rest, and a pick is refused.
         assert_eq!(state.pick_model("other/tiny"), SettingPick::Refused);

@@ -746,6 +746,7 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let reply_model_set = find_reply("model-set");
     let reply_archived = find_reply("archived");
     let reply_deleted = find_reply("deleted");
+    let reply_project_made = find_reply("project-made");
     let reply_list = find_reply("list");
     let reply_sent = find_reply("sent");
     let reply_resumed = find_reply("resumed");
@@ -773,9 +774,9 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
     let ev_queued = find_event("queued");
 
     let server_ops = doc_ops.clone();
-    // Serve 24 short connections exercising every documented op, reply (including error), and event.
+    // Serve 25 short connections exercising every documented op, reply (including error), and event.
     let server = std::thread::spawn(move || {
-        for turn_case in 0..24 {
+        for turn_case in 0..25 {
             let (mut stream, _) = listener.accept().expect("accept client");
             let ver = read_framed(&mut stream);
             assert_eq!(ver, json!({ "version": 1 }));
@@ -861,6 +862,7 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
                     write_framed(&mut stream, &ev_done);
                 }
                 (23, "unqueue") => write_framed(&mut stream, &reply_ok),
+                (24, "make-project") => write_framed(&mut stream, &reply_project_made),
                 other => panic!("unexpected connection {other:?}"),
             }
             // Hold the connection open until the client closes it, as Lever does.
@@ -994,6 +996,18 @@ fn client_speaks_and_reads_every_message_documented_in_readme() {
         (unqueued.status, unqueued.err.as_str()),
         (0, "Taken back.\n"),
         "{unqueued:?}"
+    );
+    let made = lab.run(
+        &["--resume", "t-01a2b3c4d5e6", "--project", "notes", "--place", "~/Code"],
+        "",
+    );
+    assert_eq!(
+        (made.status, made.err.as_str()),
+        (
+            0,
+            "t-01a2b3c4d5e6 is now a project at /home/crowbar/Code/notes (created).\n"
+        ),
+        "{made:?}"
     );
 
     server.join().unwrap();

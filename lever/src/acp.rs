@@ -4,26 +4,27 @@
 
 use crate::channel::LEVER_VERSION;
 use crate::discovery::{ExternalSession, ImportedAct, ImportedSubagent, ImportedTurn, SessionHistory};
+use crate::mcp::{self, McpServerSpec};
 use crate::opencode;
 use crate::sys;
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, Annotations, AvailableCommandInput, CLIENT_METHOD_NAMES, CancelNotification,
-    CancelRequestNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, Error as AcpError, ErrorCode,
-    IdleStopReason, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage, ListSessionsRequest,
-    ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification,
-    PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, Response, Role,
-    SelectedPermissionOutcome, SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOptions, SessionId, SessionUpdate, SetSessionConfigOptionRequest,
-    SetSessionConfigOptionResponse, StateUpdate, StopReason, SubagentCapabilities, TextContent, ToolCall,
-    ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind,
+    CancelRequestNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, EnvVariable, Error as AcpError,
+    ErrorCode, IdleStopReason, Implementation, InitializeRequest, InitializeResponse, JsonRpcMessage,
+    ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse, McpServer, McpServerStdio,
+    NewSessionRequest, NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOptionKind,
+    PromptRequest, PromptResponse, Request, RequestId, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, Response, Role, SelectedPermissionOutcome, SessionConfigId, SessionConfigKind,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOptions, SessionId, SessionUpdate,
+    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StateUpdate, StopReason, SubagentCapabilities,
+    TextContent, ToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate, ToolKind,
 };
 use agent_client_protocol_schema::{MaybeUndefined, ProtocolVersion};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout};
 use std::time::{Duration, Instant};
 
@@ -357,6 +358,7 @@ pub enum AcpEvent {
 enum PendingRpc {
     DeleteSession {
         thread_id: String,
+        session_id: String,
     },
     Initialize,
     ProbeModels,
@@ -365,12 +367,15 @@ enum PendingRpc {
         thread_id: String,
         turn: u64,
         afresh: bool,
+        epoch: u64,
     },
     LoadSession {
         thread_id: String,
         turn: u64,
         session_id: String,
         cwd: String,
+        mcp_servers: Vec<McpServerSpec>,
+        epoch: u64,
     },
     /// Loads an externally-started session via `session/load` and captures its
     /// replayed updates into a [`SessionHistory`].
@@ -467,8 +472,24 @@ pub struct AcpHarness {
     next_permission: u64,
     /// Each session's mode, as Lever's mode ID.
     session_modes: HashMap<String, String>,
+    /// Home directory of the harness process, used to resolve `~` in request
+    /// details identically to `project::resolve_project_path`.
+    home: PathBuf,
+    /// Per-thread session generation bumped on `forget_session`/`detach_session`
+    /// so stale in-flight `session/new` or `session/load` replies from before a
+    /// project move are discarded and closed instead of re-binding an old folder.
+    session_gen: HashMap<String, u64>,
     thread_to_session: HashMap<String, String>,
     session_to_thread: HashMap<String, String>,
+    /// Pre-move root session IDs detached from a thread, kept with the turn
+    /// number that last ran on that session until the thread is forgotten or
+    /// the session ID is deleted/reassigned, so late subagent updates from the
+    /// old session still route to the thread (direct children attach to this
+    /// turn; nested children resolve their parent subagent's recorded turn).
+    retired_root_to_thread: HashMap<String, (String, Option<u64>)>,
+    /// Original turn number recorded for a subagent routed from a retired
+    /// pre-move session.
+    child_retired_turn: HashMap<String, u64>,
     session_models: HashMap<String, String>,
     /// Each session's effort selector, when its Model has effort levels.
     session_efforts: HashMap<String, EffortSelector>,
@@ -568,6 +589,15 @@ impl AcpHarness {
             ));
         }
 
+        let home = config
+            .env
+            .iter()
+            .rev()
+            .find(|(k, _)| k == "HOME")
+            .map(|(_, v)| PathBuf::from(v))
+            .filter(|p| !p.as_os_str().is_empty())
+            .or_else(|| std::env::var("HOME").ok().filter(|s| !s.is_empty()).map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("/"));
         let started = sys::start_time(child.id()).unwrap_or(0);
         let mut harness = Self {
             started,
@@ -595,8 +625,12 @@ impl AcpHarness {
             permissions: HashMap::new(),
             next_permission: 1,
             session_modes: HashMap::new(),
+            home,
+            session_gen: HashMap::new(),
             thread_to_session: HashMap::new(),
             session_to_thread: HashMap::new(),
+            retired_root_to_thread: HashMap::new(),
+            child_retired_turn: HashMap::new(),
             session_models: HashMap::new(),
             session_efforts: HashMap::new(),
             probe_sessions: VecDeque::new(),
@@ -658,12 +692,54 @@ impl AcpHarness {
         self.thread_to_session.get(thread_id).map(String::as_str)
     }
 
+    pub fn thread_for_session(&self, session_id: &str) -> Option<&str> {
+        self.session_to_thread.get(session_id).map(String::as_str)
+    }
+
+    pub fn is_subagent_session(&self, session_id: &str) -> bool {
+        self.child_to_thread.contains_key(session_id)
+    }
+
+    /// Detaches a thread's active harness session (for instance when the thread
+    /// moved to a new project folder) and closes it on the harness when
+    /// supported so subsequent turns open a fresh session in the new folder.
+    /// Keeps the retired root session ID mapped (with its last turn number) for
+    /// late subagent updates until the thread is forgotten/deleted or the
+    /// session ID is reassigned.
+    pub fn detach_session(&mut self, thread_id: &str, retired_turn: Option<u64>) {
+        let entry = self.session_gen.entry(thread_id.to_string()).or_insert(0);
+        *entry = entry.wrapping_add(1);
+        self.transport_failures.remove(thread_id);
+        let session_id = self.thread_to_session.remove(thread_id);
+        if let Some(sid) = session_id {
+            self.session_to_thread.remove(&sid);
+            self.session_models.remove(&sid);
+            self.session_modes.remove(&sid);
+            self.session_efforts.remove(&sid);
+            self.retired_root_to_thread
+                .insert(sid.clone(), (thread_id.to_string(), retired_turn));
+            if self.supports_close_session {
+                let close = CloseSessionRequest::new(SessionId::new(sid));
+                let id = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
+                self.pending.insert(id, PendingRpc::CloseProbe);
+                let _ = self.on_writable();
+            }
+        }
+    }
+
+    /// Original turn number of a subagent routed from a retired pre-move
+    /// session, if any.
+    pub fn retired_turn_of(&self, child_session_id: &str) -> Option<u64> {
+        self.child_retired_turn.get(child_session_id).copied()
+    }
+
     /// Session IDs Lever opened as short-lived probes (for Models or efforts),
     /// plus any sessions currently active or loading, so external session
     /// discovery never lists Lever's own probe or active sessions.
     pub fn own_session_ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.probe_sessions.iter().cloned().collect();
         ids.extend(self.session_to_thread.keys().cloned());
+        ids.extend(self.retired_root_to_thread.keys().cloned());
         ids.extend(self.loading_sessions.iter().cloned());
         ids.extend(self.history_loads.keys().cloned());
         ids.extend(self.child_to_thread.keys().cloned());
@@ -675,8 +751,16 @@ impl AcpHarness {
         self.child_launchers.get(child_session_id).map(String::as_str)
     }
 
-    /// Lets go of a thread's session, which Lever will not use.
+    fn current_session_gen(&self, thread_id: &str) -> u64 {
+        self.session_gen.get(thread_id).copied().unwrap_or(0)
+    }
+
+    /// Lets go of a thread's session, which Lever will not use. Bumps the
+    /// thread's session generation so any in-flight `session/new` or
+    /// `session/load` RPC from before the detach is discarded when it answers.
     pub fn forget_session(&mut self, thread_id: &str) {
+        let entry = self.session_gen.entry(thread_id.to_string()).or_insert(0);
+        *entry = entry.wrapping_add(1);
         self.transport_failures.remove(thread_id);
         if let Some(session_id) = self.thread_to_session.remove(thread_id) {
             self.session_to_thread.remove(&session_id);
@@ -695,7 +779,9 @@ impl AcpHarness {
             self.child_titles.remove(&cid);
             self.child_prompts.remove(&cid);
             self.child_launchers.remove(&cid);
+            self.child_retired_turn.remove(&cid);
         }
+        self.retired_root_to_thread.retain(|_, (owner, _)| owner != thread_id);
         self.pending_subagent_calls
             .retain(|_, call| call.thread_id != thread_id);
     }
@@ -712,6 +798,7 @@ impl AcpHarness {
             id,
             PendingRpc::DeleteSession {
                 thread_id: thread_id.into(),
+                session_id: session_id.into(),
             },
         );
         true
@@ -872,8 +959,9 @@ impl AcpHarness {
             PendingRpc::LoadSession {
                 thread_id,
                 session_id: loading,
+                epoch,
                 ..
-            } if loading == session_id => Some(thread_id.clone()),
+            } if loading == session_id && *epoch == self.current_session_gen(thread_id) => Some(thread_id.clone()),
             _ => None,
         })
     }
@@ -881,9 +969,14 @@ impl AcpHarness {
     /// Whether a thread's session is being loaded, when what its subagents
     /// say is history the harness replays, which Lever already holds.
     fn thread_loading(&self, thread_id: &str) -> bool {
-        self.pending.values().any(
-            |pending| matches!(pending, PendingRpc::LoadSession { thread_id: loading, .. } if loading == thread_id),
-        )
+        let cur = self.current_session_gen(thread_id);
+        self.pending.values().any(|pending| {
+            matches!(
+                pending,
+                PendingRpc::LoadSession { thread_id: loading, epoch, .. }
+                    if loading == thread_id && *epoch == cur
+            )
+        })
     }
 
     /// Whether the harness has a mode selector Lever can set.
@@ -981,19 +1074,29 @@ impl AcpHarness {
     /// Starts or reloads an ACP session for `thread_id`. A thread has one
     /// session request under way at a time: when one is, it is given `turn`,
     /// so its answer goes to the turn that now waits for it.
-    pub fn ensure_session(&mut self, thread_id: &str, turn: u64, cwd: &str, existing_session_id: Option<&str>) {
+    pub fn ensure_session(
+        &mut self,
+        thread_id: &str,
+        turn: u64,
+        cwd: &str,
+        existing_session_id: Option<&str>,
+        mcp_servers: &[McpServerSpec],
+    ) {
+        let cur_epoch = self.current_session_gen(thread_id);
         for pending in self.pending.values_mut() {
             match pending {
                 PendingRpc::NewSession {
                     thread_id: waiting,
                     turn: waiting_turn,
+                    epoch,
                     ..
                 }
                 | PendingRpc::LoadSession {
                     thread_id: waiting,
                     turn: waiting_turn,
+                    epoch,
                     ..
-                } if waiting == thread_id => {
+                } if waiting == thread_id && *epoch == cur_epoch => {
                     *waiting_turn = turn;
                     return;
                 }
@@ -1001,7 +1104,7 @@ impl AcpHarness {
             }
         }
         let Some(sid) = existing_session_id else {
-            self.request_new_session(thread_id, turn, cwd, false);
+            self.request_new_session(thread_id, turn, cwd, false, mcp_servers, cur_epoch);
             return;
         };
         // A session another thread holds, or is loading, is not this thread's
@@ -1012,11 +1115,12 @@ impl AcpHarness {
             || self.loading_sessions.contains(sid)
             || self.history_loads.contains_key(sid);
         if !self.supports_load_session || taken {
-            self.request_new_session(thread_id, turn, cwd, true);
+            self.request_new_session(thread_id, turn, cwd, true, mcp_servers, cur_epoch);
             return;
         }
         self.loading_sessions.insert(sid.to_string());
-        let req = LoadSessionRequest::new(SessionId::new(sid.to_string()), PathBuf::from(cwd));
+        let req = LoadSessionRequest::new(SessionId::new(sid.to_string()), PathBuf::from(cwd))
+            .mcp_servers(to_acp_mcp_servers(mcp_servers));
         let id = self.send_request(AGENT_METHOD_NAMES.session_load, &req);
         self.pending.insert(
             id,
@@ -1025,13 +1129,23 @@ impl AcpHarness {
                 turn,
                 session_id: sid.to_string(),
                 cwd: cwd.to_string(),
+                mcp_servers: mcp_servers.to_vec(),
+                epoch: cur_epoch,
             },
         );
         let _ = self.on_writable();
     }
 
-    fn request_new_session(&mut self, thread_id: &str, turn: u64, cwd: &str, afresh: bool) {
-        let req = NewSessionRequest::new(PathBuf::from(cwd));
+    fn request_new_session(
+        &mut self,
+        thread_id: &str,
+        turn: u64,
+        cwd: &str,
+        afresh: bool,
+        mcp_servers: &[McpServerSpec],
+        epoch: u64,
+    ) {
+        let req = NewSessionRequest::new(PathBuf::from(cwd)).mcp_servers(to_acp_mcp_servers(mcp_servers));
         let id = self.send_request(AGENT_METHOD_NAMES.session_new, &req);
         self.pending.insert(
             id,
@@ -1039,6 +1153,7 @@ impl AcpHarness {
                 thread_id: thread_id.to_string(),
                 turn,
                 afresh,
+                epoch,
             },
         );
         let _ = self.on_writable();
@@ -1048,7 +1163,13 @@ impl AcpHarness {
     /// replayed history into a [`SessionHistory`]. Returns `false` if the
     /// harness does not advertise `loadSession` or the session is already held
     /// by another thread.
-    pub fn load_session_history(&mut self, thread_id: &str, session_id: &str, cwd: &str) -> bool {
+    pub fn load_session_history(
+        &mut self,
+        thread_id: &str,
+        session_id: &str,
+        cwd: &str,
+        mcp_servers: &[McpServerSpec],
+    ) -> bool {
         if !self.supports_load_session || session_id.is_empty() {
             return false;
         }
@@ -1063,7 +1184,8 @@ impl AcpHarness {
         }
         self.history_loads
             .insert(session_id.to_string(), HistoryBuilder::new(self.is_opencode));
-        let req = LoadSessionRequest::new(SessionId::new(session_id.to_string()), PathBuf::from(cwd));
+        let req = LoadSessionRequest::new(SessionId::new(session_id.to_string()), PathBuf::from(cwd))
+            .mcp_servers(to_acp_mcp_servers(mcp_servers));
         let id = self.send_request(AGENT_METHOD_NAMES.session_load, &req);
         self.pending.insert(
             id,
@@ -1097,6 +1219,7 @@ impl AcpHarness {
         {
             self.session_to_thread.remove(&before);
         }
+        self.retired_root_to_thread.remove(session_id);
         self.session_to_thread
             .insert(session_id.to_string(), thread_id.to_string());
         true
@@ -1442,7 +1565,7 @@ impl AcpHarness {
         let kind = call.fields.kind.map(|k| map_tool_kind(k).to_string());
         // The command or the change is shown as the Model wrote it, as an
         // act's is: the person answers for exactly that.
-        let (detail, path) = request_detail(call.fields.kind, &call.fields);
+        let (detail, path) = request_detail(call.fields.kind, &call.fields, &self.home);
         let raw_title = call
             .fields
             .title
@@ -1530,7 +1653,7 @@ impl AcpHarness {
                 .unwrap_or_else(|| "The harness reported an error.".to_string());
             let no_models = is_no_models_error(err_val, &raw_msg);
             match pending {
-                PendingRpc::DeleteSession { thread_id } => {
+                PendingRpc::DeleteSession { thread_id, .. } => {
                     let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
                     events.push(AcpEvent::SessionDeleted {
                         thread_id,
@@ -1556,23 +1679,31 @@ impl AcpHarness {
                     }
                 }
                 PendingRpc::CloseProbe => {}
-                PendingRpc::NewSession { thread_id, turn, .. } => {
-                    let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
-                    events.push(AcpEvent::SessionFailed {
-                        thread_id,
-                        turn,
-                        message,
-                        no_models,
-                    });
+                PendingRpc::NewSession {
+                    thread_id, turn, epoch, ..
+                } => {
+                    if epoch == self.current_session_gen(&thread_id) {
+                        let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
+                        events.push(AcpEvent::SessionFailed {
+                            thread_id,
+                            turn,
+                            message,
+                            no_models,
+                        });
+                    }
                 }
                 PendingRpc::LoadSession {
                     thread_id,
                     turn,
                     session_id,
                     cwd,
+                    mcp_servers,
+                    epoch,
                 } => {
                     self.loading_sessions.remove(&session_id);
-                    self.request_new_session(&thread_id, turn, &cwd, true);
+                    if epoch == self.current_session_gen(&thread_id) {
+                        self.request_new_session(&thread_id, turn, &cwd, true, &mcp_servers, epoch);
+                    }
                 }
                 PendingRpc::LoadHistory { thread_id, session_id } => {
                     self.history_loads.remove(&session_id);
@@ -1664,7 +1795,8 @@ impl AcpHarness {
 
         let result = value.get("result").cloned().unwrap_or(Value::Null);
         match pending {
-            PendingRpc::DeleteSession { thread_id } => {
+            PendingRpc::DeleteSession { thread_id, session_id } => {
+                self.retired_root_to_thread.remove(&session_id);
                 events.push(AcpEvent::SessionDeleted {
                     thread_id,
                     result: Ok(()),
@@ -1738,79 +1870,102 @@ impl AcpHarness {
                 thread_id,
                 turn,
                 afresh,
-            } => match serde_json::from_value::<NewSessionResponse>(result) {
-                // A session with no ID is no session: Lever could neither
-                // tell it from another nor load it again.
-                Ok(resp) if !resp.session_id.0.is_empty() => {
-                    let sid = resp.session_id.0.as_ref().to_string();
-                    let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
-                    let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
-                    if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
-                        self.model_config_id = Some(cid.clone());
+                epoch,
+            } => {
+                if epoch != self.current_session_gen(&thread_id) {
+                    if let Ok(resp) = serde_json::from_value::<NewSessionResponse>(result)
+                        && !resp.session_id.0.is_empty()
+                    {
+                        self.close_probe(resp.session_id);
                     }
-                    if self.bind_session(&thread_id, &sid) {
-                        if let Some(ref m) = current_model {
-                            self.session_models.insert(sid.clone(), m.clone());
+                } else {
+                    match serde_json::from_value::<NewSessionResponse>(result) {
+                        // A session with no ID is no session: Lever could neither
+                        // tell it from another nor load it again.
+                        Ok(resp) if !resp.session_id.0.is_empty() => {
+                            let sid = resp.session_id.0.as_ref().to_string();
+                            let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
+                            let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
+                            if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
+                                self.model_config_id = Some(cid.clone());
+                            }
+                            if self.bind_session(&thread_id, &sid) {
+                                if let Some(ref m) = current_model {
+                                    self.session_models.insert(sid.clone(), m.clone());
+                                }
+                                self.take_effort(&sid, resp.config_options.as_deref().unwrap_or(&[]));
+                                let modes = self.take_modes(&sid, resp.config_options.as_deref());
+                                if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
+                                    cat.modes = selector.modes.clone();
+                                }
+                                events.push(AcpEvent::SessionReady {
+                                    thread_id,
+                                    session_id: sid,
+                                    afresh,
+                                    catalog,
+                                    current_model,
+                                });
+                            } else {
+                                events.push(AcpEvent::SessionFailed {
+                                    thread_id,
+                                    turn,
+                                    message: "The harness gave this thread a session that another thread is using."
+                                        .to_string(),
+                                    no_models: false,
+                                });
+                            }
                         }
-                        self.take_effort(&sid, resp.config_options.as_deref().unwrap_or(&[]));
-                        let modes = self.take_modes(&sid, resp.config_options.as_deref());
-                        if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
-                            cat.modes = selector.modes.clone();
-                        }
-                        events.push(AcpEvent::SessionReady {
-                            thread_id,
-                            session_id: sid,
-                            afresh,
-                            catalog,
-                            current_model,
-                        });
-                    } else {
-                        events.push(AcpEvent::SessionFailed {
+                        _ => events.push(AcpEvent::SessionFailed {
                             thread_id,
                             turn,
-                            message: "The harness gave this thread a session that another thread is using.".to_string(),
+                            message: "The harness could not start a thread.".to_string(),
                             no_models: false,
-                        });
+                        }),
                     }
                 }
-                _ => events.push(AcpEvent::SessionFailed {
-                    thread_id,
-                    turn,
-                    message: "The harness could not start a thread.".to_string(),
-                    no_models: false,
-                }),
-            },
+            }
             PendingRpc::LoadSession {
                 thread_id,
                 turn,
                 session_id,
                 cwd,
+                mcp_servers,
+                epoch,
             } => {
                 self.loading_sessions.remove(&session_id);
-                match serde_json::from_value::<LoadSessionResponse>(result) {
-                    Ok(resp) if self.bind_session(&thread_id, &session_id) => {
-                        let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
-                        let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
-                        if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
-                            self.model_config_id = Some(cid.clone());
-                        }
-                        if let Some(ref m) = current_model {
-                            self.session_models.insert(session_id.clone(), m.clone());
-                        }
-                        self.take_effort(&session_id, resp.config_options.as_deref().unwrap_or(&[]));
-                        let modes = self.take_modes(&session_id, resp.config_options.as_deref());
-                        if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
-                            cat.modes = selector.modes.clone();
-                        }
-                        events.push(AcpEvent::SessionReady {
-                            thread_id,
-                            session_id,
-                            afresh: false,
-                            catalog,
-                            current_model,
-                        });
+                if epoch != self.current_session_gen(&thread_id) {
+                    if self.supports_close_session {
+                        let close = CloseSessionRequest::new(SessionId::new(session_id));
+                        let id = self.send_request(AGENT_METHOD_NAMES.session_close, &close);
+                        self.pending.insert(id, PendingRpc::CloseProbe);
+                        let _ = self.on_writable();
                     }
-                    _ => self.request_new_session(&thread_id, turn, &cwd, true),
+                } else {
+                    match serde_json::from_value::<LoadSessionResponse>(result) {
+                        Ok(resp) if self.bind_session(&thread_id, &session_id) => {
+                            let mut catalog = resp.config_options.as_deref().and_then(extract_model_catalog);
+                            let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
+                            if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
+                                self.model_config_id = Some(cid.clone());
+                            }
+                            if let Some(ref m) = current_model {
+                                self.session_models.insert(session_id.clone(), m.clone());
+                            }
+                            self.take_effort(&session_id, resp.config_options.as_deref().unwrap_or(&[]));
+                            let modes = self.take_modes(&session_id, resp.config_options.as_deref());
+                            if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
+                                cat.modes = selector.modes.clone();
+                            }
+                            events.push(AcpEvent::SessionReady {
+                                thread_id,
+                                session_id,
+                                afresh: false,
+                                catalog,
+                                current_model,
+                            });
+                        }
+                        _ => self.request_new_session(&thread_id, turn, &cwd, true, &mcp_servers, epoch),
+                    }
                 }
             }
             PendingRpc::LoadHistory { thread_id, session_id } => {
@@ -2338,6 +2493,20 @@ impl AcpHarness {
         };
         let root_sid = obj.get("rootSessionId").and_then(Value::as_str);
         let parent_sid = obj.get("parentSessionId").and_then(Value::as_str);
+        let retired_turn = parent_sid
+            .and_then(|s| self.child_retired_turn.get(s).copied())
+            .or_else(|| {
+                let parent_is_child = parent_sid.is_some_and(|s| self.child_to_thread.contains_key(s));
+                if parent_is_child {
+                    None
+                } else {
+                    root_sid
+                        .and_then(|s| self.retired_root_to_thread.get(s).and_then(|(_, turn)| *turn))
+                        .or_else(|| {
+                            parent_sid.and_then(|s| self.retired_root_to_thread.get(s).and_then(|(_, turn)| *turn))
+                        })
+                }
+            });
         let thread_id = self
             .child_to_thread
             .get(child_sid)
@@ -2350,7 +2519,9 @@ impl AcpHarness {
                         .or_else(|| self.child_to_thread.get(s))
                         .cloned()
                 })
-            });
+            })
+            .or_else(|| root_sid.and_then(|s| self.retired_root_to_thread.get(s).map(|(tid, _)| tid.clone())))
+            .or_else(|| parent_sid.and_then(|s| self.retired_root_to_thread.get(s).map(|(tid, _)| tid.clone())));
         let Some(thread_id) = thread_id else {
             return;
         };
@@ -2362,8 +2533,12 @@ impl AcpHarness {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty());
+        let had_child = self.child_to_thread.contains_key(child_sid);
         if !self.register_child(&thread_id, child_sid, title) {
             return;
+        }
+        if !had_child && let Some(turn) = retired_turn {
+            self.child_retired_turn.entry(child_sid.to_string()).or_insert(turn);
         }
         // A child of another of the thread's subagents was launched by it,
         // though the launcher has yet to name it.
@@ -2862,6 +3037,12 @@ impl AcpHarness {
         let mut ids: Vec<&str> = Vec::new();
         if let Some(tid) = thread_id {
             ids.extend(self.thread_to_session.get(tid).map(String::as_str));
+            ids.extend(
+                self.retired_root_to_thread
+                    .iter()
+                    .filter(|(_, (owner, _))| owner.as_str() == tid)
+                    .map(|(sid, _)| sid.as_str()),
+            );
             if let Some(tools) = self.thread_tool_ids.get(tid) {
                 ids.extend(tools.iter().map(String::as_str));
             }
@@ -2870,6 +3051,7 @@ impl AcpHarness {
             }
         } else {
             ids.extend(self.session_to_thread.keys().map(String::as_str));
+            ids.extend(self.retired_root_to_thread.keys().map(String::as_str));
             ids.extend(self.child_to_thread.keys().map(String::as_str));
         }
         ids
@@ -3505,6 +3687,7 @@ fn extract_modes(options: &[SessionConfigOption]) -> Option<ModeSelector> {
 fn request_detail(
     kind: Option<ToolKind>,
     fields: &agent_client_protocol_schema::v1::ToolCallUpdateFields,
+    home: &Path,
 ) -> (Option<String>, Option<String>) {
     let content = fields.content.as_deref().unwrap_or(&[]);
     let diffs: Vec<_> = content
@@ -3564,8 +3747,35 @@ fn request_detail(
             };
             (change, path)
         }
-        _ => (tool_detail(content, None, input), None),
+        _ => {
+            let mcp_detail = fields
+                .title
+                .as_deref()
+                .filter(|t| *t == mcp::TOOL_MAKE_PROJECT || t.ends_with(&format!("_{}", mcp::TOOL_MAKE_PROJECT)))
+                .and_then(|_| input.and_then(|v| mcp::format_make_project_detail(v, home)));
+            (mcp_detail.or_else(|| tool_detail(content, None, input)), None)
+        }
     }
+}
+
+/// Translates Lever's harness-agnostic [`McpServerSpec`] list into ACP v1
+/// stdio MCP server entries.
+fn to_acp_mcp_servers(specs: &[McpServerSpec]) -> Vec<McpServer> {
+    specs
+        .iter()
+        .map(|spec| {
+            let env: Vec<EnvVariable> = spec
+                .env
+                .iter()
+                .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
+                .collect();
+            McpServer::Stdio(
+                McpServerStdio::new(spec.name.clone(), spec.command.clone())
+                    .args(spec.args.clone())
+                    .env(env),
+            )
+        })
+        .collect()
 }
 
 /// The change from `old` to `new` as lines that begin `-` and `+`, with a few
@@ -4052,7 +4262,12 @@ mod tests {
         let ask_first = json!({
             "mode": "primary",
             "description": "Asks before it runs a command or edits a file.",
-            "permission": { "bash": { "*": "ask" }, "edit": { "*": "ask" } },
+            "permission": {
+                "bash": { "*": "ask" },
+                "edit": { "*": "ask" },
+                "crowbar_*": { "*": "ask" },
+                "crowbar_make_project": { "*": "ask" }
+            },
         });
         assert_eq!(
             serde_json::from_str::<Value>(&opencode_config_content(None, &[])).unwrap(),
@@ -4337,8 +4552,9 @@ mod tests {
             "rawInput": { "command": "echo hi && id -un", "cwd": "/tmp" }
         }))
         .unwrap();
+        let home = Path::new("/home/person");
         assert_eq!(
-            request_detail(Some(ToolKind::Execute), &command),
+            request_detail(Some(ToolKind::Execute), &command, home),
             (Some("echo hi && id -un".to_string()), None)
         );
         let edit: agent_client_protocol_schema::v1::ToolCallUpdateFields = serde_json::from_value(json!({
@@ -4348,7 +4564,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            request_detail(Some(ToolKind::Edit), &edit),
+            request_detail(Some(ToolKind::Edit), &edit, home),
             (
                 Some("-alpha line\n+beta line".to_string()),
                 Some("/w/seed.txt".to_string())
@@ -4359,7 +4575,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            request_detail(Some(ToolKind::Edit), &raw_edit),
+            request_detail(Some(ToolKind::Edit), &raw_edit, home),
             (Some("+hello".to_string()), Some("/w/new.txt".to_string()))
         );
         // Lines taken out, with nothing put in their place, are the change.
@@ -4368,7 +4584,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            request_detail(Some(ToolKind::Edit), &deletion),
+            request_detail(Some(ToolKind::Edit), &deletion, home),
             (Some("-remove me".to_string()), Some("/w/old.txt".to_string()))
         );
     }
@@ -4598,5 +4814,68 @@ mod tests {
         assert_eq!(history.turns[1].subagents[0].prompt.as_deref(), Some("Check logs"));
         assert!(tool_ids.contains(&"call_1".to_string()));
         assert_eq!(sub_ids, vec!["ses_child_1".to_string()]);
+    }
+
+    #[test]
+    fn late_update_for_known_child_does_not_stamp_retired_turn() {
+        let cfg = HarnessConfig {
+            id: "cat-test".into(),
+            name: "cat-test".into(),
+            program: "/bin/cat".into(),
+            args: Vec::new(),
+            env: Vec::new(),
+            watch_paths: Vec::new(),
+        };
+        let mut harness = AcpHarness::spawn(&cfg, false).unwrap();
+        assert!(harness.bind_session("t1", "ses-root-1"));
+
+        let mut events = Vec::new();
+        // Register an earlier-turn direct child while the root session is live.
+        harness.handle_opencode_child_update(
+            Some(&json!({
+                "childSessionId": "ses-child-t1",
+                "rootSessionId": "ses-root-1",
+                "parentSessionId": "ses-root-1",
+                "title": "Earlier child",
+                "type": "status",
+                "status": "completed"
+            })),
+            &mut events,
+        );
+        assert_eq!(harness.retired_turn_of("ses-child-t1"), None);
+
+        // Detach the root session on Turn 2 (after a project move).
+        harness.detach_session("t1", Some(2));
+
+        // A late update for the already-known Turn 1 child must NOT stamp Turn 2 onto it.
+        harness.handle_opencode_child_update(
+            Some(&json!({
+                "childSessionId": "ses-child-t1",
+                "rootSessionId": "ses-root-1",
+                "parentSessionId": "ses-root-1",
+                "title": "Earlier child",
+                "type": "status",
+                "status": "completed"
+            })),
+            &mut events,
+        );
+        assert_eq!(harness.retired_turn_of("ses-child-t1"), None);
+
+        // By contrast, a brand-new delayed direct child first seen after detach gets Turn 2.
+        harness.handle_opencode_child_update(
+            Some(&json!({
+                "childSessionId": "ses-child-t2",
+                "rootSessionId": "ses-root-1",
+                "parentSessionId": "ses-root-1",
+                "title": "Delayed child",
+                "type": "status",
+                "status": "running"
+            })),
+            &mut events,
+        );
+        assert_eq!(harness.retired_turn_of("ses-child-t2"), Some(2));
+
+        let _ = harness.child.kill();
+        let _ = harness.child.wait();
     }
 }

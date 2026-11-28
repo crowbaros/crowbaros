@@ -50,6 +50,9 @@ pub struct ThreadMeta {
     /// True when this thread was discovered from a harness's own store and its
     /// history has not yet been read into Lever's record.
     pub needs_history: bool,
+    /// True when this thread moved to a new project folder and its next fresh
+    /// harness session must be handed the thread's prior turns.
+    pub needs_handoff: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -266,7 +269,7 @@ impl Store {
                  key TEXT PRIMARY KEY,\n\
                  value TEXT NOT NULL\n\
              );\n\
-             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '10');\n\
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '11');\n\
              CREATE TABLE IF NOT EXISTS threads (\n\
                  id TEXT PRIMARY KEY,\n\
                  title TEXT NOT NULL,\n\
@@ -277,13 +280,15 @@ impl Store {
                  mode TEXT,\n\
                  effort TEXT,\n\
                  needs_history INTEGER NOT NULL DEFAULT 0,\n\
+                 needs_handoff INTEGER NOT NULL DEFAULT 0,\n\
                  created_at INTEGER NOT NULL,\n\
                  updated_at INTEGER NOT NULL\n\
              );\n\
              CREATE TABLE IF NOT EXISTS ignored_sessions (\n\
                  harness_session_id TEXT PRIMARY KEY,\n\
                  reason TEXT NOT NULL,\n\
-                 created_at INTEGER NOT NULL\n\
+                 created_at INTEGER NOT NULL,\n\
+                 thread_id TEXT\n\
              );\n\
              CREATE TABLE IF NOT EXISTS quiet_sessions (\n\
                  harness_session_id TEXT PRIMARY KEY,\n\
@@ -404,6 +409,8 @@ impl Store {
         ensure_column(&conn, "requests", "subagent_id", "TEXT")?;
         ensure_column(&conn, "turns", "origin", "TEXT")?;
         ensure_column(&conn, "threads", "needs_history", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(&conn, "threads", "needs_handoff", "INTEGER NOT NULL DEFAULT 0")?;
+        ensure_column(&conn, "ignored_sessions", "thread_id", "TEXT")?;
 
         // Any turn or subagent left working by a Lever that ended abruptly is
         // interrupted, and a request that waited went with the harness that asked it.
@@ -584,17 +591,28 @@ impl Store {
             Option<String>,
             Option<String>,
             bool,
+            bool,
         );
         let row: Option<Row> = self
             .conn
             .query_row(
-                "SELECT cwd, harness_session_id, model, mode, effort, needs_history FROM threads WHERE id = ?1",
+                "SELECT cwd, harness_session_id, model, mode, effort, needs_history, needs_handoff FROM threads WHERE id = ?1",
                 params![thread_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|e| format!("could not query thread: {e}"))?;
-        let Some((cwd, harness_session_id, model, mode, effort, needs_history)) = row else {
+        let Some((cwd, harness_session_id, model, mode, effort, needs_history, needs_handoff)) = row else {
             return Ok(None);
         };
         let latest_turn: Option<u64> = self
@@ -628,7 +646,104 @@ impl Store {
             latest_turn,
             working_turn,
             needs_history,
+            needs_handoff,
         }))
+    }
+
+    /// Moves a thread to a project folder, clearing its previous harness
+    /// session ID (and remembering it as ignored, associated with `thread_id`
+    /// so discovery does not re-import it as a second thread and deleting the
+    /// thread still asks the harness to delete retired sessions) and marking
+    /// whether the next fresh session must be handed the thread's prior turns.
+    pub fn move_thread_to_project(
+        &self,
+        thread_id: &str,
+        new_cwd: &str,
+        needs_handoff: bool,
+        old_session_id: Option<&str>,
+        now: i64,
+    ) -> Result<(), String> {
+        self.all_or_none("move thread to project", || {
+            self.conn
+                .execute(
+                    "UPDATE threads SET cwd = ?1, harness_session_id = NULL, needs_handoff = ?2, updated_at = ?3 \
+                     WHERE id = ?4",
+                    params![new_cwd, needs_handoff, now, thread_id],
+                )
+                .map_err(|e| format!("could not update thread project folder: {e}"))?;
+            if let Some(sid) = old_session_id.filter(|s| !s.is_empty()) {
+                self.conn
+                    .execute(
+                        "INSERT INTO ignored_sessions (harness_session_id, reason, created_at, thread_id) \
+                         VALUES (?1, 'moved', ?2, ?3) \
+                         ON CONFLICT(harness_session_id) DO UPDATE SET reason = excluded.reason, thread_id = excluded.thread_id",
+                        params![sid, now, thread_id],
+                    )
+                    .map_err(|e| format!("could not record moved session: {e}"))?;
+                self.forget_quiet_session(sid)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Returns harness session IDs previously retired by `thread_id` (e.g.
+    /// before moving to a project folder) so deleting the thread also asks the
+    /// harness to delete those transcripts. Excludes any session ID currently
+    /// owned by a live thread in `threads`.
+    pub fn retired_sessions_for_thread(&self, thread_id: &str) -> Result<Vec<String>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT harness_session_id FROM ignored_sessions \
+                 WHERE thread_id = ?1 AND harness_session_id <> '' \
+                 AND harness_session_id NOT IN ( \
+                     SELECT harness_session_id FROM threads \
+                     WHERE harness_session_id IS NOT NULL AND harness_session_id <> '' \
+                 ) \
+                 ORDER BY created_at ASC",
+            )
+            .map_err(|e| format!("could not prepare retired sessions query: {e}"))?;
+        let rows = stmt
+            .query_map(params![thread_id], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("could not query retired sessions: {e}"))?;
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| format!("could not read retired sessions: {e}"))
+    }
+
+    /// Persists that `session_id` has been deleted on the harness for
+    /// `thread_id` so a partial failure on a later session never retries an
+    /// already-deleted session.
+    pub fn mark_session_deleted(&self, thread_id: &str, session_id: &str, now: i64) -> Result<(), String> {
+        if session_id.is_empty() {
+            return Ok(());
+        }
+        self.all_or_none("mark deleted session", || {
+            self.conn
+                .execute(
+                    "UPDATE threads SET harness_session_id = NULL WHERE id = ?1 AND harness_session_id = ?2",
+                    params![thread_id, session_id],
+                )
+                .map_err(|e| format!("could not clear deleted session id: {e}"))?;
+            self.conn
+                .execute(
+                    "INSERT INTO ignored_sessions (harness_session_id, reason, created_at, thread_id) \
+                     VALUES (?1, 'deleted', ?2, NULL) \
+                     ON CONFLICT(harness_session_id) DO UPDATE SET reason = 'deleted', thread_id = NULL",
+                    params![session_id, now],
+                )
+                .map_err(|e| format!("could not record deleted session: {e}"))?;
+            self.forget_quiet_session(session_id)?;
+            Ok(())
+        })
+    }
+
+    /// Clears the pending history-handoff flag once a fresh session has
+    /// received the thread's prior turns.
+    pub fn clear_needs_handoff(&self, thread_id: &str) -> Result<(), String> {
+        self.conn
+            .execute("UPDATE threads SET needs_handoff = 0 WHERE id = ?1", params![thread_id])
+            .map_err(|e| format!("could not clear thread handoff flag: {e}"))?;
+        Ok(())
     }
 
     /// Returns `(known_thread_sessions, known_subagents_and_ignored)` from the
@@ -976,6 +1091,15 @@ impl Store {
             .execute(
                 "UPDATE threads SET harness_session_id = '' WHERE harness_session_id = ?1 AND id <> ?2",
                 params![session_id, thread_id],
+            )
+            .map_err(|e| format!("could not store harness session id: {e}"))?;
+        // A reassigned session ID is now live on `thread_id`, so invalidate
+        // any prior retirement/ignored entry for it so deleting an older thread
+        // never deletes this thread's live session.
+        self.conn
+            .execute(
+                "DELETE FROM ignored_sessions WHERE harness_session_id = ?1",
+                params![session_id],
             )
             .map_err(|e| format!("could not store harness session id: {e}"))?;
         // A session this one replaces is Lever's still, and never a thread
@@ -1564,6 +1688,12 @@ impl Store {
                 )
                 .map_err(|e| format!("could not delete thread: {e}"))?;
             self.conn
+                .execute(
+                    "UPDATE ignored_sessions SET reason = 'deleted', thread_id = NULL WHERE thread_id = ?1",
+                    params![thread],
+                )
+                .map_err(|e| format!("could not delete thread: {e}"))?;
+            self.conn
                 .execute("DELETE FROM threads WHERE id = ?1", params![thread])
                 .map_err(|e| format!("could not delete thread: {e}"))?;
             Ok(())
@@ -1964,6 +2094,18 @@ impl Store {
             )
             .optional()
             .map_err(|e| format!("could not query subagent: {e}"))
+    }
+
+    /// Returns the turn number a recorded subagent belongs to, if known.
+    pub fn subagent_turn(&self, thread_id: &str, harness_session_id: &str) -> Result<Option<u64>, String> {
+        self.conn
+            .query_row(
+                "SELECT turn_number FROM subagents WHERE thread_id = ?1 AND harness_session_id = ?2",
+                params![thread_id, harness_session_id],
+                |r| Ok(r.get::<_, i64>(0)? as u64),
+            )
+            .optional()
+            .map_err(|e| format!("could not query subagent turn: {e}"))
     }
 
     pub fn upsert_subagent(&self, patch: &SubagentPatch<'_>, now: i64) -> Result<(u64, SubagentRecord), String> {
@@ -2822,6 +2964,70 @@ mod tests {
         assert!(ignored.contains("ses-ext-1b"));
         assert!(ignored.contains("ses-sub-2"));
         assert!(store.thread_meta("t-ext1").unwrap().is_none());
+
+        store.close().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retired_sessions_respect_deletion_and_reassignment() {
+        let dir = std::env::temp_dir().join(format!("lever-store-retired-{}", crate::sys::random_hex(8)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("lever.db"), 10).unwrap();
+
+        let new_thread = NewThread {
+            title: "Move me",
+            cwd: "/home/p",
+            harness_name: Some("stub"),
+            mode: "ask-first",
+        };
+        store.create_thread("t-move", &new_thread, 10).unwrap();
+        store.set_harness_session_id("t-move", "ses-old-1").unwrap();
+        store
+            .move_thread_to_project("t-move", "/home/p/proj-a", true, Some("ses-old-1"), 20)
+            .unwrap();
+        assert_eq!(
+            store.retired_sessions_for_thread("t-move").unwrap(),
+            vec!["ses-old-1".to_string()]
+        );
+
+        // Moving again retires the second session too.
+        store.set_harness_session_id("t-move", "ses-old-2").unwrap();
+        store
+            .move_thread_to_project("t-move", "/home/p/proj-b", true, Some("ses-old-2"), 30)
+            .unwrap();
+        assert_eq!(
+            store.retired_sessions_for_thread("t-move").unwrap(),
+            vec!["ses-old-1".to_string(), "ses-old-2".to_string()]
+        );
+
+        // Marking a retired session deleted clears its thread association so a
+        // retry after partial failure will not ask the harness to delete it again.
+        store.mark_session_deleted("t-move", "ses-old-1", 40).unwrap();
+        assert_eq!(
+            store.retired_sessions_for_thread("t-move").unwrap(),
+            vec!["ses-old-2".to_string()]
+        );
+
+        // Reassigning a retired session ID to another thread invalidates its
+        // retirement record so deleting `t-move` never deletes `t-other`'s live session.
+        let other_thread = NewThread {
+            title: "Other",
+            cwd: "/home/p",
+            harness_name: Some("stub"),
+            mode: "ask-first",
+        };
+        store.create_thread("t-other", &other_thread, 50).unwrap();
+        store.set_harness_session_id("t-other", "ses-old-2").unwrap();
+        assert!(store.retired_sessions_for_thread("t-move").unwrap().is_empty());
+
+        // Marking a live current session deleted clears threads.harness_session_id
+        // and keeps it ignored as deleted.
+        store.mark_session_deleted("t-other", "ses-old-2", 60).unwrap();
+        assert_eq!(store.thread_meta("t-other").unwrap().unwrap().harness_session_id, None);
+        let (owned, ignored) = store.known_harness_sessions().unwrap();
+        assert!(!owned.contains("ses-old-2"));
+        assert!(ignored.contains("ses-old-2"));
 
         store.close().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
