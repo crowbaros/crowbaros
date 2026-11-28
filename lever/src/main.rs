@@ -28,8 +28,8 @@ use service::{
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, OpenOptionsExt};
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -392,68 +392,64 @@ fn bind_exclusive_socket(path: &Path, mode: u32) -> std::io::Result<UnixListener
     Ok(listener)
 }
 
-/// Attempts to bind `<state>/tools.sock`. Reclaims an existing path only when
-/// it is a dead socket (not a symlink or other file, and `connect` returns
-/// `ConnectionRefused`). Returns `Ok(None)` when occupied so the caller moves
-/// on to a unique private name without disturbing the existing entry.
-fn try_bind_state_tools_socket(path: &Path) -> Result<Option<UnixListener>, String> {
-    match std::fs::symlink_metadata(path) {
-        Err(e) if e.kind() == ErrorKind::NotFound => {}
-        Ok(meta) if meta.file_type().is_socket() => match UnixStream::connect(path) {
-            Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
-                if let Err(rm_err) = std::fs::remove_file(path)
-                    && rm_err.kind() != ErrorKind::NotFound
-                {
-                    return Ok(None);
-                }
-            }
-            _ => return Ok(None),
-        },
-        Ok(_) | Err(_) => return Ok(None),
+/// Builds a unique private filename that fits within `avail` bytes (`avail >= 2`).
+fn sized_unique_socket_name(pid: u32, suffix: &str, avail: usize) -> String {
+    let full = format!("lever-tools-{pid}-{suffix}.sock");
+    if full.len() <= avail {
+        return full;
     }
-    match bind_exclusive_socket(path, 0o600) {
-        Ok(listener) => Ok(Some(listener)),
-        Err(e) if matches!(e.kind(), ErrorKind::AddrInUse | ErrorKind::AlreadyExists) => Ok(None),
-        Err(e) => Err(format!("could not bind MCP tool socket {}: {e}", path.display())),
+    let compact = format!("lt-{suffix}.sock");
+    if compact.len() <= avail {
+        return compact;
     }
+    if avail >= 9 {
+        let hex_len = (avail - 6).min(suffix.len());
+        return format!("t{}.sock", &suffix[..hex_len]);
+    }
+    let hex_len = (avail - 1).min(suffix.len());
+    format!("t{}", &suffix[..hex_len])
 }
 
 /// Attempts to bind a unique, unoccupied private MCP tool socket in `dir`
-/// without ever unlinking an existing entry.
+/// without ever unlinking or connecting to an existing entry.
 fn try_bind_unique_tool_socket(
     dir: &Path,
     avoid: &[PathBuf],
     tried: &mut Vec<String>,
 ) -> Result<Option<(PathBuf, UnixListener)>, String> {
+    let dir_len = dir.as_os_str().as_encoded_bytes().len();
+    let avail = MAX_UNIX_SOCKET_PATH.saturating_sub(dir_len.saturating_add(1));
+    if avail < 2 {
+        tried.push(format!("{}/<no room in {MAX_UNIX_SOCKET_PATH} bytes>", dir.display()));
+        return Ok(None);
+    }
+
     let pid = std::process::id();
-    let pid_candidate = dir.join(format!("lever-tools-{pid}.sock"));
-    tried.push(pid_candidate.display().to_string());
-    if !avoid.contains(&pid_candidate) && pid_candidate.as_os_str().as_encoded_bytes().len() <= MAX_UNIX_SOCKET_PATH {
-        match bind_exclusive_socket(&pid_candidate, 0o600) {
-            Ok(listener) => return Ok(Some((pid_candidate, listener))),
-            Err(e) if matches!(e.kind(), ErrorKind::AddrInUse | ErrorKind::AlreadyExists) => {}
-            Err(e) => {
-                return Err(format!(
-                    "could not bind MCP tool socket {}: {e}",
-                    pid_candidate.display()
-                ));
+    let pid_name = format!("lever-tools-{pid}.sock");
+    if pid_name.len() <= avail {
+        let pid_candidate = dir.join(&pid_name);
+        tried.push(pid_candidate.display().to_string());
+        if !avoid.contains(&pid_candidate) {
+            match bind_exclusive_socket(&pid_candidate, 0o600) {
+                Ok(listener) => return Ok(Some((pid_candidate, listener))),
+                Err(e) if matches!(e.kind(), ErrorKind::AddrInUse | ErrorKind::AlreadyExists) => {}
+                Err(e) => {
+                    return Err(format!(
+                        "could not bind MCP tool socket {}: {e}",
+                        pid_candidate.display()
+                    ));
+                }
             }
         }
     }
 
-    for _ in 0..8 {
+    for _ in 0..16 {
         let suffix = sys::random_hex(4);
-        let long_name = dir.join(format!("lever-tools-{pid}-{suffix}.sock"));
-        let candidate = if long_name.as_os_str().as_encoded_bytes().len() <= MAX_UNIX_SOCKET_PATH {
-            long_name
-        } else {
-            dir.join(format!("lt-{suffix}.sock"))
-        };
-        if avoid.contains(&candidate) || candidate.as_os_str().as_encoded_bytes().len() > MAX_UNIX_SOCKET_PATH {
-            tried.push(candidate.display().to_string());
-            break;
-        }
+        let candidate = dir.join(sized_unique_socket_name(pid, &suffix, avail));
         tried.push(candidate.display().to_string());
+        if avoid.contains(&candidate) {
+            continue;
+        }
         match bind_exclusive_socket(&candidate, 0o600) {
             Ok(listener) => return Ok(Some((candidate, listener))),
             Err(e) if matches!(e.kind(), ErrorKind::AddrInUse | ErrorKind::AlreadyExists) => continue,
@@ -465,9 +461,10 @@ fn try_bind_unique_tool_socket(
 
 /// Binds Lever's private MCP tool socket at an absolute, `SUN_LEN`-safe path
 /// that never collides with configured endpoints (`person_socket`,
-/// `surface_socket`, or `fulcrum_socket`) and never unlinks a live socket or
-/// occupied file. Prefers `<canonical state>/tools.sock` when available; falls
-/// back to a unique private socket in `<state>` or beside `person_socket`.
+/// `surface_socket`, or `fulcrum_socket`) and never unlinks or probes any
+/// existing entry. Prefers `<canonical state>/tools.sock` when unoccupied;
+/// otherwise binds a unique private socket sized to the available pathname
+/// budget in `<state>` or beside `person_socket`.
 fn bind_tool_socket(
     state_dir: &Path,
     person_socket: &Path,
@@ -490,11 +487,14 @@ fn bind_tool_socket(
     let mut tried = Vec::new();
     let state_tools = abs_state.join("tools.sock");
     tried.push(state_tools.display().to_string());
-    if !avoid.contains(&state_tools)
-        && state_tools.as_os_str().as_encoded_bytes().len() <= MAX_UNIX_SOCKET_PATH
-        && let Some(listener) = try_bind_state_tools_socket(&state_tools)?
-    {
-        return Ok((state_tools, listener));
+    if !avoid.contains(&state_tools) && state_tools.as_os_str().as_encoded_bytes().len() <= MAX_UNIX_SOCKET_PATH {
+        match bind_exclusive_socket(&state_tools, 0o600) {
+            Ok(listener) => return Ok((state_tools, listener)),
+            Err(e) if matches!(e.kind(), ErrorKind::AddrInUse | ErrorKind::AlreadyExists) => {}
+            Err(e) => {
+                return Err(format!("could not bind MCP tool socket {}: {e}", state_tools.display()));
+            }
+        }
     }
 
     if let Some(bound) = try_bind_unique_tool_socket(&abs_state, &avoid, &mut tried)? {
@@ -898,23 +898,27 @@ mod tests {
         assert!(resolved_rel.is_absolute(), "{}", resolved_rel.display());
         assert_eq!(resolved_rel, canon_short.join("tools.sock"));
 
-        // An occupied live socket at <state>/tools.sock is never unlinked; Lever
-        // binds <state>/lever-tools-<pid>.sock instead and the live listener stays up.
+        // An occupied live socket at <state>/tools.sock is never probed or
+        // unlinked; Lever binds <state>/lever-tools-<pid>.sock instead and the
+        // live listener stays up.
         let (resolved_live_state, live_state_listener) =
             bind_tool_socket(&short_state, &person_sock, &surface_sock, None).unwrap();
         assert_eq!(resolved_live_state, canon_short.join(&pid_name));
-        assert!(UnixStream::connect(&resolved_rel).is_ok());
+        assert!(std::os::unix::net::UnixStream::connect(&resolved_rel).is_ok());
         drop(live_state_listener);
         let _ = std::fs::remove_file(&resolved_live_state);
 
-        // Dropping the old listener leaves a stale socket at <state>/tools.sock;
-        // Lever reclaims that dead socket cleanly.
+        // Even an existing socket that returns ECONNREFUSED (such as one bound
+        // just before `listen()` or left behind) is never probed or unlinked;
+        // Lever falls back to an exclusive name in <state>.
         drop(rel_listener);
-        let (reclaimed, reclaimed_listener) =
+        let (resolved_existing_sock, existing_sock_listener) =
             bind_tool_socket(&short_state, &person_sock, &surface_sock, None).unwrap();
-        assert_eq!(reclaimed, canon_short.join("tools.sock"));
-        drop(reclaimed_listener);
-        let _ = std::fs::remove_file(&reclaimed);
+        assert_eq!(resolved_existing_sock, canon_short.join(&pid_name));
+        assert!(std::fs::symlink_metadata(&resolved_rel).is_ok());
+        drop(existing_sock_listener);
+        let _ = std::fs::remove_file(&resolved_existing_sock);
+        let _ = std::fs::remove_file(&resolved_rel);
 
         // A regular file at <state>/tools.sock is left intact.
         let state_file = short_state.join("tools.sock");
@@ -969,9 +973,33 @@ mod tests {
         assert_ne!(resolved_occupied, canon_sock.join("tools.sock"));
         assert_ne!(resolved_occupied, canon_sock.join(&pid_name));
         assert_ne!(resolved_occupied, canon_sock.join("p.sock"));
-        assert!(UnixStream::connect(&unrelated_path).is_ok());
+        assert!(std::os::unix::net::UnixStream::connect(&unrelated_path).is_ok());
         assert_eq!(std::fs::read(&pid_blocker).unwrap(), b"do-not-remove");
         drop(occupied_listener);
         drop(unrelated_listener);
+
+        // Tight 93-byte fallback directory boundary (10 bytes left under 104):
+        // sized unique filename still fits and leaves an occupied tools.sock intact.
+        let canon_base = std::fs::canonicalize(&base).unwrap();
+        let pad_len = 93usize.saturating_sub(canon_base.as_os_str().as_encoded_bytes().len() + 1);
+        let tight_dir = canon_base.join("d".repeat(pad_len));
+        std::fs::create_dir_all(&tight_dir).unwrap();
+        assert_eq!(tight_dir.as_os_str().as_encoded_bytes().len(), 93);
+        let tight_person = tight_dir.join("p");
+        let tight_occupied = tight_dir.join("tools.sock");
+        let tight_unrelated = UnixListener::bind(&tight_occupied).unwrap();
+        let (resolved_tight, tight_listener) =
+            bind_tool_socket(&long_state, &tight_person, &surface_sock, None).unwrap();
+        assert_eq!(resolved_tight.parent().unwrap(), tight_dir);
+        assert!(
+            resolved_tight.as_os_str().as_encoded_bytes().len() <= MAX_UNIX_SOCKET_PATH,
+            "too long: {}",
+            resolved_tight.display()
+        );
+        assert_ne!(resolved_tight, tight_occupied);
+        assert_ne!(resolved_tight, tight_person);
+        assert!(std::os::unix::net::UnixStream::connect(&tight_occupied).is_ok());
+        drop(tight_listener);
+        drop(tight_unrelated);
     }
 }

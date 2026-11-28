@@ -87,21 +87,14 @@ fn expand_tilde_candidate(candidate: &str, home: &Path, label: &str) -> Result<P
 /// Expands a leading `~` or `~/` against `home`, then normalizes `.` and `..`
 /// (resolving existing symlinks before traversing `..` so the result matches
 /// real filesystem traversal). Requires an absolute path after expansion and
-/// rejects control characters. Preserves trailing spaces when they refer to an
-/// existing filesystem entry (such as a folder clicked in the picker).
+/// rejects control characters. Always preserves trailing spaces in the path
+/// itself so a directory like `notes ` never silently redirects to `notes`.
 pub fn expand_absolute_path(raw: &str, home: &Path, label: &str) -> Result<PathBuf, ProjectError> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
+    if raw.trim().is_empty() {
         return Err(ProjectError::Invalid(format!("{label} must not be empty.")));
     }
-    let expanded = if raw != trimmed
-        && let Ok(exact) = expand_tilde_candidate(raw, home, label)
-        && std::fs::symlink_metadata(&exact).is_ok()
-    {
-        exact
-    } else {
-        expand_tilde_candidate(trimmed, home, label)?
-    };
+    let candidate = if raw.trim() == "~" { "~" } else { raw.trim_start() };
+    let expanded = expand_tilde_candidate(candidate, home, label)?;
     let normalized = normalize_path(&expanded, label)?;
     if !normalized.is_absolute() {
         return Err(ProjectError::Invalid(format!("{label} must be an absolute path.")));
@@ -384,7 +377,8 @@ mod tests {
         assert!(!names.contains(&".secret"));
         assert!(!names.contains(&"file.txt"));
 
-        // Sibling directories differing only by a trailing space remain distinct.
+        // Sibling directories differing only by a trailing space remain distinct,
+        // even if the trailing-space directory is missing or renamed before confirm.
         let plain = base.join("notes");
         let trailing = base.join("notes ");
         std::fs::create_dir_all(plain.join("plain-child")).unwrap();
@@ -400,6 +394,15 @@ mod tests {
         assert_eq!(
             resolve_project_path("my-app", Some(&trailing.to_string_lossy()), &base).unwrap(),
             trailing.join("my-app")
+        );
+        let missing_trailing = base.join("removed-notes ");
+        assert_eq!(
+            resolve_exact_path(&missing_trailing.to_string_lossy(), &base).unwrap(),
+            missing_trailing
+        );
+        assert_eq!(
+            resolve_project_path("my-app", Some(&missing_trailing.to_string_lossy()), &base).unwrap(),
+            missing_trailing.join("my-app")
         );
 
         // Control-character directory names are omitted from listings, and
