@@ -1619,6 +1619,34 @@ finally:
                     'match': 'hand-followup',
                     'reply': 'Continued from drawer on {model}.',
                 },
+                {
+                    # Listed before the seeding rules so `<thread-history>`
+                    # from earlier turns never masks this turn's prompt.
+                    'match': 'project-pwd-check',
+                    'tool_call': {
+                        'name': 'shell',
+                        'arguments': {
+                            'command': 'pwd',
+                            'description': 'Print working directory in the project folder',
+                        },
+                    },
+                    'after_tool': 'PROJECT_PWD={tool_output}',
+                },
+                {
+                    'match': 'project-seed-ctrl',
+                    'reply': 'SEED_CTRL_MEMORY_TOKEN',
+                },
+                {
+                    'match': 'project-tool-make',
+                    'tool_call': {
+                        'name': 'crowbar_make_project',
+                        'arguments': {
+                            'name': 'tool-proj',
+                            'place': '~/Code',
+                        },
+                    },
+                    'after_tool': 'TOOL_MADE_PROJECT={tool_output}',
+                },
             ],
             'default_reply': 'Stub ({model}): {prompt}',
         }
@@ -2071,7 +2099,7 @@ finally:
             items = listed(commands)['items']
             own = ['command:model', 'command:effort', 'command:mode', 'command:default-mode',
                    'command:free-models', 'command:sign-in', 'command:new',
-                   'command:threads', 'command:archive', 'command:delete']
+                   'command:threads', 'command:project', 'command:archive', 'command:delete']
             self.check(
                 "a slash lists the drawer's commands, then the commands the harness offers, and the keys start "
                 'on the first',
@@ -2925,6 +2953,202 @@ print(json.dumps(sorted(seen)))
             self.key('meta_l', 'spc')
             self.wait('drawer closed after hand-started session check', lambda: not self.agent_view()['drawer_up'])
 
+            # 8d. Thread becomes a project (#383): both via the drawer's "Make
+            # this a project" control (offering ~/Projects/<name>) and via
+            # Lever's stdio MCP `make_project` tool (respecting Ask first and a
+            # named place ~/Code), with follow-up commands running in the new
+            # project folder and prior history handed over.
+            self.key('meta_l', 'spc')
+            self.wait('drawer opens for project check', lambda: self.agent_view()['drawer_up'])
+            self.key('ctrl', 'n')
+            self.wait('new thread opens for control project check',
+                      lambda: (v := self.agent_view()) and not v['state']['list_view'] and v['state']['thread'] is None)
+            self.type('please project-seed-ctrl')
+            self.key('ret')
+            ctrl_seeded = self.wait(
+                'seed turn finishes before making project from drawer',
+                lambda: (v := self.agent_view())
+                and v['state'].get('thread')
+                and len(v['state'].get('turns', [])) >= 1
+                and v['state']['turns'][0]['state']['kind'] == 'done'
+                and v,
+                timeout=45,
+            )
+            ctrl_tid = ctrl_seeded['state']['thread']
+            ctrl_proj_dir = f'{home}/Projects/drawer-proj'
+            time.sleep(0.3)
+            self.capture('31f-before-make-project')
+            click_control('make-project')
+            self.wait(
+                'Make this a project form opens in drawer',
+                lambda: (v := self.agent_view())
+                and control(v, 'project-name')
+                and control(v, 'project-folder')
+                and control(v, 'confirm-make-project'),
+                timeout=15,
+            )
+            click_control('project-name')
+            self.type('drawer-proj')
+            time.sleep(0.3)
+            self.capture('31g-make-project-form')
+            click_control('confirm-make-project')
+            ctrl_moved = self.wait(
+                'thread moves to ~/Projects/drawer-proj after confirming form',
+                lambda: (v := self.agent_view())
+                and v['state'].get('thread') == ctrl_tid
+                and v['state'].get('cwd') == ctrl_proj_dir
+                and any(t['thread'] == ctrl_tid and t.get('cwd') == ctrl_proj_dir for t in v['state']['threads'])
+                and v,
+                timeout=20,
+            )
+            ctrl_dir_ok = self.guest.ssh(f'test -d {ctrl_proj_dir}', check=False).returncode == 0
+            ctrl_count = sum(1 for t in ctrl_moved['state']['threads'] if t['thread'] == ctrl_tid)
+            self.type('please project-pwd-check')
+            self.key('ret')
+            def finish_pwd_turn(tid, expected_dir, label):
+                deadline = time.monotonic() + 60
+                answered = set()
+                while time.monotonic() < deadline:
+                    v = self.agent_view()
+                    turns = v['state'].get('turns', [])
+                    if v['state'].get('thread') == tid and len(turns) >= 2:
+                        t2 = turns[-1]
+                        for r in t2.get('requests', []):
+                            if r.get('state') == 'waiting' and r['request'] not in answered:
+                                answered.add(r['request'])
+                                click_control(f"answer:{r['request']}:once")
+                        if t2['state']['kind'] == 'done':
+                            return v
+                    time.sleep(0.25)
+                raise AssertionError(f'timed out waiting for {label} in {expected_dir}')
+
+            ctrl_after = finish_pwd_turn(ctrl_tid, ctrl_proj_dir, 'control project pwd turn')
+            ctrl_turn2_answer = ctrl_after['state']['turns'][-1].get('answer', '')
+            ctrl_pwd_reqs = [
+                r for r in stub_requests()
+                if 'project-pwd-check' in (r.get('prompt') or '')
+                and 'SEED_CTRL_MEMORY_TOKEN' in (r.get('prompt') or '')
+            ]
+            self.key('ctrl', 'l')
+            self.wait('thread list opens showing project folder', lambda: self.agent_view()['state']['list_view'])
+            time.sleep(0.3)
+            self.capture('31h-project-in-thread-list')
+            self.check(
+                'Make this a project control creates ~/Projects/<name>, keeps one thread under the project folder, '
+                'and runs the next command in the project folder with prior history',
+                ctrl_dir_ok
+                and ctrl_count == 1
+                and f'PROJECT_PWD={ctrl_proj_dir}' in ctrl_turn2_answer
+                and bool(ctrl_pwd_reqs),
+                json.dumps({
+                    'dir_ok': ctrl_dir_ok,
+                    'thread_count': ctrl_count,
+                    'cwd': ctrl_moved['state'].get('cwd'),
+                    'answer': ctrl_turn2_answer,
+                    'saw_history': bool(ctrl_pwd_reqs),
+                }),
+            )
+
+            # Part B: Agent's MCP `make_project` tool with a named place (`~/Code`),
+            # respecting Ask first mode and opening no network port.
+            self.key('ctrl', 'n')
+            self.wait('new thread opens for MCP project check',
+                      lambda: (v := self.agent_view()) and not v['state']['list_view'] and v['state']['thread'] is None)
+            self.type('/mode ask-first')
+            self.key('ret')
+            self.wait('new thread set to Ask first for MCP check',
+                      lambda: self.agent_view()['state'].get('pending_mode') == 'ask-first'
+                      or self.agent_view()['state'].get('mode') == 'ask-first')
+            tool_proj_dir = f'{home}/Code/tool-proj'
+            self.type('please project-tool-make')
+            self.key('ret')
+            mcp_wait = self.wait(
+                'Ask first pauses for approval before MCP make_project runs',
+                lambda: (v := self.agent_view())
+                and v['state'].get('thread')
+                and len(v['state'].get('turns', [])) >= 1
+                and any(r.get('state') == 'waiting' for r in v['state']['turns'][0].get('requests', []))
+                and v,
+                timeout=45,
+            )
+            tool_tid = mcp_wait['state']['thread']
+            mcp_req = next(r for r in mcp_wait['state']['turns'][0]['requests'] if r.get('state') == 'waiting')
+            not_created_before_approval = self.guest.ssh(f'test -e {tool_proj_dir}', check=False).returncode != 0
+            time.sleep(0.3)
+            self.capture('31i-mcp-make-project-request')
+            click_control(f"answer:{mcp_req['request']}:once")
+            tool_moved = self.wait(
+                'approved MCP make_project creates ~/Code/tool-proj and moves the thread',
+                lambda: (v := self.agent_view())
+                and v['state'].get('thread') == tool_tid
+                and v['state'].get('cwd') == tool_proj_dir
+                and len(v['state'].get('turns', [])) >= 1
+                and v['state']['turns'][0]['state']['kind'] == 'done'
+                and any(t['thread'] == tool_tid and t.get('cwd') == tool_proj_dir for t in v['state']['threads'])
+                and v,
+                timeout=45,
+            )
+            tool_dir_ok = self.guest.ssh(f'test -d {tool_proj_dir}', check=False).returncode == 0
+            lever_ports = json.loads(self.python("""
+import json
+from pathlib import Path
+inet_inodes = set()
+for table in ('/proc/net/tcp', '/proc/net/tcp6', '/proc/net/udp', '/proc/net/udp6'):
+    p = Path(table)
+    if p.exists():
+        for line in p.read_text().splitlines()[1:]:
+            parts = line.split()
+            if len(parts) >= 10:
+                inet_inodes.add(parts[9])
+found = []
+for proc in Path('/proc').glob('[0-9]*'):
+    try:
+        comm = (proc / 'comm').read_text().strip()
+    except OSError:
+        continue
+    if comm != 'crowbar-lever':
+        continue
+    for fd in (proc / 'fd').glob('*'):
+        try:
+            target = fd.readlink().as_posix()
+        except OSError:
+            continue
+        if target.startswith('socket:[') and target.endswith(']'):
+            inode = target[8:-1]
+            if inode in inet_inodes:
+                found.append(f'{proc.name}:{inode}')
+print(json.dumps(found))
+"""))
+            self.type('please project-pwd-check')
+            self.key('ret')
+            tool_after = finish_pwd_turn(tool_tid, tool_proj_dir, 'MCP project pwd turn')
+            tool_turn2_answer = tool_after['state']['turns'][-1].get('answer', '')
+            tool_pwd_reqs = [
+                r for r in stub_requests()
+                if 'project-pwd-check' in (r.get('prompt') or '')
+                and 'TOOL_MADE_PROJECT=' in (r.get('prompt') or '')
+            ]
+            self.check(
+                'MCP make_project tool respects Ask first, opens no network port, creates ~/Code/<name>, '
+                'and runs the next command in the new folder with prior history',
+                not_created_before_approval
+                and tool_dir_ok
+                and not lever_ports
+                and '~/Code/tool-proj' in (mcp_req.get('detail') or '')
+                and f'PROJECT_PWD={tool_proj_dir}' in tool_turn2_answer
+                and bool(tool_pwd_reqs),
+                json.dumps({
+                    'not_created_before_approval': not_created_before_approval,
+                    'req_detail': mcp_req.get('detail'),
+                    'tool_dir_ok': tool_dir_ok,
+                    'lever_ports': lever_ports,
+                    'answer': tool_turn2_answer,
+                    'saw_history': bool(tool_pwd_reqs),
+                }),
+            )
+            self.key('meta_l', 'spc')
+            self.wait('drawer closed after project checks', lambda: not self.agent_view()['drawer_up'])
+
             self.agent_restart_recovery(tmp, home)
 
             # 9. With no Model reachable, a message is refused and the drawer says why.
@@ -2991,7 +3215,8 @@ print(json.dumps(sorted(seen)))
             self.guest.ssh(
                 f"sv stop /var/service/crowbar-lever >/dev/null 2>&1 || true; "
                 f"pkill -x opencode 2>/dev/null || true; "
-                f"rm -rf {home}/.config/opencode {home}/.local/share/opencode {home}/.local/state/crowbaros/lever {home}/.env {tmp}; "
+                f"rm -rf {home}/.config/opencode {home}/.local/share/opencode {home}/.local/state/crowbaros/lever {home}/.env {home}/Projects/drawer-proj {home}/Code/tool-proj {tmp}; "
+                f"rmdir {home}/Projects {home}/Code 2>/dev/null || true; "
                 f"sv start /var/service/crowbar-lever >/dev/null 2>&1 || true",
                 check=False,
             )
