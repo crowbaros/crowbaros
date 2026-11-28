@@ -37,7 +37,7 @@ nested = []
 [dependencies]
 fulcrum-wire = { path = "wire" }
 fulcrum-sys = { path = "sys" }
-rustix = { workspace = true, features = ["event", "fs", "net", "process", "time"] }
+rustix = { workspace = true, features = ["event", "fs", "net", "pipe", "process", "time"] }
 
 [dev-dependencies]
 crowbar-probe = { path = "probe" }

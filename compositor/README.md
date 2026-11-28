@@ -321,6 +321,28 @@ has them written here. The spec names requests to show and hide the surface;
 the shell asks for those through layer shell, by making the surface and
 destroying it, so the control channel carries only the keyboard's two.
 
+### Clipboard history
+
+[ADR 0039](../docs/adr/0039-the-shell-keeps-a-bounded-clipboard-history.md)
+adds shell-only messages on the existing control channel:
+
+| Request or event | Meaning |
+| --- | --- |
+| `{"op":"clipboard_start"}` | Opt this shell connection into capture. Replies `ok`. Disconnect clears history and stops capture |
+| `{"op":"clipboard_history"}` | Replies `{"reply":"clipboard_history","items":["newest text"]}`; empty while locked |
+| `{"op":"clipboard_clear"}` | Clears history and cancels the pending read; replies `ok` |
+| `{"event":"clipboard_changed"}` | A captured text selection completed; no contents in the event |
+| `{"event":"clipboard"}` | Super+V, while unlocked |
+| `{"event":"characters"}` | Super+., while unlocked |
+
+`src/clipboard.rs` holds up to 50 UTF-8 items, 8 KiB each and 64 KiB total,
+with consecutive deduplication. It requests only plain text on selection
+changes, reads a nonblocking pipe, and discards unfinished reads after two
+seconds or a new selection. Lock and Clear cancel the read before clearing
+history. No capture is retried on unlock. History is memory-only; the Agent
+and unlock authority cannot start, read, or clear it. No new Wayland global
+or library is needed. The existing `rustix` dependency enables its pipe API.
+
 ### The unlock authority's socket
 
 Where `--unlock-socket` is given, the unlock authority has a socket of its

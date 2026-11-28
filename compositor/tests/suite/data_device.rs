@@ -873,3 +873,112 @@ fn a_client_that_keeps_every_offer_is_offered_no_more_past_its_bound() {
         "past the bound it is offered none"
     );
 }
+
+/// Capture is an explicit shell lifetime, not a clipboard offer to every peer.
+#[test]
+fn clipboard_history_is_bounded_text_and_lock_cancels_a_pending_source() {
+    use common::control::Control;
+    use std::time::{Duration, Instant};
+    let compositor = Compositor::start();
+    let mut shell = Control::connect(&compositor);
+    assert_eq!(shell.ask(r#"{"op":"clipboard_start"}"#), r#"{"reply":"ok"}"#);
+    let mut app = compositor.app();
+    let (manager, device) = data_device(&mut app);
+    let history = |shell: &mut Control| {
+        shell.send(r#"{"op":"clipboard_history"}"#);
+        loop {
+            let message = shell.message();
+            if message.starts_with(r#"{"reply""#) {
+                break message;
+            }
+        }
+    };
+    let copy = |app: &mut Client, bytes: &[u8]| {
+        let copied = source(app, manager, &[DRAG_MIME]);
+        set_selection(app, device, Some(copied));
+        app.roundtrip().unwrap();
+        let send = app.take_event(copied, "send").expect("history asks for the selection");
+        let [_, Arg::Fd(fd)] = send.args.as_slice() else {
+            panic!("no pipe");
+        };
+        std::fs::File::from(fd.try_clone().unwrap()).write_all(bytes).unwrap();
+        drop(send);
+    };
+    copy(&mut app, b"earlier text");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !history(&mut shell).contains("earlier text") {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let pending = source(&mut app, manager, &[DRAG_MIME]);
+    set_selection(&mut app, device, Some(pending));
+    app.roundtrip().unwrap();
+    let send = app.take_event(pending, "send").unwrap();
+    let [_, Arg::Fd(fd)] = send.args.as_slice() else {
+        panic!("no pipe");
+    };
+    compositor.with(|s| s.lock("test"));
+    assert!(
+        std::fs::File::from(fd.try_clone().unwrap())
+            .write_all(b"late text")
+            .is_err()
+    );
+    drop(send);
+    assert_eq!(history(&mut shell), r#"{"reply":"clipboard_history","items":[]}"#);
+    compositor.with(|s| s.unlock());
+    assert_eq!(history(&mut shell), r#"{"reply":"clipboard_history","items":[]}"#);
+    copy(&mut app, &[0xff, 0xfe]);
+    app.roundtrip().unwrap();
+    assert_eq!(history(&mut shell), r#"{"reply":"clipboard_history","items":[]}"#);
+    // Binary selections are never requested by history.
+    let image = source(&mut app, manager, &["image/png"]);
+    set_selection(&mut app, device, Some(image));
+    app.roundtrip().unwrap();
+    assert!(app.take_event(image, "send").is_none());
+    copy(&mut app, b"after unlock");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !history(&mut shell).contains("after unlock") {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    drop(shell);
+    let mut shell = Control::connect(&compositor);
+    assert_eq!(history(&mut shell), r#"{"reply":"clipboard_history","items":[]}"#);
+    let copied = source(&mut app, manager, &[DRAG_MIME]);
+    set_selection(&mut app, device, Some(copied));
+    app.roundtrip().unwrap();
+    assert!(app.take_event(copied, "send").is_none(), "disconnect stops capture");
+}
+
+#[test]
+fn clearing_clipboard_history_cancels_a_pending_read_and_a_stalled_read_expires() {
+    use common::control::Control;
+    let compositor = Compositor::start();
+    let mut control = Control::connect(&compositor);
+    control.ask(r#"{"op":"clipboard_start"}"#);
+    let mut app = compositor.app();
+    let (manager, device) = data_device(&mut app);
+    for clear in [true, false] {
+        let copied = source(&mut app, manager, &[DRAG_MIME]);
+        set_selection(&mut app, device, Some(copied));
+        app.roundtrip().unwrap();
+        let send = app.take_event(copied, "send").unwrap();
+        let [_, Arg::Fd(fd)] = send.args.as_slice() else {
+            panic!("no pipe");
+        };
+        if clear {
+            assert_eq!(control.ask(r#"{"op":"clipboard_clear"}"#), r#"{"reply":"ok"}"#);
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(2200));
+        }
+        assert!(
+            std::fs::File::from(fd.try_clone().unwrap())
+                .write_all(b"too late")
+                .is_err()
+        );
+        assert_eq!(
+            control.ask(r#"{"op":"clipboard_history"}"#),
+            r#"{"reply":"clipboard_history","items":[]}"#
+        );
+    }
+}

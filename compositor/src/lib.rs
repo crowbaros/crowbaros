@@ -16,6 +16,7 @@
 pub mod agent;
 pub mod backend;
 mod client;
+pub mod clipboard;
 pub mod connections;
 pub mod control;
 mod cursor;

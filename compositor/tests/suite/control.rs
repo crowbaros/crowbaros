@@ -426,3 +426,29 @@ fn shell_theme_updates_frames_and_background_atomically() {
     compositor.with(move |state| state.listen_for_unlock_authority(&socket, own_uid()).unwrap());
     assert!(Control::at(&path).ask(request).contains("error"));
 }
+
+#[test]
+fn clipboard_and_character_chords_reach_only_the_unlocked_shell() {
+    let compositor = Compositor::start();
+    let mut control = Control::connect(&compositor);
+    for (key, event) in [(47, "clipboard"), (52, "characters")] {
+        compositor.key(KEY_LEFTMETA, true);
+        compositor.key(key, true);
+        compositor.key(key, false);
+        compositor.key(KEY_LEFTMETA, false);
+        assert_eq!(control.message(), format!("{{\"event\":\"{event}\"}}"));
+    }
+    compositor.with(|s| s.lock("test"));
+    assert_eq!(control.message(), r#"{"event":"locked"}"#);
+    for key in [47, 52] {
+        compositor.key(KEY_LEFTMETA, true);
+        compositor.key(key, true);
+        compositor.key(key, false);
+        compositor.key(KEY_LEFTMETA, false);
+    }
+    assert!(
+        control
+            .ask(r#"{"op":"snapshot"}"#)
+            .starts_with(r#"{"reply":"snapshot""#)
+    );
+}

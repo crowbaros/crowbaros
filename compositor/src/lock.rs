@@ -87,6 +87,7 @@ impl State {
         self.cancel_drag();
         self.seat.drag_press = None;
         self.lock.locked = true;
+        self.clear_clipboard_history();
         self.arm_idle_timer();
         // Every draw from the next on shows the session locked.
         self.lock.locked_from = self

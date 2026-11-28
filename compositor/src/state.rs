@@ -118,6 +118,7 @@ pub struct State {
     pub(crate) last_report: Option<std::time::Instant>,
     /// When the workspaces last changed, and the layers that drew since.
     pub(crate) workspaces_changed: Option<crate::evidence::WorkspacesChanged>,
+    pub(crate) clipboard: crate::clipboard::Clipboard,
     pub(crate) data: crate::data_device::DataDevices,
     pub(crate) dmabufs: crate::dmabuf::Dmabufs,
 }
@@ -179,6 +180,7 @@ impl State {
             commit_counts: std::collections::BTreeMap::new(),
             last_report: None,
             workspaces_changed: None,
+            clipboard: Default::default(),
             data: crate::data_device::DataDevices::default(),
             dmabufs: crate::dmabuf::Dmabufs::default(),
         };
@@ -279,6 +281,7 @@ impl State {
                 Token::AuthorityListener => self.accept_control(crate::control::ChannelKind::Authority),
                 Token::AgentListener => self.accept_control(crate::control::ChannelKind::Agent),
                 Token::Control(id) => self.control_ready(id, readiness),
+                Token::Clipboard => self.clipboard_ready(),
                 Token::Held(surface) => self.release_held(surface),
                 Token::Backend(source) => {
                     if let Some(mut backend) = self.backend.take() {
@@ -294,6 +297,7 @@ impl State {
             match timer {
                 TimerKey::RetryListener(index) => self.retry_listener(index),
                 TimerKey::FrameWait(output, draw) => self.wait_over(output, Some(draw)),
+                TimerKey::Clipboard(generation) => self.clipboard_timeout(generation),
                 TimerKey::IdleLock => self.idle_timer(),
                 TimerKey::LockShown(id) => self.answer_lock_anyway(id),
             }

@@ -2,6 +2,8 @@
 mod agent;
 mod calendar;
 mod catalog;
+mod clipboard_picker;
+mod symbols;
 mod composer;
 mod drawer;
 mod input;
@@ -155,6 +157,7 @@ struct Model {
     snapshot: session::Snapshot,
     preferences: Preferences,
     themes: Option<themes::Catalog>,
+    picker: Option<WindowHandle<clipboard_picker::Picker>>,
     theme_switcher: Option<WindowHandle<theme_switcher::ThemeSwitcher>>,
     wallpaper: Option<Arc<RenderImage>>,
     launcher: Option<WindowHandle<Launcher>>,
@@ -1136,6 +1139,7 @@ fn toggle_launcher(model: Entity<Model>, cx: &mut App) {
     }
     close_quick_settings(&model, cx);
     theme_switcher::close(&model, cx);
+    clipboard_picker::close(&model, cx);
     close_calendar(&model, cx);
     log::info!("SHELL launcher open=true");
     let apps = catalog::discover();
@@ -1920,6 +1924,7 @@ fn toggle_quick_settings(model: Entity<Model>, cx: &mut App) {
     }
     close_launcher(&model, cx);
     theme_switcher::close(&model, cx);
+    clipboard_picker::close(&model, cx);
     close_calendar(&model, cx);
     log::info!("SHELL quick-settings open=true");
     let tx = model.read(cx).tx.clone();
@@ -2265,6 +2270,7 @@ fn toggle_calendar(model: Entity<Model>, cx: &mut App) {
     close_launcher(&model, cx);
     close_quick_settings(&model, cx);
     theme_switcher::close(&model, cx);
+    clipboard_picker::close(&model, cx);
     log::info!("SHELL calendar open=true");
     let model2 = model.clone();
     let result = cx.open_window(
@@ -3255,6 +3261,7 @@ fn set_lock_screen(model: &Entity<Model>, locked: bool, cx: &mut App) {
     close_launcher(model, cx);
     close_quick_settings(model, cx);
     theme_switcher::close(model, cx);
+    clipboard_picker::close(model, cx);
     close_calendar(model, cx);
     close_osd(model, cx);
     log::info!("SHELL lock open=true");
@@ -3309,8 +3316,12 @@ fn handle_events(model: &Entity<Model>, events: Vec<session::Event>, cx: &mut Ap
                 if let Some(old) = old { cx.drop_image(old, None); }
                 refresh = true;
             }
+            session::Event::ClipboardChanged => {
+                if let Some(w) = model.read(cx).picker { let _ = w.update(cx, |view, w, cx| view.load(false, w, cx)); }
+            }
+            session::Event::Picker(kind) => clipboard_picker::toggle(model.clone(), kind, cx),
             session::Event::Toggle => toggle_launcher(model.clone(), cx),
-            session::Event::Summon(summon) => { theme_switcher::close(model, cx); summoned(model, summon, cx); },
+            session::Event::Summon(summon) => { clipboard_picker::close(model, cx); theme_switcher::close(model, cx); summoned(model, summon, cx); },
             session::Event::MediaKey(key) => handle_media_key(model, key, cx),
             session::Event::QuickStatus(status) => {
                 model.update(cx, |m, _| m.quick_status = status);
@@ -3657,6 +3668,10 @@ fn main() -> anyhow::Result<()> {
         input::bind(cx);
         composer::bind(cx);
         cx.bind_keys([
+            KeyBinding::new("down", Next, Some("ClipboardPicker")),
+            KeyBinding::new("up", Previous, Some("ClipboardPicker")),
+            KeyBinding::new("enter", Open, Some("ClipboardPicker")),
+            KeyBinding::new("escape", Close, Some("ClipboardPicker")),
             KeyBinding::new("down", Next, Some("Launcher")),
             KeyBinding::new("up", Previous, Some("Launcher")),
             KeyBinding::new("tab", Next, Some("Launcher")),
@@ -3690,6 +3705,7 @@ fn main() -> anyhow::Result<()> {
             quick_settings: None,
             themes: None,
             theme_switcher: None,
+            picker: None,
             calendar: None,
             osd: None,
             quick_status: quick_settings::QuickStatus::default(),

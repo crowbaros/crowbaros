@@ -186,6 +186,9 @@ fn the_harness_socket_refuses_unknown_or_shell_only_requests_without_closing() {
         r#"{"op":"focus_workspace","id":2}"#,
         r#"{"op":"snapshot","extra":1}"#,
         r#"{"op":"bogus"}"#,
+        r#"{"op":"clipboard_start"}"#,
+        r#"{"op":"clipboard_history"}"#,
+        r#"{"op":"clipboard_clear"}"#,
     ] {
         let reply = agent.ask(request);
         assert!(reply.starts_with(r#"{"reply":"error","#), "{request} -> {reply}");

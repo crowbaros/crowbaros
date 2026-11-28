@@ -229,6 +229,7 @@ pub fn toggle(model: Entity<Model>, cx: &mut App) {
         return;
     }
     close_launcher(&model, cx);
+    clipboard_picker::close(&model, cx);
     close_quick_settings(&model, cx);
     close_calendar(&model, cx);
     let shared = model.clone();
