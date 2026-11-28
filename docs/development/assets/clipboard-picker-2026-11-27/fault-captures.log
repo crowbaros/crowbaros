@@ -1,0 +1,32 @@
+[06:21:09] guest$ cp /etc/sv/crowbar-shell/run /tmp/picker-shell-run.original
+[06:21:09] 
+[06:21:09] guest$ python3 -c 'from pathlib import Path; p=Path('"'"'/etc/sv/crowbar-shell/run'"'"'); p.write_text(p.read_text().replace('"'"'/usr/local/bin/crowbar-shell-connect'"'"','"'"'python3 /tmp/picker-fault-proxy.py'"'"'))'
+[06:21:09] 
+[06:21:09] guest$ sv restart crowbar-shell
+[06:21:10] ok: run: crowbar-shell: (pid 6407) 0s
+[06:21:10] guest$ getent passwd 1003
+[06:21:11] crowbar:x:1003:1003::/home/crowbar:/bin/bash
+[06:21:11] guest$ chpst -u crowbar:crowbar python3 -c 'import os,subprocess
+subprocess.run(['"'"'wl-copy'"'"','"'"'--type'"'"','"'"'text/plain;charset=utf-8'"'"'], input='"'"'Review the clipboard limits before opening the pull request.'"'"'.encode(), env=dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"', WAYLAND_DISPLAY='"'"'wayland-0'"'"'), check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'
+[06:21:11] 
+[06:21:11] guest$ chpst -u crowbar:crowbar python3 -c 'import os,subprocess
+subprocess.run(['"'"'wl-copy'"'"','"'"'--type'"'"','"'"'text/plain;charset=utf-8'"'"'], input='"'"'Keep the earlier note until an update is confirmed.'"'"'.encode(), env=dict(os.environ, HOME='"'"'/home/crowbar'"'"', XDG_RUNTIME_DIR='"'"'/run/user/1003'"'"', WAYLAND_DISPLAY='"'"'wayland-0'"'"'), check=True, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+'
+[06:21:11] 
+[06:21:13] guest$ python3 -c 'from pathlib import Path; Path('"'"'/tmp/picker-fault'"'"').write_text('"'"'clipboard_history'"'"')'
+[06:21:13] 
+[06:21:13] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nullkeel-dark
+[06:21:13] Applied Nullkeel Dark
+[06:21:14] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nullkeel-light
+[06:21:14] Applied Nullkeel Light
+[06:21:15] guest$ python3 -c 'from pathlib import Path; Path('"'"'/tmp/picker-fault'"'"').write_text('"'"'clipboard_clear'"'"')'
+[06:21:16] 
+[06:21:17] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nullkeel-dark
+[06:21:17] Applied Nullkeel Dark
+[06:21:18] guest$ chpst -u crowbar env HOME=/home/crowbar crowbaros-theme-studio --apply-theme nullkeel-light
+[06:21:18] Applied Nullkeel Light
+[06:21:19] guest$ python3 -c 'from pathlib import Path; Path('"'"'/tmp/picker-fault'"'"').write_text('"'"'delay:clipboard_clear'"'"')'
+[06:21:19] 
+[06:21:22] guest$ cp /tmp/picker-shell-run.original /etc/sv/crowbar-shell/run; rm -f /tmp/picker-fault; sv restart crowbar-shell
+[06:21:22] ok: run: crowbar-shell: (pid 6580) 1s

@@ -18,6 +18,7 @@ launcher's search-and-results structure.
 
 OWN-WORLD: Existing Manrope labels, native input, canvas/surface tokens,
 focus-colored selection, 12 px panel radius, and plain quiet footer hints.
+Emoji glyphs use Noto Color Emoji; history keeps the normal text fallback.
 
 STORY: Open, type to narrow, move through results, press Enter to copy and
 return to the prior app. History visibly says it clears on lock; Clear is
@@ -26,7 +27,9 @@ available by pointer and keyboard. Empty, loading, and failed reads are explicit
 FIRST VIEWPORT: A centered 520 px panel 56 px below the top, with a heading,
 search field, six 44 px result rows, and an action footer. History previews
 flatten whitespace only for display; copying preserves original text.
-Character rows pair the actual glyph with its name and category.
+Character rows pair the actual glyph with its name and category. At high
+display scales fewer rows keep search and Clear visible. Operation status
+stays visible above populated rows; failed updates do not imply a cleared list.
 
 FORM: Existing launcher extension, shaped directly under the new-work local
 extension exception; no concept seed or new visual world. Keyboard selection
