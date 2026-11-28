@@ -122,11 +122,7 @@ fn handle_events(model: &Entity<Model>, incoming: Vec<Event>, cx: &mut App) -> b
                 drawer::sync_mark_overlay(model, cx);
             }
             Event::Agent(agent_event) => {
-                if drawer::reconcile_drawer_window(model, cx) {
-                    refresh = true;
-                }
-                let effects = model.update(cx, |m, _| m.agent.handle_event(agent_event));
-                if drawer::apply_effects_from_app(model, effects, cx) {
+                if drawer::handle_agent_event(model, agent_event, cx) {
                     refresh = true;
                 }
             }

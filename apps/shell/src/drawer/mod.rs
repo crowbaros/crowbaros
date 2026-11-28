@@ -641,6 +641,38 @@ impl AgentSurface {
     }
 }
 
+/// Reconciles an optional drawer window slot against a liveness probe and
+/// delivers `AgentIntent::DrawerClosed` when the tracked window vanished
+/// externally. Returns `None` when no external close occurred.
+fn reconcile_drawer_window_slot<W: Copy>(
+    slot: &mut Option<W>,
+    controller: &mut agent::AgentController,
+    is_live: impl FnOnce(W) -> bool,
+) -> Option<Vec<AgentEffect>> {
+    let w = (*slot)?;
+    if is_live(w) {
+        return None;
+    }
+    *slot = None;
+    Some(controller.handle_intent(AgentIntent::DrawerClosed))
+}
+
+/// Processes one Lever `AgentEvent` against the tracked drawer window slot and
+/// `AgentController`: if the tracked drawer window vanished externally, closes
+/// it first so the Lever event never runs `reconcile_ui` against a gone drawer.
+fn process_agent_event_slot<W: Copy>(
+    slot: &mut Option<W>,
+    controller: &mut agent::AgentController,
+    is_live: impl FnOnce(W) -> bool,
+    event: agent::AgentEvent,
+) -> (bool, Vec<AgentEffect>) {
+    let external_close = reconcile_drawer_window_slot(slot, controller, is_live);
+    let closed_externally = external_close.is_some();
+    let mut effects = external_close.unwrap_or_default();
+    effects.extend(controller.handle_event(event));
+    (closed_externally, effects)
+}
+
 /// Checks whether the tracked drawer window is still live in GPUI. If the
 /// compositor closed it externally (for example, when removing its display),
 /// clears the stale handle and runs `AgentIntent::DrawerClosed` so subsequent
@@ -650,14 +682,34 @@ pub fn reconcile_drawer_window(model: &Entity<Model>, cx: &mut App) -> bool {
     let Some(w) = model.read(cx).agent_window else {
         return false;
     };
-    if w.update(cx, |_, _, _| ()).is_ok() {
+    let live = w.update(cx, |_, _, _| ()).is_ok();
+    let Some(effects) = model.update(cx, |m, _| {
+        reconcile_drawer_window_slot(&mut m.agent_window, &mut m.agent, |_| live)
+    }) else {
         return false;
-    }
+    };
     log::info!("SHELL agent-surface up=false reason=external-close");
-    let effects = model.update(cx, |m, _| {
-        m.agent_window = None;
-        m.agent.handle_intent(AgentIntent::DrawerClosed)
+    apply_effects_from_app(model, effects, cx)
+}
+
+/// Reconciles external drawer closure (if any) and processes one Lever
+/// `AgentEvent`, applying its emitted effects. Returns `true` when windows
+/// should be refreshed.
+pub fn handle_agent_event(
+    model: &Entity<Model>,
+    agent_event: agent::AgentEvent,
+    cx: &mut App,
+) -> bool {
+    let live = model
+        .read(cx)
+        .agent_window
+        .is_some_and(|w| w.update(cx, |_, _, _| ()).is_ok());
+    let (closed_externally, effects) = model.update(cx, |m, _| {
+        process_agent_event_slot(&mut m.agent_window, &mut m.agent, |_| live, agent_event)
     });
+    if closed_externally {
+        log::info!("SHELL agent-surface up=false reason=external-close");
+    }
     apply_effects_from_app(model, effects, cx)
 }
 
@@ -744,6 +796,105 @@ mod tests {
     use crate::slash::{self, MenuKind};
     use gpui::Modifiers;
     use std::collections::HashMap;
+
+    #[test]
+    fn external_window_close_reconciles_drawer_before_lever_status_event() {
+        use super::process_agent_event_slot;
+        use crate::agent::{
+            AgentController, AgentEffect, AgentEvent, AgentIntent, ThreadAction,
+            types::{AgentCommand, CommandInfo, StatusInfo},
+        };
+
+        let status = |free_hosted_models: bool| StatusInfo {
+            lever_version: "0.2.0".into(),
+            harness_started: true,
+            harnesses: vec!["opencode".into()],
+            free_hosted_models,
+            models_chosen: true,
+            default_mode: Some("ask-first".into()),
+        };
+
+        // Control case: live window keeps drawer open and re-fetches commands on epoch bump.
+        let mut live_ctrl = AgentController::new(true, None, None);
+        let _ = live_ctrl.handle_event(AgentEvent::Connected {
+            status: status(true),
+            resumed: None,
+            preserved_thread: None,
+            resume_error: None,
+        });
+        let mut live_slot = Some(1usize);
+        let _ = live_ctrl.handle_intent(AgentIntent::DrawerOpened);
+        let _ = live_ctrl.handle_intent(AgentIntent::Action(ThreadAction::New));
+        let _ = live_ctrl.handle_event(AgentEvent::Commands {
+            thread: None,
+            commands: vec![CommandInfo {
+                name: "review".into(),
+                description: "Review changes".into(),
+                hint: None,
+            }],
+            known: true,
+        });
+        let _ = live_ctrl.handle_intent(AgentIntent::DraftChanged("/".into()));
+        let (closed_externally, live_effects) = process_agent_event_slot(
+            &mut live_slot,
+            &mut live_ctrl,
+            |_| true,
+            AgentEvent::Status(status(false)),
+        );
+        assert!(!closed_externally);
+        assert_eq!(live_slot, Some(1));
+        assert!(live_ctrl.drawer_up());
+        assert!(live_effects.iter().any(|e| matches!(
+            e,
+            AgentEffect::SendLeverCommand(AgentCommand::FetchCommands { thread: None })
+        )));
+
+        // External close (e.g. compositor removed the display): without any explicit
+        // DrawerClosed intent or summon gesture, the next Lever Status event reconciles
+        // the dead window first, clears the slot, marks the drawer closed, and emits no
+        // catalog fetch.
+        let mut dead_ctrl = AgentController::new(true, None, None);
+        let _ = dead_ctrl.handle_event(AgentEvent::Connected {
+            status: status(true),
+            resumed: None,
+            preserved_thread: None,
+            resume_error: None,
+        });
+        let mut dead_slot = Some(2usize);
+        let _ = dead_ctrl.handle_intent(AgentIntent::DrawerOpened);
+        let _ = dead_ctrl.handle_intent(AgentIntent::Action(ThreadAction::New));
+        let _ = dead_ctrl.handle_event(AgentEvent::Commands {
+            thread: None,
+            commands: vec![CommandInfo {
+                name: "review".into(),
+                description: "Review changes".into(),
+                hint: None,
+            }],
+            known: true,
+        });
+        let _ = dead_ctrl.handle_intent(AgentIntent::DraftChanged("/".into()));
+        assert!(dead_ctrl.drawer_up());
+        assert!(dead_ctrl.menu().is_some());
+
+        let (closed_externally, dead_effects) = process_agent_event_slot(
+            &mut dead_slot,
+            &mut dead_ctrl,
+            |_| false,
+            AgentEvent::Status(status(false)),
+        );
+        assert!(closed_externally);
+        assert_eq!(dead_slot, None);
+        assert!(!dead_ctrl.drawer_up());
+        assert!(dead_ctrl.menu().is_none());
+        assert!(dead_effects.contains(&AgentEffect::SyncMarkOverlay));
+        assert!(dead_effects.contains(&AgentEffect::AgentKeyboard(false)));
+        assert!(!dead_effects.iter().any(|e| matches!(
+            e,
+            AgentEffect::SendLeverCommand(
+                AgentCommand::FetchCommands { .. } | AgentCommand::FetchModes { .. }
+            )
+        )));
+    }
 
     #[test]
     fn classify_effect_routes_shell_and_view_effects_exhaustively() {
