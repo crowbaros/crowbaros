@@ -256,10 +256,10 @@ their framing, under
 [the control channel](../../compositor/README.md#the-control-channel). Desktop shortcuts and window-layout behavior come
 from the compositor.
 
-`src/session.rs` retains Hyprland, `systemd-run`, and `systemctl` fallback
-paths from before Void. Base's services do not use them; do not use
-`--start-session` as a Void startup command. Their old service and Lua hook
-are archived and are not installed.
+`src/compositor.rs`, `src/launcher_client.rs`, and `src/control_server.rs`
+retain Hyprland, `systemd-run`, and `systemctl` fallback paths from before Void.
+Base's services do not use them; do not use `--start-session` as a Void startup
+command. Their old service and Lua hook are archived and are not installed.
 
 The [desktop acceptance record](../../docs/development/void-desktop-smoke-2026-11-15.md)
 covers the desktop as it was on that date. Accessibility and input methods are

@@ -1,5 +1,41 @@
 // SPDX-License-Identifier: MIT
-use super::*;
+//! Quick Theme Switcher popover: typed LauncherClient actions coordinated
+//! through `ActivePopover` with explicit imports (no `use super::*`).
+
+use gpui::{layer_shell::*, prelude::*, *};
+
+use crate::launcher_client::{LauncherClient, THEME_STUDIO_DESKTOP};
+use crate::ui::{
+    ActivePopover, BAR_HEIGHT, Close, Model, clear_active_popover_if, close_active_popover, layer,
+};
+
+#[derive(Clone)]
+enum SwitcherAction {
+    ApplyTheme { id: String, background: Option<String> },
+    CycleBackground,
+    CreateTheme,
+}
+
+impl SwitcherAction {
+    fn execute(self, launcher: &LauncherClient) -> Result<(), String> {
+        match self {
+            SwitcherAction::ApplyTheme { id, background } => launcher
+                .apply_theme(&id, background.as_deref())
+                .map_err(|e| e.to_string()),
+            SwitcherAction::CycleBackground => {
+                launcher.cycle_background().map_err(|e| e.to_string())
+            }
+            SwitcherAction::CreateTheme => launcher
+                .launch_desktop_sync(THEME_STUDIO_DESKTOP)
+                .map_err(|e| e.to_string()),
+        }
+    }
+
+    fn closes_on_success(&self) -> bool {
+        matches!(self, SwitcherAction::CreateTheme)
+    }
+}
+
 pub struct ThemeSwitcher {
     model: Entity<Model>,
     focus: FocusHandle,
@@ -7,51 +43,61 @@ pub struct ThemeSwitcher {
     error: Option<String>,
     controls: Vec<FocusHandle>,
 }
+
 impl ThemeSwitcher {
-    fn close(&mut self, w: &mut Window, cx: &mut Context<Self>) {
-        self.model.update(cx, |m, _| m.theme_switcher = None);
+    pub fn close(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        clear_active_popover_if(
+            &self.model,
+            |p| matches!(p, ActivePopover::ThemeSwitcher(_)),
+            cx,
+        );
         w.remove_window();
         cx.refresh_windows();
     }
-    fn request(&mut self, request: serde_json::Value, cx: &mut Context<Self>) {
+
+    fn run_action(&mut self, action: SwitcherAction, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }
         self.busy = true;
         self.error = None;
         cx.notify();
-        let launch = request["op"] == "launch";
+        let closes = action.closes_on_success();
+        let launcher = self.model.read(cx).launcher_client.clone();
         let model = self.model.clone();
-        let task = cx.background_executor().spawn(async move {
-            session::launcher_request(request)
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        });
+        let task = cx
+            .background_executor()
+            .spawn(async move { action.execute(&launcher) });
         cx.spawn(async move |view, cx| {
             let result = task.await;
-            let launched = launch && result.is_ok();
+            let launched = closes && result.is_ok();
             let _ = view.update(cx, |s, cx| {
                 s.busy = false;
                 s.error = result.err();
                 cx.notify();
             });
             if launched {
-                let _ = cx.update(|cx| close(&model, cx));
+                let _ = cx.update(|cx| {
+                    if model.read(cx).is_theme_switcher_open() {
+                        close_active_popover(&model, cx);
+                    }
+                });
             }
         })
         .detach();
     }
+
     fn button(
         &self,
         id: usize,
         label: String,
-        request: serde_json::Value,
+        action: SwitcherAction,
         selected: bool,
         w: &Window,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let p = self.model.read(cx).palette();
-        let key = request.clone();
+        let key_action = action.clone();
         let focus = &self.controls[id];
         div()
             .id(("theme", id))
@@ -72,10 +118,10 @@ impl ThemeSwitcher {
             .hover(move |s| s.bg(rgb(p.surface)))
             .child(label)
             .when(!self.busy, |d| {
-                d.on_click(cx.listener(move |s, _, _, cx| s.request(request.clone(), cx)))
+                d.on_click(cx.listener(move |s, _, _, cx| s.run_action(action.clone(), cx)))
                     .on_key_down(cx.listener(move |s, e: &KeyDownEvent, _, cx| {
                         if matches!(e.keystroke.key.as_str(), "enter" | "space") {
-                            s.request(key.clone(), cx);
+                            s.run_action(key_action.clone(), cx);
                             cx.stop_propagation();
                         }
                     }))
@@ -83,6 +129,7 @@ impl ThemeSwitcher {
             .when(self.busy, |d| d.opacity(0.5))
     }
 }
+
 impl Render for ThemeSwitcher {
     fn render(&mut self, w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let m = self.model.read(cx);
@@ -122,7 +169,10 @@ impl Render for ThemeSwitcher {
                     self.button(
                         i,
                         theme.name.clone(),
-                        serde_json::json!({"op":"apply_theme","id":theme.id}),
+                        SwitcherAction::ApplyTheme {
+                            id: theme.id.clone(),
+                            background: None,
+                        },
                         theme.id == catalog.active.theme_id,
                         w,
                         cx,
@@ -146,7 +196,11 @@ impl Render for ThemeSwitcher {
                 );
             }
             panel = panel.child(list);
-            if let Some(active) = catalog.themes.iter().find(|t| t.id == catalog.active.theme_id) {
+            if let Some(active) = catalog
+                .themes
+                .iter()
+                .find(|t| t.id == catalog.active.theme_id)
+            {
                 let mut backgrounds = div()
                     .id("theme-backgrounds")
                     .max_h(px(130.))
@@ -158,7 +212,10 @@ impl Render for ThemeSwitcher {
                     backgrounds = backgrounds.child(self.button(
                         128 + i,
                         bg.clone(),
-                        serde_json::json!({"op":"apply_theme","id":active.id,"background":bg}),
+                        SwitcherAction::ApplyTheme {
+                            id: active.id.clone(),
+                            background: Some(bg.clone()),
+                        },
                         catalog.active.background.as_ref() == Some(bg),
                         w,
                         cx,
@@ -171,7 +228,7 @@ impl Render for ThemeSwitcher {
                     panel = panel.child(self.button(
                         256,
                         "Next background".into(),
-                        serde_json::json!({"op":"cycle_background"}),
+                        SwitcherAction::CycleBackground,
                         false,
                         w,
                         cx,
@@ -184,7 +241,7 @@ impl Render for ThemeSwitcher {
         panel = panel.child(self.button(
             257,
             "Create theme…".into(),
-            serde_json::json!({"op":"launch","desktop":"/usr/share/applications/com.crowbaros.ThemeStudio.desktop"}),
+            SwitcherAction::CreateTheme,
             false,
             w,
             cx,
@@ -218,20 +275,13 @@ impl Render for ThemeSwitcher {
             .child(panel)
     }
 }
-pub fn close(model: &Entity<Model>, cx: &mut App) {
-    if let Some(w) = model.read(cx).theme_switcher {
-        let _ = w.update(cx, |s, w, cx| s.close(w, cx));
-    }
-}
+
 pub fn toggle(model: Entity<Model>, cx: &mut App) {
-    if model.read(cx).theme_switcher.is_some() {
-        close(&model, cx);
+    if model.read(cx).is_theme_switcher_open() {
+        close_active_popover(&model, cx);
         return;
     }
-    close_launcher(&model, cx);
-    clipboard_picker::close(&model, cx);
-    close_quick_settings(&model, cx);
-    close_calendar(&model, cx);
+    close_active_popover(&model, cx);
     let shared = model.clone();
     match cx.open_window(
         layer(
@@ -256,7 +306,9 @@ pub fn toggle(model: Entity<Model>, cx: &mut App) {
         },
     ) {
         Ok(w) => {
-            model.update(cx, |m, _| m.theme_switcher = Some(w));
+            model.update(cx, |m, _| {
+                m.active_popover = Some(ActivePopover::ThemeSwitcher(w));
+            });
             log::info!("SHELL theme-switcher open=true");
         }
         Err(e) => log::error!("Opening theme switcher: {e}"),

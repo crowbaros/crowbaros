@@ -25,7 +25,7 @@ actions!(
 );
 
 pub struct TextInput {
-    pub palette: crate::theme::Palette,
+    pub palette: crate::appearance::Palette,
     focus_handle: FocusHandle,
     content: SharedString,
     placeholder: SharedString,
@@ -49,7 +49,7 @@ impl TextInput {
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            palette: crate::theme::Palette::default(),
+            palette: crate::appearance::Palette::default(),
             focus_handle: cx.focus_handle(),
             content: "".into(),
             placeholder: placeholder.into(),

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! A custom wallpaper is already-decoded, bounded pixels, never a file path to
 //! open or an image format to decode in the shell's account.
+
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use crowbar_theme::wallpaper::{self, Info};
@@ -12,21 +13,40 @@ use std::{
     time::Duration,
 };
 
+use crate::events::{Event, Sender};
+use crate::launcher_client::LauncherClient;
+
 #[derive(Clone, Debug)]
-pub struct Wallpaper {
+pub struct CustomWallpaper {
     pub info: Info,
     pub rgba: Vec<u8>,
 }
 
+impl CustomWallpaper {
+    /// Converts validated RGBA pixels into a GPUI `RenderImage` (BGRA byte order).
+    pub fn into_render_image(mut self) -> std::sync::Arc<gpui::RenderImage> {
+        for pixel in self.rgba.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        let pixels = image::RgbaImage::from_raw(self.info.width, self.info.height, self.rgba)
+            .expect("validated wallpaper dimensions");
+        std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(pixels)]))
+    }
+}
+
 enum Update {
     Unchanged,
-    Changed(Option<Wallpaper>),
+    Changed(Option<CustomWallpaper>),
 }
 
 fn fetch(current: Option<&str>, mut request: impl FnMut(Value) -> Result<Value>) -> Result<Update> {
     let reply = request(json!({"op":"wallpaper_info"}))?;
-    let info: Option<Info> =
-        serde_json::from_value(reply.get("wallpaper").context("Missing wallpaper preference")?.clone())?;
+    let info: Option<Info> = serde_json::from_value(
+        reply
+            .get("wallpaper")
+            .context("Missing wallpaper preference")?
+            .clone(),
+    )?;
     let Some(info) = info else {
         return Ok(if current.is_none() {
             Update::Unchanged
@@ -50,20 +70,20 @@ fn fetch(current: Option<&str>, mut request: impl FnMut(Value) -> Result<Value>)
     if actual != info {
         bail!("Wallpaper changed during transfer");
     }
-    Ok(Update::Changed(Some(Wallpaper {
+    Ok(Update::Changed(Some(CustomWallpaper {
         info: actual,
         rgba: pixels.to_owned(),
     })))
 }
 
-fn request(value: Value) -> Result<Value> {
-    if std::env::var_os("CROWBAR_LAUNCH_SOCKET").is_some() {
+fn request(launcher: &LauncherClient, value: Value) -> Result<Value> {
+    if launcher.is_configured() {
         let limit = if value["op"] == "wallpaper_data" {
             wallpaper::MAX_DATA_REPLY_BYTES
         } else {
             65537
         };
-        return crate::session::launcher_request_bounded(value, limit);
+        return launcher.request_bounded(value, limit);
     }
     // Development sessions use the same preference in their own account.
     let store = crowbar_theme::ThemeStore::for_user().map_err(anyhow::Error::msg)?;
@@ -78,7 +98,8 @@ fn request(value: Value) -> Result<Value> {
         Err(e) => return Err(e.into()),
     };
     let metadata = file.metadata()?;
-    if !metadata.is_file() || metadata.nlink() != 1 || metadata.uid() != unsafe { libc::geteuid() } {
+    if !metadata.is_file() || metadata.nlink() != 1 || metadata.uid() != unsafe { libc::geteuid() }
+    {
         bail!("Invalid wallpaper file");
     }
     let mut file = file.take(wallpaper::MAX_FILE_BYTES as u64 + 1);
@@ -97,15 +118,15 @@ fn request(value: Value) -> Result<Value> {
     Ok(json!({"wallpaper":info,"data":STANDARD.encode(bytes)}))
 }
 
-pub fn watch(sender: crate::session::Sender) {
+pub fn watch(sender: Sender, launcher: LauncherClient) {
     std::thread::spawn(move || {
         let mut revision = None;
         let mut failed = false;
         loop {
-            match fetch(revision.as_deref(), request) {
+            match fetch(revision.as_deref(), |v| request(&launcher, v)) {
                 Ok(Update::Changed(wallpaper)) => {
                     revision = wallpaper.as_ref().map(|w| w.info.revision.clone());
-                    if sender.send(crate::session::Event::Wallpaper(wallpaper)).is_err() {
+                    if sender.send(Event::Wallpaper(wallpaper)).is_err() {
                         break;
                     }
                     failed = false;
@@ -126,10 +147,12 @@ pub fn watch(sender: crate::session::Sender) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn fixture() -> (Info, Vec<u8>) {
         let bytes = wallpaper::encode(1, 1, [7; 16], &[12, 34, 56, 255]).unwrap();
         (wallpaper::decode(&bytes).unwrap().0, bytes)
     }
+
     #[test]
     fn only_fetches_pixels_when_revision_changes() {
         let (info, bytes) = fixture();
@@ -159,6 +182,7 @@ mod tests {
         ));
         assert_eq!(calls, 1);
     }
+
     #[test]
     fn rejects_stale_or_malformed_transfers() {
         let (info, _) = fixture();
@@ -174,6 +198,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn deleting_override_restores_builtin_once() {
         assert!(matches!(

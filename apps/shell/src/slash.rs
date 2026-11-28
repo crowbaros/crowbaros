@@ -703,7 +703,7 @@ pub fn resolve(text: &str, state: &AgentState) -> Resolve {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{CommandInfo, EffortInfo, ModeInfo, ModelInfo};
+    use crate::agent::types::{CommandInfo, EffortInfo, ModeInfo, ModelInfo};
 
     fn model(id: &str, name: &str, provider: &str) -> ModelInfo {
         ModelInfo {

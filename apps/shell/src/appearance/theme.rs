@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 use serde::Deserialize;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Theme {
@@ -8,6 +9,7 @@ pub enum Theme {
     Light,
     WarmPaper,
 }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Wallpaper {
@@ -16,6 +18,7 @@ pub enum Wallpaper {
     Nightwatch,
     QuietSignal,
 }
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Preferences {
     pub schema_version: u32,
@@ -25,6 +28,7 @@ pub struct Preferences {
     #[serde(default)]
     pub wallpaper: Wallpaper,
 }
+
 impl Default for Preferences {
     fn default() -> Self {
         Self {
@@ -34,25 +38,6 @@ impl Default for Preferences {
             reduced_motion: false,
             wallpaper: Wallpaper::default(),
         }
-    }
-}
-impl Preferences {
-    pub fn load() -> Option<Self> {
-        if std::env::var_os("CROWBAR_LAUNCH_SOCKET").is_some() {
-            let reply =
-                crate::session::launcher_request(serde_json::json!({"op": "appearance"})).ok()?;
-            let prefs: Self = serde_json::from_value(reply["preferences"].clone()).ok()?;
-            return (prefs.schema_version == 1).then_some(prefs);
-        }
-        let home = std::env::var_os("HOME")?;
-        let config = std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .unwrap_or_else(|| std::path::PathBuf::from(home).join(".config"));
-        let p: Self =
-            serde_json::from_slice(&std::fs::read(config.join("crowbaros/appearance.json")).ok()?)
-                .ok()?;
-        (p.schema_version == 1).then_some(p)
     }
 }
 
@@ -67,10 +52,19 @@ pub struct Palette {
     pub on_accent: u32,
     pub focus: u32,
 }
+
 impl Palette {
     pub fn from_colors(c: &crowbar_theme::ThemeColors) -> Self {
-        Self { canvas:c.canvas, surface:c.surface, text:c.text, muted:c.muted,
-            line:c.line, accent:c.accent, on_accent:c.on_accent, focus:c.focus }
+        Self {
+            canvas: c.canvas,
+            surface: c.surface,
+            text: c.text,
+            muted: c.muted,
+            line: c.line,
+            accent: c.accent,
+            on_accent: c.on_accent,
+            focus: c.focus,
+        }
     }
 
     pub fn for_preferences(p: &Preferences) -> Self {
@@ -151,7 +145,8 @@ mod tests {
 
     #[test]
     fn preferences_without_wallpaper_field_loads_with_default() {
-        let legacy = r#"{"schema_version":1,"theme":"light","studio":false,"reduced_motion":true}"#;
+        let legacy =
+            r#"{"schema_version":1,"theme":"light","studio":false,"reduced_motion":true}"#;
         let prefs: Preferences = serde_json::from_str(legacy).unwrap();
         assert_eq!(
             prefs,
