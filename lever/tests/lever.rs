@@ -13164,3 +13164,121 @@ fn failed_delete_and_rejected_model_preserve_pending_session_reset() {
     lever.signal(libc::SIGTERM);
     assert_eq!(lever.wait().code(), Some(0));
 }
+
+#[test]
+fn mcp_make_project_works_with_relative_and_long_state_directories() {
+    let uid = unsafe { libc::geteuid() };
+
+    for (label, use_relative) in [("relative", true), ("long", false)] {
+        let dir = TempDir::new();
+        let home = dir.0.join("lever-home");
+        let launch_dir = dir.0.join("launch");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&launch_dir).unwrap();
+        let surface_dir = dir.0.join("s");
+        let person_dir = dir.0.join("p");
+        std::fs::create_dir_all(&surface_dir).unwrap();
+        let surface = surface_dir.join("s");
+        let person = person_dir.join("p");
+
+        let (state_arg, state_abs) = if use_relative {
+            ("rel-state".to_string(), launch_dir.join("rel-state"))
+        } else {
+            let long_state = dir.0.join("a".repeat(40)).join("b".repeat(40)).join("c".repeat(40));
+            (long_state.to_str().unwrap().to_string(), long_state)
+        };
+
+        let proj_name = format!("proj-{label}-state");
+        let script = write_script(
+            &dir.0,
+            &json!({
+                "turns": [
+                    {
+                        "steps": [
+                            {
+                                "kind": "mcp_call",
+                                "id": "call_state_test",
+                                "tool": "make_project",
+                                "arguments": { "name": proj_name },
+                                "reply": "MOVED={mcp_result}"
+                            }
+                        ]
+                    }
+                ]
+            }),
+        );
+
+        let mut cmd = Command::new(BIN);
+        cmd.current_dir(&launch_dir)
+            .args([
+                "--state",
+                &state_arg,
+                "--surface-socket",
+                surface.to_str().unwrap(),
+                "--shell-uid",
+                &uid.to_string(),
+                "--person-socket",
+                person.to_str().unwrap(),
+                "--person-uid",
+                &uid.to_string(),
+                "--harness",
+                STUB_BIN,
+                "--harness-name",
+                "Stub",
+                "--harness-arg",
+                "--script",
+                "--harness-arg",
+                script.to_str().unwrap(),
+            ])
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"));
+        for key in [
+            "OPENCODE_CONFIG",
+            "OPENCODE_CONFIG_DIR",
+            "OPENCODE_CONFIG_CONTENT",
+            "OPENCODE_DB",
+        ] {
+            cmd.env_remove(key);
+        }
+        let child = cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn crowbar-lever");
+        let mut lever = RunningLever {
+            child: Some(child),
+            state: state_abs,
+            surface,
+            person,
+        };
+        lever.wait_for_sockets();
+
+        let mut client = handshake(&lever.person);
+        client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        write_frame(&mut client, &json!({ "op": "send", "text": "make project" })).unwrap();
+        let tid = read_frame(&mut client).unwrap()["thread"].as_str().unwrap().to_string();
+        let mut text = String::new();
+        loop {
+            let f = read_frame(&mut client).unwrap();
+            if f["event"] == "text" {
+                text.push_str(f["text"].as_str().unwrap());
+            }
+            if f["event"] == "done" && f["turn"] == 1 {
+                break;
+            }
+        }
+        let expected_dir = home.join("Projects").join(&proj_name);
+        assert!(
+            expected_dir.is_dir(),
+            "{label}: expected {} to exist; text={text}",
+            expected_dir.display()
+        );
+        write_frame(&mut client, &json!({ "op": "resume", "thread": tid })).unwrap();
+        let resumed = read_until(&mut client, |f| f["reply"] == "resumed");
+        assert_eq!(resumed["cwd"], expected_dir.to_string_lossy().as_ref());
+
+        lever.signal(libc::SIGTERM);
+        assert_eq!(lever.wait().code(), Some(0));
+    }
+}

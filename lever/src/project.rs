@@ -402,15 +402,36 @@ mod tests {
             trailing.join("my-app")
         );
 
-        // Control-character directory names are omitted from listings.
+        // Control-character directory names are omitted from listings, and
+        // symlink traversal into a control-character path via `..` is rejected
+        // by `normalize_path`.
         let ctrl = base.join("bad\tdir");
-        std::fs::create_dir_all(&ctrl).unwrap();
+        let ctrl_sub = ctrl.join("sub");
+        std::fs::create_dir_all(&ctrl_sub).unwrap();
         let listed_ctrl = list_subdirectories(Some(&base.to_string_lossy()), &base).unwrap();
         assert!(
             !listed_ctrl.entries.iter().any(|(n, _)| n.contains('\t')),
             "control-char dir should be excluded: {:?}",
             listed_ctrl.entries
         );
+        #[cfg(unix)]
+        {
+            let ctrl_sym = base.join("ctrl-link");
+            std::os::unix::fs::symlink(&ctrl_sub, &ctrl_sym).unwrap();
+            let via_ctrl = format!("{}/..", ctrl_sym.to_string_lossy());
+            assert!(matches!(
+                resolve_exact_path(&via_ctrl, &base),
+                Err(ProjectError::Invalid(_))
+            ));
+            assert!(matches!(
+                resolve_project_path("app", Some(&via_ctrl), &base),
+                Err(ProjectError::Invalid(_))
+            ));
+            assert!(matches!(
+                list_subdirectories(Some(&via_ctrl), &base),
+                Err(ProjectError::Invalid(_))
+            ));
+        }
 
         // Non-UTF-8 directory names are omitted from listings, and symlinks
         // that traverse into a non-UTF-8 path via `..` are rejected before any

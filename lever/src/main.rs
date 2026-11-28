@@ -354,6 +354,49 @@ fn run(options: Options) -> Result<(), String> {
     result
 }
 
+/// Maximum safe byte length for a Linux `sockaddr_un.sun_path` (108 bytes
+/// including the trailing NUL).
+const MAX_UNIX_SOCKET_PATH: usize = 104;
+
+/// Resolves an absolute, `SUN_LEN`-safe path for Lever's private MCP tool
+/// socket. Prefers `<canonical state>/tools.sock` so a relative `--state`
+/// works regardless of a harness session's working directory; falls back to
+/// placing the socket beside `person_socket` when `--state` is too long for a
+/// Unix socket pathname.
+fn resolve_tool_socket_path(state_dir: &Path, person_socket: &Path) -> Result<PathBuf, String> {
+    let abs_state = std::fs::canonicalize(state_dir)
+        .map_err(|e| format!("could not resolve state directory {}: {e}", state_dir.display()))?;
+    let state_candidate = abs_state.join("tools.sock");
+    if state_candidate.as_os_str().as_encoded_bytes().len() <= MAX_UNIX_SOCKET_PATH {
+        return Ok(state_candidate);
+    }
+
+    let person_parent = match person_socket.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::env::current_dir().map_err(|e| format!("could not determine current directory: {e}"))?,
+    };
+    let abs_person_dir = std::fs::canonicalize(&person_parent)
+        .map_err(|e| format!("could not resolve socket directory {}: {e}", person_parent.display()))?;
+    let abs_person_socket = person_socket
+        .file_name()
+        .map(|name| abs_person_dir.join(name))
+        .unwrap_or_else(|| abs_person_dir.clone());
+
+    let sibling = abs_person_dir.join("tools.sock");
+    if sibling != abs_person_socket && sibling.as_os_str().as_encoded_bytes().len() <= MAX_UNIX_SOCKET_PATH {
+        return Ok(sibling);
+    }
+    let pid_sibling = abs_person_dir.join(format!("lever-tools-{}.sock", std::process::id()));
+    if pid_sibling != abs_person_socket && pid_sibling.as_os_str().as_encoded_bytes().len() <= MAX_UNIX_SOCKET_PATH {
+        return Ok(pid_sibling);
+    }
+    Err(format!(
+        "could not find a short enough path for the MCP tool socket (tried {} and {})",
+        state_candidate.display(),
+        sibling.display()
+    ))
+}
+
 fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), String> {
     let pid = std::process::id();
     log.write(Event::Start, &format!("process {pid}, Lever {LEVER_VERSION}"))
@@ -374,7 +417,11 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
     sys::become_subreaper().map_err(|e| format!("could not become the parent of what a harness leaves: {e}"))?;
     write_marker(&marker, pid)?;
 
-    let tool_socket = options.state.join("tools.sock");
+    if let Some(parent) = options.person_socket.parent().filter(|p| !p.as_os_str().is_empty()) {
+        ensure_private_dir(parent)?;
+    }
+
+    let tool_socket = resolve_tool_socket_path(&options.state, &options.person_socket)?;
     let store = Store::open(&options.state.join("lever.sqlite"), unix_now())?;
     let mut service = Service::new(
         store,
@@ -388,10 +435,6 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
     );
     if let Some(timeout) = options.discovery_timeout {
         service.set_live_list_timeout(timeout);
-    }
-
-    if let Some(parent) = options.person_socket.parent() {
-        ensure_private_dir(parent)?;
     }
 
     let person_channel = Channel {
@@ -690,4 +733,56 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_socket_is_always_absolute_and_falls_back_when_state_path_is_long() {
+        let base = Path::new("/tmp").join(format!("lever-toolsock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let short_state = base.join("s");
+        let sock_dir = base.join("r");
+        std::fs::create_dir_all(&short_state).unwrap();
+        std::fs::create_dir_all(&sock_dir).unwrap();
+        let person_sock = sock_dir.join("p.sock");
+
+        // Relative state path resolves to an absolute path under the canonical state dir.
+        let cwd = std::env::current_dir().unwrap();
+        let rel = if let Ok(r) = short_state.strip_prefix(&cwd) {
+            r.to_path_buf()
+        } else {
+            let mut back = PathBuf::new();
+            for _ in cwd.components().skip(1) {
+                back.push("..");
+            }
+            back.join(short_state.strip_prefix("/").unwrap())
+        };
+        assert!(rel.is_relative());
+        let resolved_rel = resolve_tool_socket_path(&rel, &person_sock).unwrap();
+        assert!(resolved_rel.is_absolute(), "{}", resolved_rel.display());
+        assert_eq!(
+            resolved_rel,
+            std::fs::canonicalize(&short_state).unwrap().join("tools.sock")
+        );
+
+        // Long state path (> SUN_LEN) falls back to a short absolute path beside person_socket.
+        let long_state = base.join("a".repeat(40)).join("b".repeat(40)).join("c".repeat(40));
+        std::fs::create_dir_all(&long_state).unwrap();
+        let resolved_long = resolve_tool_socket_path(&long_state, &person_sock).unwrap();
+        assert!(resolved_long.is_absolute(), "{}", resolved_long.display());
+        assert!(
+            resolved_long.as_os_str().as_encoded_bytes().len() <= MAX_UNIX_SOCKET_PATH,
+            "too long: {}",
+            resolved_long.display()
+        );
+        assert_eq!(
+            resolved_long.parent().unwrap(),
+            std::fs::canonicalize(&sock_dir).unwrap()
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
