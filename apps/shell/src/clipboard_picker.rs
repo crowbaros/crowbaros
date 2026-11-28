@@ -13,10 +13,7 @@ pub struct Picker {
     clear_focus: FocusHandle,
     query: String,
     selected: usize,
-    items: Vec<String>,
-    loading: bool,
-    reload: bool,
-    error: bool,
+    history: picker_history::History,
     _subscription: Subscription,
 }
 struct Row {
@@ -28,6 +25,7 @@ impl Picker {
     fn rows(&self) -> Vec<Row> {
         match self.kind {
             Kind::History => self
+                .history
                 .items
                 .iter()
                 .filter(|s| s.to_lowercase().contains(&self.query.to_lowercase()))
@@ -54,7 +52,7 @@ impl Picker {
         }
     }
     fn close(&mut self, w: &mut Window, cx: &mut Context<Self>) {
-        self.items.clear();
+        self.history.items.clear();
         self.model.update(cx, |m, _| m.picker = None);
         w.remove_window();
         log::info!("SHELL picker open=false");
@@ -78,7 +76,7 @@ impl Picker {
             self.load(true, w, cx);
             return;
         }
-        if self.loading {
+        if !self.history.can_copy() {
             return;
         }
         if let Some(row) = self.rows().get(self.selected) {
@@ -90,15 +88,13 @@ impl Picker {
         if self.kind != Kind::History {
             return;
         }
-        if self.loading {
-            self.reload |= !clear;
+        let operation = if clear {
+            picker_history::Operation::Clear
+        } else {
+            picker_history::Operation::Read
+        };
+        if !self.history.begin(operation) {
             return;
-        }
-        self.loading = true;
-        self.error = false;
-        if clear {
-            self.items.clear();
-            self.selected = 0;
         }
         let task = cx
             .background_executor()
@@ -106,14 +102,14 @@ impl Picker {
         cx.spawn_in(w, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, w, cx| {
-                this.loading = false;
-                match result {
-                    Ok(items) => this.items = items,
-                    Err(_) => this.error = true,
-                }
-                log::info!("SHELL picker history loaded={} error={}", this.items.len(), this.error);
+                let reload = this.history.finish(result.map_err(|_| ()));
+                log::info!(
+                    "SHELL picker history loaded={} error={}",
+                    this.history.items.len(),
+                    this.history.failed.is_some()
+                );
                 this.selected = this.selected.min(this.rows().len().saturating_sub(1));
-                if std::mem::take(&mut this.reload) {
+                if reload {
                     this.load(false, w, cx);
                 }
                 cx.notify();
@@ -128,12 +124,13 @@ impl Render for Picker {
         let p = self.model.read(cx).palette();
         self.input.update(cx, |input, _| input.palette = p);
         let history = self.kind == Kind::History;
-        let loading = self.loading;
+        let loading = self.history.pending.is_some();
+        let status = self.history.status();
         let clearing = self.clear_focus.is_focused(window);
         let rows = self.rows();
         let total = rows.len();
         // Keep search and Clear visible at large display scales, too.
-        let reserved = if history { 272. } else { 232. };
+        let reserved = if history { 272. } else { 232. } + if status.is_some() { 44. } else { 0. };
         let page_size = ((f32::from(window.viewport_size().height) - reserved) / 44.)
             .floor()
             .clamp(1., 6.) as usize;
@@ -214,6 +211,17 @@ impl Render for Picker {
                             .child(icon("search", p.muted, 18.))
                             .child(div().flex_1().min_w_0().child(self.input.clone())),
                     )
+                    .when_some(status, |d, status| {
+                        d.child(
+                            div()
+                                .px(px(16.))
+                                .py(px(10.))
+                                .border_b_1()
+                                .border_color(rgb(p.line))
+                                .text_size(px(12.))
+                                .child(status),
+                        )
+                    })
                     .child(
                         div()
                             .min_h(px(page_size as f32 * 44. + 16.))
@@ -221,7 +229,7 @@ impl Render for Picker {
                             .py(px(8.))
                             .flex()
                             .flex_col()
-                            .when(total == 0, |d| {
+                            .when(total == 0 && status.is_none(), |d| {
                                 d.child(
                                     div()
                                         .h(px(page_size as f32 * 44.))
@@ -230,18 +238,12 @@ impl Render for Picker {
                                         .justify_center()
                                         .items_center()
                                         .gap(px(8.))
-                                        .child(if self.loading {
-                                            "Reading clipboard history…"
-                                        } else if self.error {
-                                            "Could not read clipboard history"
-                                        } else if !self.query.is_empty() {
+                                        .child(if !self.query.is_empty() {
                                             "No matches"
                                         } else {
                                             "Nothing copied yet"
                                         })
-                                        .child(div().text_color(rgb(p.muted)).child(if self.error {
-                                            "Close and reopen to try again."
-                                        } else if !self.query.is_empty() {
+                                        .child(div().text_color(rgb(p.muted)).child(if !self.query.is_empty() {
                                             "Try another name or keyword."
                                         } else {
                                             "Copy text in an app to keep it here."
@@ -318,8 +320,13 @@ impl Render for Picker {
                                     .text_color(rgb(p.muted))
                                     .child(palette_keycap("↑ ↓", p))
                                     .child("choose")
-                                    .child(palette_keycap("Enter", p))
-                                    .child(if clearing { "clear" } else { "copy" })
+                                    .when(!history || self.history.can_copy() || clearing, |d| {
+                                        d.child(palette_keycap("Enter", p)).child(if clearing {
+                                            "clear"
+                                        } else {
+                                            "copy"
+                                        })
+                                    })
                                     .child(palette_keycap("Esc", p))
                                     .child("close"),
                             ),
@@ -362,7 +369,7 @@ impl Render for Picker {
 pub fn close(model: &Entity<Model>, cx: &mut App) {
     if let Some(w) = model.update(cx, |m, _| m.picker.take()) {
         let _ = w.update(cx, |this, w, _| {
-            this.items.clear();
+            this.history.items.clear();
             w.remove_window();
         });
         log::info!("SHELL picker open=false");
@@ -423,10 +430,7 @@ pub fn toggle(model: Entity<Model>, kind: Kind, cx: &mut App) {
                     clear_focus: cx.focus_handle(),
                     query: String::new(),
                     selected: 0,
-                    items: Vec::new(),
-                    loading: false,
-                    reload: false,
-                    error: false,
+                    history: Default::default(),
                     _subscription: subscription,
                 };
                 picker.load(false, w, cx);

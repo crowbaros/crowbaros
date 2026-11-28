@@ -20,7 +20,8 @@ SHA = "979b45cfa6ec723b6f42330915a1b3769b930d02b2d505f9697f8ca602bee707"
 # Applied in this order. See patches/README.md.
 PATCHES = ["gpui-0.2.2-layer-shell.patch", "gpui-0.2.2-still-frames.patch",
            "gpui-0.2.2-closed-windows.patch", "gpui-0.2.2-builds-without-warnings.patch",
-           "gpui-0.2.2-image-clipboard.patch", "gpui-0.2.2-optional-axis-source.patch"]
+           "gpui-0.2.2-image-clipboard.patch", "gpui-0.2.2-optional-axis-source.patch",
+           "gpui-0.2.2-emoji-families.patch"]
 MARKER = ".crowbaros-generated"
 
 
@@ -82,6 +83,6 @@ def prepare(root=ROOT, url=URL, sha=SHA, patches=PATCHES):
 
 if __name__ == "__main__":
     if prepare():
-        print("Prepared GPUI 0.2.2 with the pinned upstream layer-shell backport and our five patches")
+        print(f"Prepared GPUI 0.2.2 with the pinned upstream layer-shell backport and our {len(PATCHES) - 1} patches")
     else:
         print("GPUI 0.2.2 is already prepared from these patches")

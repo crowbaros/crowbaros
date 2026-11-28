@@ -3,6 +3,7 @@ mod agent;
 mod calendar;
 mod catalog;
 mod clipboard_picker;
+mod picker_history;
 mod symbols;
 mod composer;
 mod drawer;

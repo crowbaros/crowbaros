@@ -660,6 +660,16 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as note:
         self.check('character arrows move beyond the first page',
                    self.clipboard('text/plain;charset=utf-8', app_class) == '’'.encode())
         opened('Characters', 'meta_l', 'dot')
+        self.type('thinking'); time.sleep(0.2)
+        self.capture(f'characters-{theme}-thinking')
+        _, _, pixels = guest.png_pixels(self.work / f'characters-{theme}-thinking.png')
+        colored = sum(1 for y in range(174, 214) for x in range(396, 434)
+                      if (lambda r, g, b: r > 160 and g > 75 and r > 1.3*b and g > 1.3*b)
+                         (*pixels[y][3*x:3*x+3]))
+        self.check('the requested emoji family renders Thinking face in ' + theme,
+                   colored > 10, f'{colored} colored glyph pixels')
+        self.key('esc'); focused()
+        opened('Characters', 'meta_l', 'dot')
         self.type('emoji'); self.capture(f'characters-{theme}-emoji'); self.key('esc'); focused()
         opened('Characters', 'meta_l', 'dot')
         self.type('rocket'); self.key('ret'); focused()
