@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT
-//! Month calendar grid math and lightweight quick timer for the bar clock popover.
+//! Month calendar grid math, quick timer, and co-located bar clock popover view.
+
+pub mod view;
+
+pub use view::{CalendarPopover, toggle};
 
 use chrono::{Datelike, Local, NaiveDate};
 
@@ -173,8 +177,6 @@ impl QuickTimer {
         self.finished = false;
     }
 
-    /// Advances by one second when running. Returns `true` when the displayed
-    /// state changed.
     pub fn tick_one_second(&mut self) -> bool {
         if !self.running {
             return false;
@@ -203,10 +205,28 @@ mod tests {
 
     #[test]
     fn month_navigation_wraps_across_year_boundaries() {
-        let jan = CalendarMonth { year: 2026, month: 1 };
-        assert_eq!(jan.prev(), CalendarMonth { year: 2025, month: 12 });
-        let dec = CalendarMonth { year: 2026, month: 12 };
-        assert_eq!(dec.next(), CalendarMonth { year: 2027, month: 1 });
+        let jan = CalendarMonth {
+            year: 2026,
+            month: 1,
+        };
+        assert_eq!(
+            jan.prev(),
+            CalendarMonth {
+                year: 2025,
+                month: 12
+            }
+        );
+        let dec = CalendarMonth {
+            year: 2026,
+            month: 12,
+        };
+        assert_eq!(
+            dec.next(),
+            CalendarMonth {
+                year: 2027,
+                month: 1
+            }
+        );
         assert_eq!(jan.title(), "January 2026");
     }
 
@@ -218,14 +238,12 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
         let grid = month_grid(2026, 11, today);
         assert_eq!(grid.len(), 42);
-        // Nov 1, 2026 is a Sunday -> 0 leading days.
         assert!(grid[0].in_month);
         assert_eq!(grid[0].day, 1);
         let today_cells: Vec<_> = grid.iter().filter(|c| c.is_today).collect();
         assert_eq!(today_cells.len(), 1);
         assert_eq!(today_cells[0].day, 25);
         assert!(today_cells[0].in_month);
-        // Dec 1 fills the trailing row.
         assert!(!grid[30].in_month);
         assert_eq!(grid[30].day, 1);
     }

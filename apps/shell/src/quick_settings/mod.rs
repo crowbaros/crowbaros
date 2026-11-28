@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! Quick Settings data model, volume/brightness clamping, OSD timeout state,
-//! and launcher-service RPC helpers for the shell.
+//! and co-located popover/OSD views.
 
-use serde_json::{Value, json};
+pub mod view;
+
+pub use view::{OsdOverlay, QuickSettingsPopover, close_osd, handle_media_key, show_osd, toggle};
+
+use serde_json::Value;
 use std::time::{Duration, Instant};
 
 pub const OSD_DURATION: Duration = Duration::from_millis(1600);
@@ -233,77 +237,10 @@ pub fn parse_quick_status(reply: &Value) -> QuickStatus {
     }
 }
 
-pub fn fetch_status() -> QuickStatus {
-    match crate::session::launcher_request(json!({"op": "quick_status"})) {
-        Ok(reply) => parse_quick_status(&reply),
-        Err(_) => QuickStatus::default(),
-    }
-}
-
-pub fn set_volume(percent: u32) -> Result<AudioQuickState, String> {
-    let clamped = clamp_volume_percent(percent);
-    let reply = crate::session::launcher_request(json!({"op": "set_volume", "percent": clamped}))
-        .map_err(|e| e.to_string())?;
-    Ok(parse_audio(&reply["audio"]))
-}
-
-pub fn step_volume(delta: i32) -> Result<AudioQuickState, String> {
-    let reply = crate::session::launcher_request(json!({"op": "step_volume", "delta": delta}))
-        .map_err(|e| e.to_string())?;
-    Ok(parse_audio(&reply["audio"]))
-}
-
-pub fn toggle_mute() -> Result<AudioQuickState, String> {
-    let reply = crate::session::launcher_request(json!({"op": "toggle_mute"}))
-        .map_err(|e| e.to_string())?;
-    Ok(parse_audio(&reply["audio"]))
-}
-
-pub fn toggle_mic_mute() -> Result<AudioQuickState, String> {
-    let reply = crate::session::launcher_request(json!({"op": "toggle_mic_mute"}))
-        .map_err(|e| e.to_string())?;
-    Ok(parse_audio(&reply["audio"]))
-}
-
-pub fn set_brightness(percent: u32) -> Result<BrightnessState, String> {
-    let clamped = clamp_brightness_percent(percent);
-    let reply =
-        crate::session::launcher_request(json!({"op": "set_brightness", "percent": clamped}))
-            .map_err(|e| e.to_string())?;
-    Ok(parse_brightness(&reply["brightness"]))
-}
-
-pub fn step_brightness(delta: i32) -> Result<BrightnessState, String> {
-    let reply =
-        crate::session::launcher_request(json!({"op": "step_brightness", "delta": delta}))
-            .map_err(|e| e.to_string())?;
-    Ok(parse_brightness(&reply["brightness"]))
-}
-
-pub fn set_wifi_power(powered: bool) -> Result<WifiQuickState, String> {
-    let reply =
-        crate::session::launcher_request(json!({"op": "set_wifi_power", "powered": powered}))
-            .map_err(|e| e.to_string())?;
-    Ok(parse_wifi(&reply["wifi"]))
-}
-
-pub fn set_bluetooth_power(powered: bool) -> Result<BluetoothQuickState, String> {
-    let reply = crate::session::launcher_request(
-        json!({"op": "set_bluetooth_power", "powered": powered}),
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(parse_bluetooth(&reply["bluetooth"]))
-}
-
-pub fn run_power_action(action: &str) -> Result<(), String> {
-    crate::session::launcher_request(json!({"op": "power", "action": action}))
-        .map(|_| ())
-        .map_err(|e| e.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn volume_and_brightness_clamping_and_stepping() {

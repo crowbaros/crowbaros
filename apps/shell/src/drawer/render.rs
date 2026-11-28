@@ -1,815 +1,30 @@
-//! The Agent's surface (ADR 0035): a drawer on the right of the display the
-//! pointer was on at the summon, the display's full height, above every
-//! window and taking no room from any. The summon gesture or its close
-//! control puts it away; Escape does not. Putting the drawer away stops
-//! nothing: a working turn finishes behind it and the mark shows `done`.
-//!
-//! The person drives a thread from the message box. A `/` there lists the
-//! drawer's commands and the harness's ([`slash`]), and a command that
-//! needs a choice, as `/model` does, lists the choices in the same place.
-//! An answer shows as the Markdown it is ([`markdown`]), and a turn's acts
-//! fold into one line once it has ended.
+// SPDX-License-Identifier: MIT
+//! GPUI rendering for [`AgentSurface`] from an [`AgentRenderSnapshot`].
+//! Performs zero Lever IPC and zero `Model`/entity mutations during paint
+//! (only clears the view-local scroll flag and publishes prepaint control
+//! bounds to `agent_view`).
 
-use super::*;
-use crate::composer::{self, Composer};
-use crate::markdown;
-use crate::slash::{self, Menu, MenuKind, Resolve, Run, Take, Wants};
-use std::collections::HashSet;
-use std::path::Path;
+use gpui::{prelude::*, *};
+
+use super::{
+    AGENT_HEADER_HEIGHT, AgentSurface, ControlFrame, controls_on_display,
+    should_answer_with_alt_digit, should_take_composer_enter, tracked,
+};
+use crate::{
+    agent::{
+        self, AgentIntent, AgentRenderSnapshot, ThreadAction, display_folder_path,
+        join_project_place, place_suggestions, validate_project_form,
+    },
+    appearance::Palette,
+    chrome, composer, markdown,
+    slash::{Menu, MenuKind},
+    ui::{Next, Previous, SendMessage, icon, palette_keycap},
+};
 
 /// The most rows of a list shown at once. A longer list moves with the keys.
 const LIST_ROWS: usize = 10;
 
-#[derive(Clone)]
-pub(crate) enum ThreadAction {
-    List,
-    New,
-    Open(String),
-    Archive,
-    AskMakeProject,
-    CancelMakeProject,
-    ConfirmMakeProject,
-    PickProjectPlace(String),
-    ToggleProjectBrowse,
-    BrowseProjectDir(String),
-    UseProjectFolder(String),
-    AskDelete,
-    Delete,
-    CancelDelete,
-    ChooseFreeModels(bool),
-    SignIn,
-    RefreshModels,
-    Act(String),
-    /// Show all of what an act gave, or its first lines again.
-    ActWhole(String),
-    Context(u64),
-    /// Open or fold the acts of a turn.
-    Acts(u64),
-    /// Open or fold a subagent in its turn.
-    Subagent(String),
-    /// Take back a message that waits behind a turn.
-    Unqueue(String),
-}
-
-pub(crate) struct AgentSurface {
-    pub(crate) focus: FocusHandle,
-    confirm_delete: bool,
-    making_project: bool,
-    project_name_input: Entity<input::TextInput>,
-    project_folder_input: Entity<input::TextInput>,
-    /// Parent place (`~/Projects`, `~/Code`, `~`, etc.) while the folder field
-    /// tracks `<place>/<name>`; `None` once the person edits Folder directly or
-    /// chooses an exact folder.
-    project_place: Option<String>,
-    project_browse_open: bool,
-    project_browse_loading: bool,
-    project_browse_dir: Option<String>,
-    project_browse_parent: Option<String>,
-    project_browse_home: Option<String>,
-    project_browse_entries: Vec<agent::DirEntry>,
-    project_error: Option<String>,
-    _project_name_sub: Subscription,
-    _project_folder_sub: Subscription,
-    expanded_acts: HashSet<String>,
-    /// The acts shown whole, where what they gave is long.
-    whole_acts: HashSet<String>,
-    expanded_context: HashSet<u64>,
-    /// The turns whose acts the person opened, once they had folded.
-    opened_turns: HashSet<u64>,
-    /// Subagents the person opened in the thread to read their messages and acts.
-    expanded_subagents: HashSet<String>,
-    pub(crate) model: Entity<Model>,
-    pub(crate) input: Entity<Composer>,
-    pub(crate) scroll: ScrollHandle,
-    pub(crate) scroll_to_bottom: bool,
-    _input_sub: Subscription,
-    /// The display the drawer is on, and where its left edge is on it.
-    output: String,
-    left: f32,
-    frame: Rc<RefCell<ControlFrame>>,
-    /// The row of the open list the keys are on, and the list it is a row of.
-    highlight: usize,
-    list_for: String,
-    /// The last message-box text seen by the observer, so focus/caret/layout
-    /// notifications do not clear unrelated errors.
-    last_text: String,
-    /// What the message box held when Escape closed its list.
-    dismissed: Option<String>,
-    /// What the message box held when the drawer last said why something
-    /// was not done.
-    said_of: Option<String>,
-    /// The provider picked in the rail beside the list of Models.
-    provider: Option<String>,
-    /// The Model just picked, whose effort levels are offered next.
-    effort_after: Option<String>,
-    /// The catalog epoch last seen from `AgentState`, so disconnect/error/
-    /// free-model changes reset cached fetch guards.
-    seen_catalog_epoch: u64,
-    /// The kind of list open on the previous render, to reset transient state
-    /// when a picker closes.
-    last_menu_kind: Option<MenuKind>,
-    /// What the drawer has asked Lever for since it came up.
-    asked_offer: bool,
-    asked_efforts: HashSet<String>,
-    asked_commands: Option<Option<String>>,
-    /// Tracks whether the previous frame showed the first-summon choice so
-    /// focus moves to the composer as soon as a Model source is chosen.
-    was_choosing: bool,
-    /// Wakes the drawer each second while a turn works, for how long it has.
-    _tick: Task<()>,
-}
-
-/// Plain Enter in the focused message box counts once per physical press;
-/// held key repeats and modified Enters (like Shift+Enter) are not taken.
-fn should_take_composer_enter(is_held: bool, modifiers: &Modifiers, input_focused: bool) -> bool {
-    input_focused
-        && !is_held
-        && !modifiers.shift
-        && !modifiers.control
-        && !modifiers.alt
-        && !modifiers.platform
-}
-
-/// Alt+digit answers a waiting permission request only on an initial key press
-/// while viewing the thread (never on key repeat, in the thread list, or over
-/// the delete confirmation).
-fn should_answer_with_alt_digit(is_held: bool, list_view: bool, confirm_delete: bool) -> bool {
-    !is_held && !list_view && !confirm_delete
-}
-
-/// Reconciles `agent_drafts` when Lever acknowledges `Sent` for
-/// `(submitted_key, submitted_text)`. Works whether the drawer is open
-/// (`open_input == Some(current)`) or was put away before `Sent` arrived
-/// (`open_input == None`). Returns `Some(next)` when an open composer should
-/// replace its text with `next`, preserving any post-send edits or typed-ahead
-/// suffix.
-pub(crate) fn reconcile_draft_on_sent(
-    drafts: &mut std::collections::HashMap<String, String>,
-    submitted_key: &str,
-    new_thread_key: &str,
-    submitted_text: &str,
-    open_input: Option<&str>,
-) -> Option<String> {
-    let store = |drafts: &mut std::collections::HashMap<String, String>, key: &str, text: &str| {
-        if text.trim().is_empty() || slash::is_drawer_command(text) {
-            drafts.remove(key);
-        } else {
-            drafts.insert(key.to_string(), text.to_string());
-        }
-    };
-    match open_input {
-        Some(current) => {
-            if let Some(next) = agent::draft_after_send(current, submitted_text) {
-                drafts.remove(submitted_key);
-                store(drafts, new_thread_key, &next);
-                Some(next)
-            } else {
-                // Person replaced the message box with unrelated edits before
-                // `Sent` arrived: keep those edits under the active thread key.
-                if submitted_key != new_thread_key {
-                    drafts.remove(submitted_key);
-                }
-                store(drafts, new_thread_key, current);
-                None
-            }
-        }
-        None => {
-            let stored = drafts.get(submitted_key).cloned();
-            if let Some(stored) = stored {
-                if let Some(next) = agent::draft_after_send(&stored, submitted_text) {
-                    drafts.remove(submitted_key);
-                    store(drafts, new_thread_key, &next);
-                } else if submitted_key != new_thread_key {
-                    drafts.remove(submitted_key);
-                    store(drafts, new_thread_key, &stored);
-                }
-            }
-            None
-        }
-    }
-}
-
-/// Whether closing `closed` should reset `asked_offer` so reopening retries
-/// a failed or empty catalog lookup, or refreshes `/model` against Lever's
-/// cached catalog after an out-of-band sign-in.
-fn should_reset_offer_on_menu_close(closed: Option<MenuKind>, state: &agent::AgentState) -> bool {
-    if closed == Some(MenuKind::Models) {
-        return true;
-    }
-    matches!(
-        closed,
-        Some(MenuKind::Modes | MenuKind::DefaultModes | MenuKind::Efforts)
-    ) && (state.modes_error.is_some() || state.models.is_empty() || state.modes.is_empty())
-}
-
-/// Identity key for the open slash menu used to reset highlight to `menu.start()`
-/// when the list switches kind, query, provider, or finishes loading its rows.
-fn list_for_key(menu: &Menu, draft: &str) -> String {
-    let named = match slash::typed(draft) {
-        slash::Typed::Name(query) => query.to_string(),
-        slash::Typed::Command { arg, .. } => arg.to_string(),
-        slash::Typed::Words => String::new(),
-    };
-    format!(
-        "{:?}|{named}|{:?}|{}",
-        menu.kind,
-        menu.provider,
-        menu.items.is_empty()
-    )
-}
-
-/// The key a thread's unsent words are kept under: its ID, or nothing for
-/// the thread that has not begun.
-fn draft_key(state: &agent::AgentState) -> String {
-    state.thread.clone().unwrap_or_default()
-}
-
-/// Joins a base place (`~/Projects`, `~/Code`, `/home/crowbar`, etc.) with a project name when given.
-/// Preserves trailing spaces in `place` (such as a picked folder named `notes `),
-/// matching Lever's exact path preservation.
-fn join_project_place(place: &str, name: &str) -> String {
-    let base = place.trim_start().trim_end_matches('/');
-    let base = if base.trim().is_empty() { "/" } else { base };
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        base.to_string()
-    } else if base == "/" {
-        format!("/{trimmed}")
-    } else {
-        format!("{base}/{trimmed}")
-    }
-}
-
-/// Normalizes a folder input for `list-dirs` browsing while preserving trailing
-/// spaces so picked folders like `~/notes ` reopen in the same directory.
-fn browse_start_path(folder: &str) -> Option<String> {
-    (!folder.trim().is_empty()).then(|| folder.trim_start().to_string())
-}
-
-/// Validates the inline "Make this a project" form and returns `(name, place, path)` for Lever.
-fn validate_project_form(
-    name: &str,
-    folder: &str,
-    place: Option<&str>,
-) -> Result<(Option<String>, Option<String>, Option<String>), String> {
-    let name = name.trim();
-    if let Some(place) = place {
-        if name.is_empty() {
-            return Err("Enter a project name.".into());
-        }
-        if name == "."
-            || name == ".."
-            || name.contains('/')
-            || name.contains('\\')
-            || name.chars().any(char::is_control)
-        {
-            return Err("Project name must be a single folder name.".into());
-        }
-        let place_arg = (place != "~/Projects").then(|| place.to_string());
-        return Ok((Some(name.to_string()), place_arg, None));
-    }
-    let folder = folder.trim_start();
-    if folder.trim().is_empty() {
-        return Err("Enter or choose a folder.".into());
-    }
-    if folder.chars().any(char::is_control) {
-        return Err("Folder path contains an invalid character.".into());
-    }
-    if !folder.starts_with('/') && folder.trim() != "~" && !folder.starts_with("~/") {
-        return Err("Enter an absolute folder path or start with ~/.".into());
-    }
-    Ok((None, None, Some(folder.to_string())))
-}
-
-/// A suggested parent folder in the "Make this a project" form.
-/// `label` may shorten Lever's reported home directory to `~`, while `value`
-/// always holds the exact destination sent to Lever (`~/Projects`, `~/Code`,
-/// `~`, or the thread parent's absolute path).
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PlaceSuggestion {
-    label: String,
-    value: String,
-}
-
-/// Formats an absolute path using `~` only when Lever has supplied the person's
-/// actual home directory. Never guesses from `/home/<name>` or `$HOME`, because
-/// `crowbaros-shell` runs under its own account on Base and a thread may live
-/// under another directory in `/home/`.
-fn display_folder_path(path: &str, known_home: Option<&str>) -> String {
-    if let Some(home) = known_home.map(|h| h.trim_end_matches('/')).filter(|h| !h.is_empty()) {
-        if path == home {
-            return "~".into();
-        }
-        if let Some(rest) = path.strip_prefix(home).and_then(|r| r.strip_prefix('/')) {
-            return format!("~/{rest}");
-        }
-    }
-    path.to_string()
-}
-
-/// Quick parent places offered in the "Make this a project" form: `~/Projects`,
-/// `~/Code`, `~`, plus any parent folders already holding threads.
-fn place_suggestions(state: &agent::AgentState, known_home: Option<&str>) -> Vec<PlaceSuggestion> {
-    let mut places = vec![
-        PlaceSuggestion {
-            label: "~/Projects".into(),
-            value: "~/Projects".into(),
-        },
-        PlaceSuggestion {
-            label: "~/Code".into(),
-            value: "~/Code".into(),
-        },
-        PlaceSuggestion {
-            label: "~".into(),
-            value: "~".into(),
-        },
-    ];
-    for thread in &state.threads {
-        if thread.archived || thread.cwd.is_empty() {
-            continue;
-        }
-        let Some(parent) = Path::new(&thread.cwd).parent().and_then(|p| p.to_str()) else {
-            continue;
-        };
-        if parent == "/" || parent.is_empty() {
-            continue;
-        }
-        let label = display_folder_path(parent, known_home);
-        if !places.iter().any(|p| p.label == label || p.value == parent) {
-            places.push(PlaceSuggestion {
-                label,
-                value: parent.to_string(),
-            });
-        }
-        if places.len() >= 6 {
-            break;
-        }
-    }
-    places
-}
-
 impl AgentSurface {
-    pub(crate) fn new(
-        model: Entity<Model>,
-        output: String,
-        left: f32,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let input = cx.new(|cx| Composer::new("Ask the Agent. / for commands", 16384, cx));
-        let project_name_input = cx.new(|cx| input::TextInput::with_placeholder("Project name", 128, cx));
-        let project_folder_input = cx.new(|cx| input::TextInput::with_placeholder("~/Projects/<name>", 512, cx));
-        let focus = cx.focus_handle();
-        let state = &model.read(cx).agent_state;
-        let scroll_to_bottom = !state.turns.is_empty();
-        let seen_catalog_epoch = state.catalog_epoch;
-        // What the person typed in this thread and did not send.
-        let draft = model.read(cx).agent_drafts.get(&draft_key(state)).cloned();
-        let last_text = draft.clone().unwrap_or_default();
-        let was_choosing = state.needs_model_choice();
-        if state.list_view || was_choosing {
-            window.focus(&focus);
-        } else {
-            window.focus(&input.focus_handle(cx));
-        }
-        if let Some(draft) = draft {
-            input.update(cx, |input, cx| input.set_text(draft, cx));
-        }
-        let input_sub = cx.observe(&input, |this, input, cx| {
-            let text = input.read(cx).text();
-            let text_changed = text != this.last_text;
-            this.last_text = text.clone();
-            if this.dismissed.as_deref().is_some_and(|closed| closed != text) {
-                this.dismissed = None;
-            }
-            this.model.update(cx, |m, _| {
-                if m.agent_state.list_view {
-                    return;
-                }
-                // What the drawer said of the last thing typed is said: it
-                // goes once the person edits the text, never on focus/layout.
-                if text_changed && this.said_of.as_deref() != Some(text.as_str()) {
-                    this.said_of = None;
-                    m.agent_state.error = None;
-                }
-                let key = draft_key(&m.agent_state);
-                // Keep plain words, Unix paths, and harness commands as drafts;
-                // only empty text and drawer-owned commands are not kept.
-                if text.trim().is_empty() || slash::is_drawer_command(&text) {
-                    m.agent_drafts.remove(&key);
-                } else {
-                    m.agent_drafts.insert(key, text);
-                }
-            });
-            cx.notify();
-        });
-        let project_name_sub = cx.observe(&project_name_input, |this, name_input, cx| {
-            this.project_error = None;
-            this.model.update(cx, |m, _| m.agent_state.error = None);
-            if let Some(place) = this.project_place.clone() {
-                let offered = join_project_place(&place, &name_input.read(cx).query());
-                if this.project_folder_input.read(cx).query() != offered {
-                    this.project_folder_input.update(cx, |folder, cx| folder.set_text(offered, cx));
-                }
-            }
-            cx.notify();
-        });
-        let project_folder_sub = cx.observe(&project_folder_input, |this, folder_input, cx| {
-            this.project_error = None;
-            this.model.update(cx, |m, _| m.agent_state.error = None);
-            if let Some(place) = this.project_place.as_deref() {
-                let offered = join_project_place(place, &this.project_name_input.read(cx).query());
-                let current = folder_input.read(cx).query();
-                if current != offered {
-                    this.project_place = None;
-                }
-            }
-            cx.notify();
-        });
-        let tick = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-                let alive = this.update(cx, |this, cx| {
-                    if this.model.read(cx).agent_state.working() {
-                        cx.notify();
-                    }
-                });
-                if alive.is_err() {
-                    break;
-                }
-            }
-        });
-        AgentSurface {
-            focus,
-            confirm_delete: false,
-            making_project: false,
-            project_name_input,
-            project_folder_input,
-            project_place: Some("~/Projects".into()),
-            project_browse_open: false,
-            project_browse_loading: false,
-            project_browse_dir: None,
-            project_browse_parent: None,
-            project_browse_home: None,
-            project_browse_entries: Vec::new(),
-            project_error: None,
-            _project_name_sub: project_name_sub,
-            _project_folder_sub: project_folder_sub,
-            expanded_acts: Default::default(),
-            whole_acts: Default::default(),
-            expanded_context: Default::default(),
-            opened_turns: Default::default(),
-            expanded_subagents: Default::default(),
-            model,
-            input,
-            scroll: ScrollHandle::new(),
-            scroll_to_bottom,
-            _input_sub: input_sub,
-            output,
-            left,
-            frame: Rc::new(RefCell::new(ControlFrame::default())),
-            highlight: 0,
-            list_for: String::new(),
-            last_text,
-            dismissed: None,
-            said_of: None,
-            provider: None,
-            effort_after: None,
-            seen_catalog_epoch,
-            last_menu_kind: None,
-            asked_offer: false,
-            asked_efforts: Default::default(),
-            asked_commands: None,
-            was_choosing,
-            _tick: tick,
-        }
-    }
-
-    fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
-        self.input.update(cx, |input, cx| input.set_text(text, cx));
-    }
-
-    pub(crate) fn close_project_form(&mut self) -> bool {
-        let was_open = self.making_project || self.project_browse_open || self.project_browse_loading;
-        self.making_project = false;
-        self.project_browse_open = false;
-        self.project_browse_loading = false;
-        self.project_browse_dir = None;
-        self.project_browse_parent = None;
-        self.project_browse_entries.clear();
-        self.project_error = None;
-        was_open
-    }
-
-    fn project_form_open(&self, cx: &App) -> bool {
-        let s = &self.model.read(cx).agent_state;
-        self.making_project && s.thread.is_some() && !s.list_view
-    }
-
-    pub(crate) fn on_project_made(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.making_project {
-            self.close_project_form();
-            window.focus(&self.input.focus_handle(cx));
-            sync_agent_view(&self.model, cx);
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn on_dirs_listed(&mut self, listing: agent::DirListing, cx: &mut Context<Self>) {
-        self.project_browse_loading = false;
-        self.project_browse_home = Some(listing.home);
-        if self.making_project && self.project_browse_open {
-            self.project_browse_dir = Some(listing.path);
-            self.project_browse_parent = listing.parent;
-            self.project_browse_entries = listing.entries;
-            self.project_error = None;
-            sync_agent_view(&self.model, cx);
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn on_agent_error(&mut self, cx: &mut Context<Self>) {
-        if self.project_browse_loading {
-            self.project_browse_loading = false;
-            if self.project_browse_dir.is_none() {
-                self.project_browse_open = false;
-            }
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn action(&mut self, action: ThreadAction, window: &mut Window, cx: &mut Context<Self>) {
-        // Folding/expanding thread details, cancelling the project form, and
-        // Model-source controls remain usable even while a request is in flight.
-        let allowed_while_busy = matches!(
-            action,
-            ThreadAction::Act(_)
-                | ThreadAction::ActWhole(_)
-                | ThreadAction::Context(_)
-                | ThreadAction::Acts(_)
-                | ThreadAction::Subagent(_)
-                | ThreadAction::SignIn
-                | ThreadAction::ChooseFreeModels(_)
-                | ThreadAction::RefreshModels
-                | ThreadAction::Unqueue(_)
-                | ThreadAction::CancelMakeProject
-        );
-        let busy = {
-            let s = &self.model.read(cx).agent_state;
-            s.sending || s.loading
-        };
-        if busy && !allowed_while_busy {
-            return;
-        }
-        match action {
-            ThreadAction::List => {
-                self.scroll_to_bottom = false;
-                self.scroll.set_offset(point(px(0.), px(0.)));
-                self.model.update(cx, |m, _| m.agent_state.list_view = true);
-                self.confirm_delete = false;
-                self.close_project_form();
-                window.focus(&self.focus);
-            }
-            ThreadAction::New | ThreadAction::Open(_) => {
-                if !self.model.read(cx).agent_state.connected {
-                    return;
-                }
-                self.confirm_delete = false;
-                self.close_project_form();
-                let thread = match action {
-                    ThreadAction::Open(t) => Some(t),
-                    _ => None,
-                };
-                let draft = self.model.update(cx, |m, _| {
-                    if m.agent_state.select_thread(thread.clone())
-                        && let Some(tx) = &m.agent_tx
-                    {
-                        tx.select(thread);
-                    }
-                    m.agent_drafts
-                        .get(&draft_key(&m.agent_state))
-                        .cloned()
-                        .unwrap_or_default()
-                });
-                self.set_text(draft, cx);
-                self.expanded_acts.clear();
-                self.whole_acts.clear();
-                self.expanded_context.clear();
-                self.opened_turns.clear();
-                self.expanded_subagents.clear();
-                self.asked_commands = None;
-                self.provider = None;
-                self.effort_after = None;
-                self.scroll.set_offset(point(px(0.), px(0.)));
-                self.scroll_to_bottom = true;
-                window.focus(&self.input.focus_handle(cx));
-            }
-            ThreadAction::AskMakeProject => {
-                let can_open = {
-                    let s = &self.model.read(cx).agent_state;
-                    s.thread.is_some() && s.connected && !s.mode_locked()
-                };
-                if !can_open {
-                    return;
-                }
-                self.confirm_delete = false;
-                self.close_project_form();
-                self.making_project = true;
-                self.project_place = Some("~/Projects".into());
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.project_name_input.update(cx, |i, cx| i.set_text("", cx));
-                self.project_folder_input.update(cx, |i, cx| i.set_text("~/Projects", cx));
-                window.focus(&self.project_name_input.focus_handle(cx));
-            }
-            ThreadAction::CancelMakeProject => {
-                self.close_project_form();
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                window.focus(&self.input.focus_handle(cx));
-            }
-            ThreadAction::PickProjectPlace(place) => {
-                let name = self.project_name_input.read(cx).query();
-                let next = join_project_place(&place, &name);
-                self.project_place = Some(place);
-                self.project_browse_open = false;
-                self.project_browse_loading = false;
-                self.project_error = None;
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.project_folder_input.update(cx, |i, cx| i.set_text(next, cx));
-                if name.trim().is_empty() {
-                    window.focus(&self.project_name_input.focus_handle(cx));
-                } else {
-                    window.focus(&self.project_folder_input.focus_handle(cx));
-                }
-            }
-            ThreadAction::ToggleProjectBrowse => {
-                if self.project_browse_open {
-                    self.project_browse_open = false;
-                    self.project_browse_loading = false;
-                } else {
-                    let folder = self.project_folder_input.read(cx).query();
-                    let tx = self.model.read(cx).agent_tx.clone();
-                    if let Some(tx) = tx {
-                        self.project_error = None;
-                        self.project_browse_open = true;
-                        self.project_browse_loading = true;
-                        tx.list_dirs(browse_start_path(&folder));
-                    } else {
-                        self.project_error = Some("The Agent is not reachable right now.".into());
-                    }
-                }
-            }
-            ThreadAction::BrowseProjectDir(dir) => {
-                if let Some(tx) = self.model.read(cx).agent_tx.clone() {
-                    self.project_error = None;
-                    self.project_browse_open = true;
-                    self.project_browse_loading = true;
-                    tx.list_dirs(Some(dir));
-                }
-            }
-            ThreadAction::UseProjectFolder(folder) => {
-                self.project_place = None;
-                self.project_browse_open = false;
-                self.project_browse_loading = false;
-                self.project_error = None;
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.project_folder_input.update(cx, |i, cx| i.set_text(folder, cx));
-                window.focus(&self.project_folder_input.focus_handle(cx));
-            }
-            ThreadAction::ConfirmMakeProject => {
-                let name = self.project_name_input.read(cx).query();
-                let folder = self.project_folder_input.read(cx).query();
-                let validated = validate_project_form(&name, &folder, self.project_place.as_deref());
-                let (req_name, req_place, req_path) = match validated {
-                    Ok(triple) => triple,
-                    Err(why) => {
-                        self.project_error = Some(why);
-                        sync_agent_view(&self.model, cx);
-                        cx.notify();
-                        return;
-                    }
-                };
-                self.project_error = None;
-                let tx_and_thread = self.model.update(cx, |m, _| {
-                    if !m.agent_state.connected || m.agent_state.mode_locked() {
-                        return None;
-                    }
-                    let thread = m.agent_state.thread.clone()?;
-                    let tx = m.agent_tx.clone()?;
-                    m.agent_state.loading = true;
-                    m.agent_state.error = None;
-                    Some((tx, thread))
-                });
-                if let Some((tx, thread)) = tx_and_thread {
-                    tx.make_project(thread, req_name, req_place, req_path);
-                }
-            }
-            ThreadAction::AskDelete => {
-                self.close_project_form();
-                self.confirm_delete = true;
-                window.focus(&self.focus);
-            }
-            ThreadAction::CancelDelete => {
-                self.confirm_delete = false;
-                window.focus(&self.input.focus_handle(cx));
-            }
-            ThreadAction::Archive | ThreadAction::Delete => {
-                let delete = matches!(action, ThreadAction::Delete);
-                self.model.update(cx, |m, _| {
-                    if delete && m.agent_state.can_stop() {
-                        return;
-                    }
-                    if let (Some(thread), Some(tx)) = (m.agent_state.thread.clone(), &m.agent_tx) {
-                        m.agent_drafts.remove(&thread);
-                        m.agent_state.loading = true;
-                        tx.lifecycle(thread, delete);
-                    }
-                });
-                self.confirm_delete = false;
-            }
-            ThreadAction::Unqueue(id) => {
-                let (tx, thread) = {
-                    let m = self.model.read(cx);
-                    (m.agent_tx.clone(), m.agent_state.thread.clone())
-                };
-                if let (Some(tx), Some(thread)) = (tx, thread) {
-                    tx.unqueue(thread, id);
-                }
-            }
-            ThreadAction::Act(id) => {
-                if !self.expanded_acts.remove(&id) {
-                    self.expanded_acts.insert(id);
-                }
-            }
-            ThreadAction::ActWhole(id) => {
-                if !self.whole_acts.remove(&id) {
-                    self.whole_acts.insert(id);
-                }
-            }
-            ThreadAction::Context(turn) => {
-                if !self.expanded_context.remove(&turn) {
-                    self.expanded_context.insert(turn);
-                }
-            }
-            ThreadAction::Acts(turn) => {
-                if !self.opened_turns.remove(&turn) {
-                    self.opened_turns.insert(turn);
-                }
-            }
-            ThreadAction::Subagent(id) => {
-                if !self.expanded_subagents.remove(&id) {
-                    self.expanded_subagents.insert(id);
-                }
-            }
-            ThreadAction::ChooseFreeModels(enabled) => {
-                let tx = self.model.update(cx, |m, _| {
-                    if !m.agent_state.connected || m.agent_state.no_harness {
-                        return None;
-                    }
-                    m.agent_state.error = None;
-                    if enabled {
-                        m.agent_state.sign_in_launched = false;
-                    }
-                    m.agent_tx.clone()
-                });
-                if let Some(tx) = tx {
-                    tx.set_free_models(enabled);
-                }
-            }
-            ThreadAction::SignIn => {
-                let tx = self.model.update(cx, |m, _| {
-                    if !m.agent_state.connected || m.agent_state.no_harness {
-                        return None;
-                    }
-                    m.agent_state.error = None;
-                    m.agent_state.sign_in_launched = true;
-                    Some(m.tx.clone())
-                });
-                if let Some(tx) = tx {
-                    session::agent_keyboard(false);
-                    session::launch_agent_sign_in(tx);
-                }
-            }
-            ThreadAction::RefreshModels => {
-                let tx = self.model.update(cx, |m, _| {
-                    if !m.agent_state.connected || m.agent_state.no_harness {
-                        return None;
-                    }
-                    m.agent_state.error = None;
-                    m.agent_state.modes_loading = true;
-                    m.agent_state.modes_error = None;
-                    m.agent_tx.clone()
-                });
-                if let Some(tx) = tx {
-                    tx.refresh_models();
-                }
-            }
-        }
-        sync_agent_view(&self.model, cx);
-        cx.notify();
-    }
-
-    /// A bordered control of the list of threads and of the question before
-    /// a thread is deleted.
     fn button(
         &self,
         id: impl Into<ElementId>,
@@ -859,7 +74,9 @@ impl AgentSurface {
             .text_color(rgb(p.text))
             .focus(move |s| s.border_color(rgb(p.focus)).bg(rgb(p.surface)))
             .when(!enabled, |s| s.opacity(0.5))
-            .when(enabled, |s| s.cursor_pointer().hover(move |s| s.bg(rgb(p.surface))))
+            .when(enabled, |s| {
+                s.cursor_pointer().hover(move |s| s.bg(rgb(p.surface)))
+            })
             .child(label.into())
             .child(tracked(&self.frame, control, true))
             .on_click(cx.listener(move |this, _, w, cx| {
@@ -875,8 +92,6 @@ impl AgentSurface {
             }))
     }
 
-    /// A quiet line of the thread that opens or folds something: what it
-    /// says, and a mark of which way it is.
     fn toggle(
         &self,
         label: String,
@@ -920,384 +135,6 @@ impl AgentSurface {
             }))
     }
 
-    pub(crate) fn near_bottom(&self) -> bool {
-        self.scroll.max_offset().height + self.scroll.offset().y <= px(2.)
-    }
-
-    /// Puts the surface away. The keyboard goes back to the window that had
-    /// it, if the surface holds it. A working turn keeps going behind it.
-    pub(crate) fn put_away(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        log::info!("SHELL agent-surface up=false");
-        let prev_mark = self.model.read(cx).agent_state.mark;
-        let cleared = self.model.update(cx, |m, _| {
-            m.agent = None;
-            m.agent_state.on_drawer_closed()
-        });
-        if cleared {
-            log::info!(
-                "SHELL agent-mark state={} prev={}",
-                self.model.read(cx).agent_state.mark.label(),
-                prev_mark.label()
-            );
-        }
-        sync_mark_overlay(&self.model, cx);
-        session::agent_keyboard(false);
-        window.remove_window();
-        cx.refresh_windows();
-    }
-
-    /// The list the message box calls for, unless Escape closed it.
-    fn list(&self, cx: &App) -> Option<Menu> {
-        let m = self.model.read(cx);
-        if m.agent_state.needs_model_choice()
-            || m.agent_state.list_view
-            || self.confirm_delete
-            || self.project_form_open(cx)
-        {
-            return None;
-        }
-        let text = self.input.read(cx).text();
-        if self.dismissed.as_deref() == Some(text.as_str()) {
-            return None;
-        }
-        slash::menu(&text, &m.agent_state, self.provider.as_deref())
-    }
-
-    /// Says why something was not done, where the drawer says such things.
-    fn refuse(&mut self, why: String, cx: &mut Context<Self>) {
-        self.said_of = Some(self.input.read(cx).text());
-        self.model.update(cx, |m, _| m.agent_state.error = Some(why));
-        sync_agent_view(&self.model, cx);
-        cx.notify();
-    }
-
-    /// Takes the row of the open list the keys are on.
-    fn take(&mut self, menu: &Menu, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(item) = menu.items.get(self.highlight.min(menu.items.len().saturating_sub(1))) else {
-            return;
-        };
-        match item.take.clone() {
-            Take::Fill(text) => {
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.set_text(text, cx);
-            }
-            Take::Run(run) => self.run(run, window, cx),
-            Take::Refuse(why) => self.refuse(why, cx),
-        }
-    }
-
-    /// Carries out a command of the drawer's own.
-    fn run(&mut self, run: Run, window: &mut Window, cx: &mut Context<Self>) {
-        match run {
-            Run::PickModel(model) => {
-                let (tx, pick, known) = self.model.update(cx, |m, _| {
-                    let pick = m.agent_state.pick_model(&model);
-                    if pick != agent::SettingPick::Refused {
-                        agent::save_picks(
-                            m.agent_state.last_model.as_deref(),
-                            m.agent_state.last_effort.as_deref(),
-                        );
-                    }
-                    (
-                        m.agent_tx.clone(),
-                        pick,
-                        m.agent_state.efforts.contains_key(&model),
-                    )
-                });
-                if pick == agent::SettingPick::Refused {
-                    return self.refuse("The Agent is working on this thread. /stop ends the turn.".into(), cx);
-                }
-                self.set_text("", cx);
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.provider = None;
-                if let Some(tx) = tx {
-                    if let agent::SettingPick::SetThread { thread, value } = pick {
-                        tx.set_model(thread, value);
-                    }
-                    if !known && self.asked_efforts.insert(model.clone()) {
-                        tx.fetch_efforts(model.clone());
-                    }
-                }
-                // The Model's effort levels are offered next, once Lever has
-                // said them and the thread is at the Model.
-                self.effort_after = Some(model);
-            }
-            Run::PickEffort(effort) => {
-                let (tx, pick) = self.model.update(cx, |m, _| {
-                    let pick = m.agent_state.pick_effort(&effort);
-                    if pick != agent::SettingPick::Refused {
-                        agent::save_picks(
-                            m.agent_state.last_model.as_deref(),
-                            m.agent_state.last_effort.as_deref(),
-                        );
-                    }
-                    (m.agent_tx.clone(), pick)
-                });
-                if pick == agent::SettingPick::Refused {
-                    return self.refuse("The Agent is working on this thread. /stop ends the turn.".into(), cx);
-                }
-                self.set_text("", cx);
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                if let (Some(tx), agent::SettingPick::SetThread { thread, value }) = (tx, pick) {
-                    tx.set_effort(thread, Some(value));
-                }
-            }
-            Run::PickMode(mode) => {
-                let (tx, pick) = self
-                    .model
-                    .update(cx, |m, _| (m.agent_tx.clone(), m.agent_state.pick_mode(&mode)));
-                if pick == agent::ModePick::Refused {
-                    return self.refuse("The Agent is working on this thread. /stop ends the turn.".into(), cx);
-                }
-                self.set_text("", cx);
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                if let (Some(tx), agent::ModePick::SetThread { thread, mode }) = (tx, pick) {
-                    tx.set_mode(thread, mode);
-                }
-            }
-            Run::PickDefaultMode(mode) => {
-                self.set_text("", cx);
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                if let Some(tx) = self.model.read(cx).agent_tx.clone() {
-                    tx.set_default_mode(mode);
-                }
-            }
-            Run::SetFreeModels(enabled) => {
-                self.set_text("", cx);
-                self.action(ThreadAction::ChooseFreeModels(enabled), window, cx);
-                return;
-            }
-            Run::SignIn => {
-                self.set_text("", cx);
-                self.action(ThreadAction::SignIn, window, cx);
-                return;
-            }
-            Run::New => {
-                self.set_text("", cx);
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.action(ThreadAction::New, window, cx);
-            }
-            Run::Threads => {
-                self.set_text("", cx);
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.action(ThreadAction::List, window, cx);
-            }
-            Run::MakeProject => {
-                self.set_text("", cx);
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.action(ThreadAction::AskMakeProject, window, cx);
-            }
-            Run::Stop => {
-                self.set_text("", cx);
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.stop_turn(cx);
-            }
-            Run::Archive => {
-                self.set_text("", cx);
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.action(ThreadAction::Archive, window, cx);
-            }
-            Run::Delete => {
-                self.set_text("", cx);
-                self.model.update(cx, |m, _| m.agent_state.error = None);
-                self.action(ThreadAction::AskDelete, window, cx);
-            }
-        }
-        sync_agent_view(&self.model, cx);
-        cx.notify();
-    }
-
-    /// Enter in the message box: the row of an open list is taken, a
-    /// command typed whole is carried out, and anything else is sent.
-    pub(crate) fn enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let state = &self.model.read(cx).agent_state;
-        if state.needs_model_choice()
-            || state.list_view
-            || self.confirm_delete
-            || self.project_form_open(cx)
-        {
-            return;
-        }
-        if let Some(menu) = self.list(cx)
-            && !menu.items.is_empty()
-        {
-            return self.take(&menu, window, cx);
-        }
-        let text = self.input.read(cx).text();
-        let resolved = slash::resolve(text.trim_end(), &self.model.read(cx).agent_state);
-        match resolved {
-            Resolve::Send => self.send(cx),
-            Resolve::Run(run) => self.run(run, window, cx),
-            Resolve::Fill(text) => self.set_text(text, cx),
-            Resolve::Refuse(why) => self.refuse(why, cx),
-        }
-    }
-
-    fn send(&mut self, cx: &mut Context<Self>) {
-        enum SendPlan {
-            Ignore,
-            NoModel,
-            Ready {
-                tx: agent::CommandSender,
-                thread: Option<String>,
-                mode: Option<String>,
-                model: Option<String>,
-                effort: Option<String>,
-            },
-        }
-        let query = self.input.read(cx).text();
-        let trimmed = query.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        let plan = self.model.update(cx, |m, _| {
-            let state = &mut m.agent_state;
-            if state.needs_model_choice() {
-                return SendPlan::Ignore;
-            }
-            if state.no_models_available() {
-                state.missing_model = Some(
-                    "No Model is available. Turn on OpenCode's free hosted Models or sign in to a provider."
-                        .into(),
-                );
-                return SendPlan::NoModel;
-            }
-            if !state.can_send() {
-                return SendPlan::Ignore;
-            }
-            let Some(tx) = m.agent_tx.clone() else {
-                return SendPlan::Ignore;
-            };
-            state.sending = true;
-            state.error = None;
-            let thread = state.thread.clone();
-            // A new thread starts with the mode, Model, and effort picked
-            // for it, or with those the person last picked.
-            let (mode, model, effort) = if thread.is_none() {
-                (
-                    state.pending_mode.clone(),
-                    state.new_thread_model(),
-                    state.new_thread_effort(),
-                )
-            } else {
-                (None, None, None)
-            };
-            SendPlan::Ready {
-                tx,
-                thread,
-                mode,
-                model,
-                effort,
-            }
-        });
-        match plan {
-            SendPlan::Ignore => {}
-            SendPlan::NoModel => {
-                sync_agent_view(&self.model, cx);
-                cx.notify();
-            }
-            SendPlan::Ready {
-                tx,
-                thread,
-                mode,
-                model,
-                effort,
-            } => {
-                let message = trimmed.to_string();
-                let key = thread.clone().unwrap_or_default();
-                self.model.update(cx, |m, _| {
-                    m.agent_submitted = Some((key, query));
-                });
-                self.dismissed = None;
-                sync_agent_view(&self.model, cx);
-                tx.send_with(thread, message, mode, model, effort);
-                cx.notify();
-            }
-        }
-    }
-
-    fn answer_request(&mut self, request: String, answer: String, cx: &mut Context<Self>) {
-        let (tx, thread) = self.model.update(cx, |m, _| {
-            (m.agent_tx.clone(), m.agent_state.begin_answer(&request, &answer))
-        });
-        if let (Some(tx), Some(thread)) = (tx, thread) {
-            log::info!("SHELL agent-request answer={answer}");
-            tx.answer(thread, request, answer);
-        }
-        sync_agent_view(&self.model, cx);
-        cx.notify();
-    }
-
-    /// Answers the request that has waited longest with the answer at
-    /// `place` among those it offers, as Alt and a digit ask.
-    fn answer_waiting(&mut self, place: usize, cx: &mut Context<Self>) -> bool {
-        let found = {
-            let form_open = self.project_form_open(cx);
-            let state = &self.model.read(cx).agent_state;
-            if state.list_view || self.confirm_delete || form_open {
-                return false;
-            }
-            state.turns.iter().find_map(|turn| {
-                turn.requests
-                    .iter()
-                    .find(|req| agent::request_view(&turn.state, req) == agent::RequestView::Waiting)
-                    .and_then(|req| req.answers.get(place).map(|a| (req.id.clone(), a.answer.clone())))
-            })
-        };
-        match found {
-            Some((request, answer)) => {
-                self.answer_request(request, answer, cx);
-                true
-            }
-            None => false,
-        }
-    }
-
-    fn stop_turn(&mut self, cx: &mut Context<Self>) {
-        let (tx, thread, turn) = {
-            let m = self.model.read(cx);
-            (
-                m.agent_tx.clone(),
-                m.agent_state.thread.clone(),
-                m.agent_state.current_turn(),
-            )
-        };
-        if let (Some(tx), Some(thread)) = (tx, thread) {
-            tx.stop_turn(thread, turn);
-        }
-    }
-
-    /// Moves the keys' row in the open list, round its ends.
-    fn step(&mut self, by: isize, cx: &mut Context<Self>) {
-        let Some(menu) = self.list(cx) else {
-            return;
-        };
-        let rows = menu.items.len() as isize;
-        if rows > 0 {
-            self.highlight = (self.highlight as isize + by).rem_euclid(rows) as usize;
-            cx.notify();
-        }
-    }
-
-    /// Moves to the provider before or after in the rail of the Models.
-    fn step_provider(&mut self, by: isize, cx: &mut Context<Self>) {
-        let Some(menu) = self.list(cx) else {
-            return;
-        };
-        let at = menu
-            .rail
-            .iter()
-            .position(|p| Some(&p.id) == menu.provider.as_ref())
-            .unwrap_or(0) as isize;
-        let rows = menu.rail.len() as isize;
-        if rows > 0 {
-            self.provider = Some(menu.rail[(at + by).rem_euclid(rows) as usize].id.clone());
-            cx.notify();
-        }
-    }
-
-    /// A request in its turn: the exact command, or the file and the
-    /// change, and one control per answer while it waits.
     fn request_card(
         &self,
         turn_state: &agent::TurnState,
@@ -1324,7 +161,10 @@ impl AgentSurface {
             "read" => "Read a file",
             _ => "Act",
         };
-        let header = match (req.subagent.as_deref(), subagent_title.filter(|s| !s.trim().is_empty())) {
+        let header = match (
+            req.subagent.as_deref(),
+            subagent_title.filter(|s| !s.trim().is_empty()),
+        ) {
             (Some(_), Some(sub)) => format!("Subagent · {sub} · {kind}"),
             (Some(_), None) => format!("Subagent · {kind}"),
             (None, _) => format!("Request · {kind}"),
@@ -1441,7 +281,6 @@ impl AgentSurface {
                                 .text_color(rgb(p.text))
                         })
                         .child(choice.label())
-                        // The keys that answer the request that has waited longest.
                         .when(hinted && i < 9, |b| {
                             b.child(
                                 div()
@@ -1454,7 +293,14 @@ impl AgentSurface {
                         })
                         .child(tracked(&self.frame, id, true))
                         .on_click(cx.listener(move |this, _, w, cx| {
-                            this.answer_request(request.clone(), answer.clone(), cx);
+                            this.dispatch_intent(
+                                AgentIntent::AnswerRequest {
+                                    request: request.clone(),
+                                    answer: answer.clone(),
+                                },
+                                w,
+                                cx,
+                            );
                             w.focus(&this.input.focus_handle(cx));
                         })),
                 );
@@ -1464,17 +310,26 @@ impl AgentSurface {
         card
     }
 
-    /// One act of a turn, as a line: what kind it is, what it was, and how
-    /// it stands. A click shows what it gave.
-    fn act_row(&self, turn_state: &agent::TurnState, act: &agent::Act, p: Palette, cx: &mut Context<Self>) -> Div {
+    fn act_row(
+        &self,
+        controller: &AgentRenderSnapshot,
+        turn_state: &agent::TurnState,
+        act: &agent::Act,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let display = agent::act_display_status(turn_state, act);
         let state_color = match display.tone {
             agent::ActTone::Active => p.focus,
             agent::ActTone::Failed => p.text,
             agent::ActTone::Muted => p.muted,
         };
-        let detail = act.detail.as_deref().map(str::trim).filter(|d| !d.is_empty());
-        let open = self.expanded_acts.contains(&act.id);
+        let detail = act
+            .detail
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty());
+        let open = controller.expanded_acts.contains(&act.id);
         let id = format!("act:{}", act.id);
         let toggle = ThreadAction::Act(act.id.clone());
         let mut row = div().w_full().flex().flex_col().gap(px(3.)).child(
@@ -1523,11 +378,9 @@ impl AgentSurface {
                 ),
         );
         if let (Some(detail), true) = (detail, open) {
-            // What an act gave can be long: its first lines show, and the
-            // rest when asked for.
             let first = agent::format_act_detail(detail);
             let long = first != detail;
-            let whole = self.whole_acts.contains(&act.id);
+            let whole = controller.whole_acts.contains(&act.id);
             row = row.child(
                 div()
                     .w_full()
@@ -1543,7 +396,11 @@ impl AgentSurface {
             );
             if long {
                 row = row.child(self.toggle(
-                    if whole { "All of it".into() } else { "Show all of it".into() },
+                    if whole {
+                        "All of it".into()
+                    } else {
+                        "Show all of it".into()
+                    },
                     whole,
                     ThreadAction::ActWhole(act.id.clone()),
                     p.muted,
@@ -1555,17 +412,15 @@ impl AgentSurface {
         row
     }
 
-    /// One subagent of a turn: a line the person clicks to open its prompt,
-    /// acts, and messages. Requests it makes stay in the thread so they are
-    /// always visible and answerable.
     fn subagent_section(
         &self,
+        controller: &AgentRenderSnapshot,
         turn: &agent::Turn,
         sub: &agent::Subagent,
         p: Palette,
         cx: &mut Context<Self>,
     ) -> Div {
-        let open = self.expanded_subagents.contains(&sub.id);
+        let open = controller.expanded_subagents.contains(&sub.id);
         let control = format!("subagent:{}", sub.id);
         let action = ThreadAction::Subagent(sub.id.clone());
         let has_waiting = turn.requests.iter().any(|r| {
@@ -1706,13 +561,20 @@ impl AgentSurface {
             if !sub.acts.is_empty() {
                 let mut acts_col = div().w_full().flex().flex_col().gap(px(3.));
                 for act in &sub.acts {
-                    acts_col = acts_col.child(self.act_row(&sub_turn_state, act, p, cx));
+                    acts_col =
+                        acts_col.child(self.act_row(controller, &sub_turn_state, act, p, cx));
                 }
                 inner = inner.child(acts_col);
             }
-            for (idx, msg) in sub.messages.iter().filter(|m| m.role != "prompt").enumerate() {
+            for (idx, msg) in sub
+                .messages
+                .iter()
+                .filter(|m| m.role != "prompt")
+                .enumerate()
+            {
                 if !msg.text.trim().is_empty() {
-                    inner = inner.child(answer_blocks(&format!("sub-{}-{idx}", sub.id), &msg.text, p));
+                    inner =
+                        inner.child(answer_blocks(&format!("sub-{}-{idx}", sub.id), &msg.text, p));
                 }
             }
             if let agent::SubagentState::Failed(err) = &sub.state {
@@ -1750,11 +612,19 @@ impl AgentSurface {
         section
     }
 
-    /// The list above the message box: the commands, or the choices of one.
-    fn list_panel(&self, menu: &Menu, p: Palette, cx: &mut Context<Self>) -> Div {
-        let highlight = self.highlight.min(menu.items.len().saturating_sub(1));
-        // A long list shows the rows around the one the keys are on.
-        let first = highlight.saturating_sub(LIST_ROWS - 1).min(menu.items.len().saturating_sub(LIST_ROWS));
+    fn list_panel(
+        &self,
+        controller: &AgentRenderSnapshot,
+        menu: &Menu,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let highlight = controller
+            .highlight
+            .min(menu.items.len().saturating_sub(1));
+        let first = highlight
+            .saturating_sub(LIST_ROWS - 1)
+            .min(menu.items.len().saturating_sub(LIST_ROWS));
         let commands = menu.kind == MenuKind::Commands;
         let mut rows = div().flex_1().min_w_0().flex().flex_col();
         for (at, item) in menu.items.iter().enumerate().skip(first).take(LIST_ROWS) {
@@ -1779,7 +649,9 @@ impl AgentSurface {
                     .child(
                         div()
                             .flex_none()
-                            .when(commands, |d| d.font_family("IBM Plex Mono").text_size(px(11.5)))
+                            .when(commands, |d| {
+                                d.font_family("IBM Plex Mono").text_size(px(11.5))
+                            })
                             .when(!commands, |d| d.text_size(px(12.5)))
                             .text_color(rgb(p.text))
                             .child(item.label.clone()),
@@ -1794,7 +666,9 @@ impl AgentSurface {
                             .child(item.refusal.clone().unwrap_or_else(|| item.detail.clone())),
                     )
                     .when_some(
-                        item.tag.clone().or_else(|| item.current.then(|| "Current".to_string())),
+                        item.tag
+                            .clone()
+                            .or_else(|| item.current.then(|| "Current".to_string())),
                         |r, tag| {
                             r.child(
                                 div()
@@ -1807,18 +681,11 @@ impl AgentSurface {
                         },
                     )
                     .child(tracked(&self.frame, item.id.clone(), false))
-                    .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                        if this.highlight != at {
-                            this.highlight = at;
-                            cx.notify();
-                        }
+                    .on_mouse_move(cx.listener(move |this, _, w, cx| {
+                        this.dispatch_intent(AgentIntent::HoverMenuRow(at), w, cx);
                     }))
                     .on_click(cx.listener(move |this, _, w, cx| {
-                        this.highlight = at;
-                        if let Some(menu) = this.list(cx) {
-                            this.take(&menu, w, cx);
-                        }
-                        w.focus(&this.input.focus_handle(cx));
+                        this.dispatch_intent(AgentIntent::ClickMenuRow(at), w, cx);
                     })),
             );
         }
@@ -1875,13 +742,18 @@ impl AgentSurface {
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(rgb(p.text))
                         })
-                        .when(!on, |r| r.text_color(rgb(p.muted)).hover(move |s| s.text_color(rgb(p.text))))
+                        .when(!on, |r| {
+                            r.text_color(rgb(p.muted))
+                                .hover(move |s| s.text_color(rgb(p.text)))
+                        })
                         .child(div().w_full().text_ellipsis().child(provider.name.clone()))
                         .child(tracked(&self.frame, id, false))
                         .on_click(cx.listener(move |this, _, w, cx| {
-                            this.provider = Some(pick.clone());
-                            w.focus(&this.input.focus_handle(cx));
-                            cx.notify();
+                            this.dispatch_intent(
+                                AgentIntent::SelectProvider(pick.clone()),
+                                w,
+                                cx,
+                            );
                         })),
                 );
             }
@@ -1894,7 +766,7 @@ impl AgentSurface {
             (_, false) => "↑↓ move   ←→ provider   Enter pick   Esc close",
             _ => "↑↓ move   Enter pick   Esc close",
         };
-        let free_on = self.model.read(cx).agent_state.free_hosted_models;
+        let free_on = controller.state.free_hosted_models;
         div()
             .w_full()
             .p(px(6.))
@@ -1947,8 +819,7 @@ impl AgentSurface {
                                 .child("Sign in")
                                 .child(tracked(&self.frame, "sign-in".into(), false))
                                 .on_click(cx.listener(|this, _, w, cx| {
-                                    this.set_text("", cx);
-                                    this.action(ThreadAction::SignIn, w, cx);
+                                    this.dispatch_intent(AgentIntent::ModelPickerSignIn, w, cx);
                                 })),
                         )
                         .child(
@@ -1972,8 +843,11 @@ impl AgentSurface {
                                 })
                                 .child(tracked(&self.frame, "toggle-free-models".into(), false))
                                 .on_click(cx.listener(move |this, _, w, cx| {
-                                    this.set_text("", cx);
-                                    this.action(ThreadAction::ChooseFreeModels(next_free), w, cx);
+                                    this.dispatch_intent(
+                                        AgentIntent::ModelPickerFreeModels(next_free),
+                                        w,
+                                        cx,
+                                    );
                                 })),
                         ),
                 )
@@ -1989,7 +863,6 @@ impl AgentSurface {
             )
     }
 
-    /// What the thread works with, in one quiet line under the message box.
     fn status_line(&self, state: &agent::AgentState, p: Palette) -> Div {
         let model = state.shown_model();
         let mut parts: Vec<String> = Vec::new();
@@ -2002,7 +875,6 @@ impl AgentSurface {
                 Some(model) => parts.push(state.model_label(model)),
                 None => parts.extend(state.harnesses.first().cloned()),
             }
-            // The effort a harness calls its default goes without saying.
             if let Some(effort) = state.shown_effort().filter(|effort| effort != "default") {
                 parts.push(state.effort_label(model.as_deref(), &effort));
             }
@@ -2029,7 +901,6 @@ impl AgentSurface {
     }
 }
 
-/// A line of an answer, with each part in its look.
 fn styled(id: String, line: &markdown::Line, p: Palette, weight: FontWeight) -> AnyElement {
     if line.text.is_empty() {
         return div().into_any_element();
@@ -2050,8 +921,6 @@ fn styled(id: String, line: &markdown::Line, p: Palette, weight: FontWeight) -> 
                 strikethrough: None,
             };
         };
-        // Manrope comes in three weights and no slant, so words that are
-        // emphasised are a weight heavier.
         let face = if look.code {
             font("IBM Plex Mono")
         } else if look.strong {
@@ -2094,8 +963,6 @@ fn styled(id: String, line: &markdown::Line, p: Palette, weight: FontWeight) -> 
         display.push_str(chunk);
         runs.push(run(chunk.len(), Some(&span.look)));
         if let Some(url) = &span.look.link {
-            // Show the destination beside a titled link so the person sees
-            // where it goes; clicking copies the URL to the clipboard.
             if chunk != url.as_str() {
                 let suffix = format!(" ({url})");
                 display.push_str(&suffix);
@@ -2132,7 +999,6 @@ fn styled(id: String, line: &markdown::Line, p: Palette, weight: FontWeight) -> 
     }
 }
 
-/// A message of the person's, set to the right.
 fn message_bubble(text: String, p: Palette) -> Div {
     div().w_full().flex().justify_end().child(
         div()
@@ -2150,7 +1016,6 @@ fn message_bubble(text: String, p: Palette) -> Div {
     )
 }
 
-/// An answer, laid out as the Markdown it is.
 fn answer(turn: u64, text: &str, p: Palette) -> Div {
     answer_blocks(&format!("md-{turn}"), text, p)
 }
@@ -2167,7 +1032,9 @@ fn answer_blocks(prefix: &str, text: &str, p: Palette) -> Div {
     for (block_ix, block) in markdown::blocks(text).into_iter().enumerate() {
         let id = format!("{prefix}-{block_ix}");
         out = out.child(match block {
-            markdown::Block::Paragraph(line) => div().w_full().child(styled(id, &line, p, FontWeight::NORMAL)),
+            markdown::Block::Paragraph(line) => {
+                div().w_full().child(styled(id, &line, p, FontWeight::NORMAL))
+            }
             markdown::Block::Heading { level, line } => {
                 let (size, weight) = match level {
                     1 => (16., FontWeight::BOLD),
@@ -2192,7 +1059,11 @@ fn answer_blocks(prefix: &str, text: &str, p: Palette) -> Div {
                 .font_family("IBM Plex Mono")
                 .text_size(px(11.5))
                 .line_height(px(17.))
-                .child(if text.is_empty() { " ".to_string() } else { text }),
+                .child(if text.is_empty() {
+                    " ".to_string()
+                } else {
+                    text
+                }),
             markdown::Block::List(items) => {
                 let mut list = div().w_full().flex().flex_col().gap(px(3.));
                 for (item_ix, item) in items.into_iter().enumerate() {
@@ -2212,10 +1083,12 @@ fn answer_blocks(prefix: &str, text: &str, p: Palette) -> Div {
                                     .child(item.marker),
                             )
                             .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(styled(item_id, &item.line, p, FontWeight::NORMAL)),
+                                div().flex_1().min_w_0().child(styled(
+                                    item_id,
+                                    &item.line,
+                                    p,
+                                    FontWeight::NORMAL,
+                                )),
                             ),
                     );
                 }
@@ -2257,123 +1130,23 @@ impl Render for AgentSurface {
             });
         }
         *self.frame.borrow_mut() = ControlFrame::default();
-        let m = self.model.read(cx);
-        let p = m.palette();
-        let mark = ImageSource::Resource(Resource::Embedded(bar_mark_asset(&m.preferences).into()));
-        let state = m.agent_state.clone();
-        let agent_view = m.agent_view.clone();
-        let tx = m.agent_tx.clone();
+        let (p, mark_asset, controller, agent_view) = {
+            let m = self.model.read(cx);
+            (
+                m.palette(),
+                chrome::bar_mark_asset(&m.preferences),
+                m.agent.render_snapshot(),
+                m.agent_view.clone(),
+            )
+        };
+        let mark = ImageSource::Resource(Resource::Embedded(mark_asset.into()));
+        let state = &controller.state;
         let show_stop = state.can_stop();
         let needs_choice = state.needs_model_choice();
-        if self.was_choosing && !needs_choice {
-            self.was_choosing = false;
-            if !state.list_view {
-                window.focus(&self.input.focus_handle(cx));
-            }
-        } else if !self.was_choosing && needs_choice {
-            self.was_choosing = true;
-            window.focus(&self.focus);
-        }
-        let draft = self.input.read(cx).text();
+        let draft = controller.draft.clone();
         let now = agent::unix_now();
-
-        // The Model just picked is at hand, and Lever has said its effort
-        // levels: they are offered next, in the message box that is empty.
-        if let Some(model) = self.effort_after.clone() {
-            if state.error.is_some() {
-                self.effort_after = None;
-            } else if state.shown_model().as_deref() == Some(model.as_str())
-                && let Some(levels) = state.efforts.get(&model)
-            {
-                self.effort_after = None;
-                if !levels.is_empty() && draft.is_empty() && !state.mode_locked() {
-                    self.set_text("/effort ", cx);
-                }
-            }
-        }
-        // Reset cached fetch guards whenever Lever connects, disconnects, or
-        // changes free hosted Models / harness availability (not on errors,
-        // which recover when a menu closes and reopens).
-        if self.seen_catalog_epoch != state.catalog_epoch {
-            self.seen_catalog_epoch = state.catalog_epoch;
-            self.asked_offer = false;
-            self.asked_efforts.clear();
-            self.asked_commands = None;
-        }
-        let draft = self.input.read(cx).text();
         let can_send = state.can_send() && !draft.trim().is_empty();
-        let menu = self.list(cx);
-        let menu_kind = menu.as_ref().map(|m| m.kind);
-        if self.last_menu_kind != menu_kind {
-            if self.last_menu_kind == Some(MenuKind::Models) {
-                self.provider = None;
-            }
-            if should_reset_offer_on_menu_close(self.last_menu_kind, &state) {
-                self.asked_offer = false;
-            }
-            if self.last_menu_kind == Some(MenuKind::Efforts) {
-                self.asked_efforts.retain(|m| state.efforts.contains_key(m));
-            }
-            if self.last_menu_kind == Some(MenuKind::Commands) && state.harness_commands().is_empty() {
-                self.asked_commands = None;
-            }
-            self.last_menu_kind = menu_kind;
-        }
-        // The list starts on the choice the thread is at each time it is a
-        // list of something else, or once its choices arrive from Lever.
-        let list_for = menu
-            .as_ref()
-            .map(|menu| list_for_key(menu, &draft))
-            .unwrap_or_default();
-        if list_for != self.list_for {
-            self.highlight = menu.as_ref().map(Menu::start).unwrap_or(0);
-            self.list_for = list_for;
-        }
-        // A harness that is running says what it offers without being
-        // started for it, so the thread's Model shows by its name.
-        if let Some(tx) = &tx
-            && !self.asked_offer
-            && state.connected
-            && state.harness_started
-            && !state.offer_known
-        {
-            self.asked_offer = true;
-            if self.model.update(cx, |m, _| m.agent_state.ask_offer()) {
-                tx.fetch_modes();
-            }
-        }
-        // What the open list needs of Lever is asked for once.
-        if let (Some(menu), Some(tx)) = (&menu, &tx) {
-            match &menu.wants {
-                Some(Wants::Offer) if !self.asked_offer => {
-                    self.asked_offer = true;
-                    if self.model.update(cx, |m, _| m.agent_state.ask_offer()) {
-                        tx.fetch_modes();
-                    }
-                }
-                Some(Wants::Efforts(model)) if self.asked_efforts.insert(model.clone()) => {
-                    tx.fetch_efforts(model.clone());
-                }
-                _ => {}
-            }
-            if menu.kind == MenuKind::Commands
-                && state.connected
-                && !state.no_harness
-                && self.asked_commands.as_ref() != Some(&state.thread)
-            {
-                self.asked_commands = Some(state.thread.clone());
-                tx.fetch_commands(state.thread.clone());
-            }
-        }
-        let list_open = menu.is_some();
-        let rail_open = menu.as_ref().is_some_and(|menu| !menu.rail.is_empty());
-        self.input.update(cx, |input, _| {
-            input.palette = p;
-            input.list_open = list_open;
-            input.rail_open = rail_open;
-        });
-        self.project_name_input.update(cx, |input, _| input.palette = p);
-        self.project_folder_input.update(cx, |input, _| input.palette = p);
+        let menu = controller.menu.as_ref();
 
         let header_sub = if !state.configured || !state.connected {
             "Offline".into()
@@ -2399,8 +1172,8 @@ impl Render for AgentSurface {
             .gap(px(18.))
             .bg(rgb(p.canvas));
 
-        let showing_project_form = self.making_project && state.thread.is_some() && !state.list_view;
-        if self.confirm_delete {
+        let showing_project_form = controller.project_form_open;
+        if controller.confirm_delete {
             body = body
                 .child(
                     div()
@@ -2415,7 +1188,14 @@ impl Render for AgentSurface {
                     div()
                         .flex()
                         .gap(px(8.))
-                        .child(self.button("cancel-thread-delete", "Cancel", ThreadAction::CancelDelete, true, p, cx))
+                        .child(self.button(
+                            "cancel-thread-delete",
+                            "Cancel",
+                            ThreadAction::CancelDelete,
+                            true,
+                            p,
+                            cx,
+                        ))
                         .child(self.button(
                             "confirm-thread-delete",
                             "Delete thread",
@@ -2426,14 +1206,13 @@ impl Render for AgentSurface {
                         )),
                 );
         } else if showing_project_form {
-            let name_text = self.project_name_input.read(cx).query();
-            let folder_text = self.project_folder_input.read(cx).query();
+            let proj = &controller.project;
             let can_confirm = state.connected
                 && !state.loading
                 && !state.mode_locked()
-                && validate_project_form(&name_text, &folder_text, self.project_place.as_deref()).is_ok();
-            let known_home = self.project_browse_home.as_deref();
-            let places = place_suggestions(&state, known_home);
+                && validate_project_form(&proj.name, &proj.folder, proj.place.as_deref()).is_ok();
+            let known_home = proj.browse_home.as_deref();
+            let places = place_suggestions(state, known_home);
             let mut place_row = div().flex().flex_wrap().gap(px(6.));
             for place in places {
                 let id = SharedString::from(format!("project-place-btn-{}", place.value));
@@ -2511,7 +1290,7 @@ impl Render for AgentSurface {
                                 )
                                 .child(self.button(
                                     "toggle-project-browse",
-                                    if self.project_browse_open {
+                                    if proj.browse_open {
                                         "Hide folders"
                                     } else {
                                         "Choose folder…"
@@ -2537,7 +1316,7 @@ impl Render for AgentSurface {
                         )
                         .child(place_row),
                 );
-            if self.project_browse_open {
+            if proj.browse_open {
                 let mut picker = div()
                     .w_full()
                     .p(px(10.))
@@ -2548,7 +1327,7 @@ impl Render for AgentSurface {
                     .flex()
                     .flex_col()
                     .gap(px(6.));
-                if let Some(browse_dir) = self.project_browse_dir.clone() {
+                if let Some(browse_dir) = proj.browse_dir.clone() {
                     let shown_dir = display_folder_path(&browse_dir, known_home);
                     picker = picker.child(
                         div()
@@ -2566,7 +1345,7 @@ impl Render for AgentSurface {
                         p,
                         cx,
                     ));
-                    let trimmed_name = name_text.trim();
+                    let trimmed_name = proj.name.trim();
                     let with_name_label = if trimmed_name.is_empty() {
                         format!("Put project in {shown_dir}")
                     } else {
@@ -2581,7 +1360,7 @@ impl Render for AgentSurface {
                         cx,
                     ));
                     picker = picker.child(use_row);
-                    if let Some(parent) = self.project_browse_parent.clone() {
+                    if let Some(parent) = proj.browse_parent.clone() {
                         picker = picker.child(
                             self.button(
                                 "project-dir-parent",
@@ -2594,7 +1373,7 @@ impl Render for AgentSurface {
                             .w_full(),
                         );
                     }
-                    for (ix, entry) in self.project_browse_entries.iter().enumerate() {
+                    for (ix, entry) in proj.browse_entries.iter().enumerate() {
                         picker = picker.child(
                             self.button(
                                 SharedString::from(format!("project-dir-entry-{ix}")),
@@ -2607,7 +1386,7 @@ impl Render for AgentSurface {
                             .w_full(),
                         );
                     }
-                } else if self.project_browse_loading {
+                } else if proj.browse_loading {
                     picker = picker.child(
                         div()
                             .text_size(px(11.5))
@@ -2617,7 +1396,7 @@ impl Render for AgentSurface {
                 }
                 body = body.child(picker);
             }
-            if let Some(err) = self.project_error.clone().or_else(|| state.error.clone()) {
+            if let Some(err) = proj.error.clone().or_else(|| state.error.clone()) {
                 body = body.child(
                     div()
                         .text_size(px(11.5))
@@ -2641,7 +1420,11 @@ impl Render for AgentSurface {
                     .child(
                         self.button(
                             "confirm-make-project-btn",
-                            if state.loading { "Making project…" } else { "Make project" },
+                            if state.loading {
+                                "Making project…"
+                            } else {
+                                "Make project"
+                            },
                             ThreadAction::ConfirmMakeProject,
                             can_confirm,
                             p,
@@ -2676,9 +1459,7 @@ impl Render for AgentSurface {
                                 .text_size(px(12.))
                                 .line_height(px(18.))
                                 .text_color(rgb(p.muted))
-                                .child(
-                                    "Nothing leaves your machine until you choose. You can change this later from the drawer.",
-                                ),
+                                .child("Nothing leaves your machine until you choose. You can change this later from the drawer."),
                         ),
                 )
                 .child(
@@ -2704,9 +1485,7 @@ impl Render for AgentSurface {
                                 .text_size(px(12.))
                                 .line_height(px(17.))
                                 .text_color(rgb(p.muted))
-                                .child(
-                                    "Start right away with no account. Requests go to OpenCode's makers.",
-                                ),
+                                .child("Start right away with no account. Requests go to OpenCode's makers."),
                         )
                         .child(
                             div().pt(px(2.)).flex().child(
@@ -2748,9 +1527,7 @@ impl Render for AgentSurface {
                                 .text_size(px(12.))
                                 .line_height(px(17.))
                                 .text_color(rgb(p.muted))
-                                .child(
-                                    "Opens OpenCode's sign-in in a terminal. CrowbarOS keeps no credentials.",
-                                ),
+                                .child("Opens OpenCode's sign-in in a terminal. CrowbarOS keeps no credentials."),
                         )
                         .child(
                             div().pt(px(2.)).flex().child(self.button(
@@ -2769,9 +1546,7 @@ impl Render for AgentSurface {
                             .text_size(px(11.5))
                             .line_height(px(17.))
                             .text_color(rgb(p.focus))
-                            .child(
-                                "Sign-in opened in a terminal. New Models will appear here as soon as it ends.",
-                            ),
+                            .child("Sign-in opened in a terminal. New Models will appear here as soon as it ends."),
                     )
                 })
                 .when_some(state.modes_error.clone(), |b, err| {
@@ -2810,7 +1585,14 @@ impl Render for AgentSurface {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Threads"),
                     )
-                    .child(self.button("new-agent-thread", "New thread", ThreadAction::New, free, p, cx)),
+                    .child(self.button(
+                        "new-agent-thread",
+                        "New thread",
+                        ThreadAction::New,
+                        free,
+                        p,
+                        cx,
+                    )),
             );
             let groups = state.groups();
             if groups.is_empty() {
@@ -2889,7 +1671,6 @@ impl Render for AgentSurface {
         } else if state.loading && state.turns.is_empty() {
             body = body.child(div().text_color(rgb(p.muted)).child("Opening thread…"));
         } else if !state.turns.is_empty() {
-            // Alt and a digit answer the request that has waited longest.
             let first_waiting = state.turns.iter().find_map(|turn| {
                 turn.requests
                     .iter()
@@ -2900,8 +1681,6 @@ impl Render for AgentSurface {
                 let working = matches!(turn.state, agent::TurnState::Working);
                 let mut turn_col = div().flex().flex_col().gap(px(8.));
                 if turn.from_harness {
-                    // A turn the harness began itself has no message: a quiet
-                    // line says why it goes on.
                     turn_col = turn_col.child(
                         div()
                             .w_full()
@@ -2912,10 +1691,10 @@ impl Render for AgentSurface {
                 } else {
                     turn_col = turn_col.child(message_bubble(turn.message.clone(), p));
                 }
-                // The desktop context carried with the message.
                 match &turn.context {
                     Some(ctx) => {
-                        let open = turn_index == 0 || self.expanded_context.contains(&turn.turn);
+                        let open =
+                            turn_index == 0 || controller.expanded_context.contains(&turn.turn);
                         let mut ctx_box = div().w_full().flex().flex_col().gap(px(2.));
                         if turn_index == 0 {
                             ctx_box = ctx_box.child(
@@ -2957,7 +1736,6 @@ impl Render for AgentSurface {
                         }
                         turn_col = turn_col.child(ctx_box);
                     }
-                    // A turn the harness began carries no message, and so no context.
                     None if turn.from_harness => {}
                     None => {
                         turn_col = turn_col.child(
@@ -2968,8 +1746,6 @@ impl Render for AgentSurface {
                         );
                     }
                 }
-                // The turn's acts: each as it happens while the turn works,
-                // and folded into one line once it has ended.
                 let elapsed = turn.elapsed(now).map(|seconds| match seconds {
                     0 if !working => "under a second".to_string(),
                     seconds => agent::format_elapsed(seconds),
@@ -2997,20 +1773,24 @@ impl Render for AgentSurface {
                     );
                 } else if let Some(acts) = &acts {
                     let label = match (&turn.state, &elapsed) {
-                        (agent::TurnState::Stopped, Some(elapsed)) => format!("Stopped after {elapsed}  ·  {acts}"),
+                        (agent::TurnState::Stopped, Some(elapsed)) => {
+                            format!("Stopped after {elapsed}  ·  {acts}")
+                        }
                         (_, Some(elapsed)) => format!("Worked for {elapsed}  ·  {acts}"),
                         (_, None) => acts.clone(),
                     };
                     turn_col = turn_col.child(self.toggle(
                         label,
-                        self.opened_turns.contains(&turn.turn),
+                        controller.opened_turns.contains(&turn.turn),
                         ThreadAction::Acts(turn.turn),
                         p.muted,
                         p,
                         cx,
                     ));
                 }
-                if !turn.acts.is_empty() && (working || self.opened_turns.contains(&turn.turn)) {
+                if !turn.acts.is_empty()
+                    && (working || controller.opened_turns.contains(&turn.turn))
+                {
                     let mut list = div()
                         .w_full()
                         .pl(px(10.))
@@ -3020,11 +1800,10 @@ impl Render for AgentSurface {
                         .flex_col()
                         .gap(px(3.));
                     for act in &turn.acts {
-                        list = list.child(self.act_row(&turn.state, act, p, cx));
+                        list = list.child(self.act_row(&controller, &turn.state, act, p, cx));
                     }
                     turn_col = turn_col.child(list);
                 }
-                // Subagents launched during this turn, each collapsible.
                 let subagent_working = turn.subagents.iter().any(|s| s.state.is_working());
                 if !working && subagent_working {
                     turn_col = turn_col.child(
@@ -3040,9 +1819,9 @@ impl Render for AgentSurface {
                     );
                 }
                 for sub in &turn.subagents {
-                    turn_col = turn_col.child(self.subagent_section(turn, sub, p, cx));
+                    turn_col =
+                        turn_col.child(self.subagent_section(&controller, turn, sub, p, cx));
                 }
-                // The requests the harness (or a subagent) made in this turn.
                 for req in &turn.requests {
                     let hinted = first_waiting.as_deref() == Some(req.id.as_str());
                     let sub_title = req.subagent.as_deref().and_then(|sid| {
@@ -3051,9 +1830,9 @@ impl Render for AgentSurface {
                             .find(|s| s.id == sid)
                             .map(|s| s.title.as_str())
                     });
-                    turn_col = turn_col.child(self.request_card(&turn.state, req, sub_title, hinted, p, cx));
+                    turn_col =
+                        turn_col.child(self.request_card(&turn.state, req, sub_title, hinted, p, cx));
                 }
-                // The notes recorded on this turn.
                 for note in &turn.notes {
                     turn_col = turn_col.child(
                         div()
@@ -3068,9 +1847,6 @@ impl Render for AgentSurface {
                             .child(note.text.clone()),
                     );
                 }
-                // The answer, with each message the harness took into the
-                // turn where it took it, and how the turn ended when it did
-                // not end done.
                 for (part_ix, part) in turn.answer_parts().into_iter().enumerate() {
                     turn_col = turn_col.child(match part {
                         agent::AnswerPart::Text(text) if part_ix == 0 => answer(turn.turn, text, p),
@@ -3086,7 +1862,12 @@ impl Render for AgentSurface {
                     _ => None,
                 };
                 if let Some(ended) = ended {
-                    turn_col = turn_col.child(div().text_size(px(11.5)).text_color(rgb(p.muted)).child(ended));
+                    turn_col = turn_col.child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(rgb(p.muted))
+                            .child(ended),
+                    );
                 }
                 if let agent::TurnState::Failed(err) = &turn.state {
                     turn_col = turn_col.child(
@@ -3103,8 +1884,6 @@ impl Render for AgentSurface {
                             .child(err.clone()),
                     );
                 }
-                // Messages that wait behind the turn, each with a way to take
-                // it back, and those a Stop dropped.
                 for queued in &turn.queued {
                     let waits = queued.state == "queued";
                     let mut row = div()
@@ -3119,7 +1898,11 @@ impl Render for AgentSurface {
                             div()
                                 .text_size(px(10.5))
                                 .text_color(rgb(p.muted))
-                                .child(if waits { "Waiting for the turn to end" } else { "Not sent: the turn was stopped" }),
+                                .child(if waits {
+                                    "Waiting for the turn to end"
+                                } else {
+                                    "Not sent: the turn was stopped"
+                                }),
                         );
                     if waits {
                         row = row.child(self.button(
@@ -3163,7 +1946,12 @@ impl Render for AgentSurface {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(title))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
                     .child(
                         div()
                             .text_size(px(12.))
@@ -3199,8 +1987,8 @@ impl Render for AgentSurface {
             );
         }
 
-        let in_thread = !needs_choice && !state.list_view && !self.confirm_delete && !showing_project_form;
-        // Scrolled up from a thread's newest line: a way back to it.
+        let in_thread =
+            !needs_choice && !state.list_view && !controller.confirm_delete && !showing_project_form;
         let show_newest = in_thread && !state.turns.is_empty() && !self.near_bottom();
         let error = if showing_project_form {
             None
@@ -3226,34 +2014,38 @@ impl Render for AgentSurface {
             .track_focus(&self.focus)
             .on_action(cx.listener(|_, _: &Next, w, _| w.focus_next()))
             .on_action(cx.listener(|_, _: &Previous, w, _| w.focus_prev()))
-            // The keys the message box passes on while a list is open.
-            .on_action(cx.listener(|this, _: &composer::Up, _, cx| this.step(-1, cx)))
-            .on_action(cx.listener(|this, _: &composer::Down, _, cx| this.step(1, cx)))
-            .on_action(cx.listener(|this, _: &composer::Left, _, cx| this.step_provider(-1, cx)))
-            .on_action(cx.listener(|this, _: &composer::Right, _, cx| this.step_provider(1, cx)))
+            .on_action(cx.listener(|this, _: &composer::Up, w, cx| {
+                this.dispatch_intent(AgentIntent::StepMenu(-1), w, cx);
+            }))
+            .on_action(cx.listener(|this, _: &composer::Down, w, cx| {
+                this.dispatch_intent(AgentIntent::StepMenu(1), w, cx);
+            }))
+            .on_action(cx.listener(|this, _: &composer::Left, w, cx| {
+                this.dispatch_intent(AgentIntent::StepProvider(-1), w, cx);
+            }))
+            .on_action(cx.listener(|this, _: &composer::Right, w, cx| {
+                this.dispatch_intent(AgentIntent::StepProvider(1), w, cx);
+            }))
             .on_action(cx.listener(|this, _: &composer::Take, w, cx| {
-                if let Some(menu) = this.list(cx) {
-                    this.take(&menu, w, cx);
-                }
+                this.dispatch_intent(AgentIntent::TakeMenuRow, w, cx);
             }))
             .on_action(cx.listener(|this, _: &composer::Dismiss, w, cx| {
-                if this.confirm_delete {
-                    this.action(ThreadAction::CancelDelete, w, cx);
-                } else if this.project_form_open(cx) {
-                    this.action(ThreadAction::CancelMakeProject, w, cx);
-                } else if this.list(cx).is_some() {
-                    // Escape closes the list and keeps what was typed.
-                    this.dismissed = Some(this.input.read(cx).text());
-                    cx.notify();
-                }
+                this.dispatch_intent(AgentIntent::Dismiss, w, cx);
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, w, cx| {
                 let key = event.keystroke.key.as_str();
-                let needs_choice = this.model.read(cx).agent_state.needs_model_choice();
+                let (needs_choice, form_open, list_view, confirm_delete) = {
+                    let a = &this.model.read(cx).agent;
+                    (
+                        a.state().needs_model_choice(),
+                        a.project_form_open(),
+                        a.state().list_view,
+                        a.confirm_delete(),
+                    )
+                };
                 if needs_choice {
                     return;
                 }
-                let form_open = this.project_form_open(cx);
                 if form_open {
                     if key == "escape" {
                         cx.stop_propagation();
@@ -3262,16 +2054,28 @@ impl Render for AgentSurface {
                     }
                     let in_project_input = this.project_name_input.focus_handle(cx).is_focused(w)
                         || this.project_folder_input.focus_handle(cx).is_focused(w);
-                    if key == "enter" && should_take_composer_enter(event.is_held, &event.keystroke.modifiers, in_project_input) {
+                    if key == "enter"
+                        && should_take_composer_enter(
+                            event.is_held,
+                            &event.keystroke.modifiers,
+                            in_project_input,
+                        )
+                    {
                         cx.stop_propagation();
                         this.action(ThreadAction::ConfirmMakeProject, w, cx);
                         return;
                     }
                 }
-                if key == "enter" && should_take_composer_enter(false, &event.keystroke.modifiers, this.input.focus_handle(cx).is_focused(w)) {
+                if key == "enter"
+                    && should_take_composer_enter(
+                        false,
+                        &event.keystroke.modifiers,
+                        this.input.focus_handle(cx).is_focused(w),
+                    )
+                {
                     cx.stop_propagation();
                     if should_take_composer_enter(event.is_held, &event.keystroke.modifiers, true) {
-                        this.enter(w, cx);
+                        this.dispatch_intent(AgentIntent::Enter, w, cx);
                     }
                 } else if event.keystroke.modifiers.control {
                     match key {
@@ -3286,15 +2090,24 @@ impl Render for AgentSurface {
                         _ => {}
                     }
                 } else if event.keystroke.modifiers.alt
-                    && let Some(digit) = key.chars().next().and_then(|c| c.to_digit(10)).filter(|d| *d >= 1)
+                    && let Some(digit) = key
+                        .chars()
+                        .next()
+                        .and_then(|c| c.to_digit(10))
+                        .filter(|d| *d >= 1)
                 {
-                    let list_view = this.model.read(cx).agent_state.list_view;
-                    if should_answer_with_alt_digit(event.is_held, list_view, this.confirm_delete || form_open)
-                        && this.answer_waiting(digit as usize - 1, cx)
-                    {
+                    if should_answer_with_alt_digit(
+                        event.is_held,
+                        list_view,
+                        confirm_delete || form_open,
+                    ) && this.dispatch_intent(
+                        AgentIntent::AnswerWaiting(digit as usize - 1),
+                        w,
+                        cx,
+                    ) {
                         cx.stop_propagation();
                     }
-                } else if key == "escape" && this.confirm_delete {
+                } else if key == "escape" && confirm_delete {
                     this.action(ThreadAction::CancelDelete, w, cx);
                 }
             }))
@@ -3356,13 +2169,12 @@ impl Render for AgentSurface {
                     ),
             )
             .when(in_thread, |root| {
-                // Which thread this is, the folder it lives in, and the way
-                // back to the list or to make it a project.
                 let folder_label = state
                     .cwd
                     .as_deref()
-                    .map(|cwd| display_folder_path(cwd, self.project_browse_home.as_deref()));
-                let can_project = state.thread.is_some() && state.connected && !state.mode_locked();
+                    .map(|cwd| display_folder_path(cwd, controller.project.browse_home.as_deref()));
+                let can_project =
+                    state.thread.is_some() && state.connected && !state.mode_locked();
                 root.child(
                     div()
                         .flex_none()
@@ -3392,7 +2204,9 @@ impl Render for AgentSurface {
                                 .child("‹")
                                 .child("Threads")
                                 .child(tracked(&self.frame, "threads".into(), false))
-                                .on_click(cx.listener(|this, _, w, cx| this.action(ThreadAction::List, w, cx))),
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.action(ThreadAction::List, w, cx)
+                                })),
                         )
                         .child(
                             div()
@@ -3406,7 +2220,12 @@ impl Render for AgentSurface {
                                         .text_size(px(12.))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_ellipsis()
-                                        .child(state.title.clone().unwrap_or_else(|| "New thread".into())),
+                                        .child(
+                                            state
+                                                .title
+                                                .clone()
+                                                .unwrap_or_else(|| "New thread".into()),
+                                        ),
                                 )
                                 .when_some(folder_label, |d, folder| {
                                     d.child(
@@ -3436,7 +2255,9 @@ impl Render for AgentSurface {
                                     .text_size(px(11.))
                                     .text_color(rgb(p.text))
                                     .when(!can_project, |s| s.opacity(0.45))
-                                    .when(can_project, |s| s.cursor_pointer().hover(move |s| s.bg(rgb(p.surface))))
+                                    .when(can_project, |s| {
+                                        s.cursor_pointer().hover(move |s| s.bg(rgb(p.surface)))
+                                    })
                                     .child("Make this a project")
                                     .child(tracked(&self.frame, "make-project".into(), false))
                                     .on_click(cx.listener(move |this, _, w, cx| {
@@ -3449,8 +2270,6 @@ impl Render for AgentSurface {
                 )
             })
             .child({
-                // The thread scrolls here; controls in it count as in view
-                // only within these bounds.
                 let frame = self.frame.clone();
                 div()
                     .flex_1()
@@ -3534,7 +2353,9 @@ impl Render for AgentSurface {
                         .gap(px(8.))
                         .border_t_1()
                         .border_color(rgb(p.line))
-                        .when_some(menu.as_ref(), |d, menu| d.child(self.list_panel(menu, p, cx)))
+                        .when_some(menu, |d, menu| {
+                            d.child(self.list_panel(&controller, menu, p, cx))
+                        })
                         .child(
                             div()
                                 .w_full()
@@ -3570,7 +2391,7 @@ impl Render for AgentSurface {
                                             .child("Stop")
                                             .child(tracked(&self.frame, "stop".into(), false))
                                             .on_click(cx.listener(|this, _, w, cx| {
-                                                this.stop_turn(cx);
+                                                this.dispatch_intent(AgentIntent::StopTurn, w, cx);
                                                 w.focus(&this.input.focus_handle(cx));
                                             })),
                                     )
@@ -3590,34 +2411,25 @@ impl Render for AgentSurface {
                                                     .cursor_pointer()
                                                     .child(icon("arrow", p.on_accent, 14.))
                                             })
-                                            .when(!can_send, |btn| btn.child(icon("arrow", p.muted, 14.)))
+                                            .when(!can_send, |btn| {
+                                                btn.child(icon("arrow", p.muted, 14.))
+                                            })
                                             .child(tracked(&self.frame, "send".into(), false))
                                             .on_click(cx.listener(|this, _, w, cx| {
-                                                this.enter(w, cx);
+                                                this.dispatch_intent(AgentIntent::Enter, w, cx);
                                                 w.focus(&this.input.focus_handle(cx));
                                             })),
                                     )
                                 }),
                         )
-                        .child(self.status_line(&state, p)),
+                        .child(self.status_line(state, p)),
                 )
             })
             .child({
-                // Last to prepaint: hands the frame's controls to the
-                // control socket's snapshot, on the display's coordinates.
                 let frame = self.frame.clone();
                 let left = self.left;
                 let output = self.output.clone();
-                let list = menu.as_ref().map(|menu| agent::ListSnapshot {
-                    kind: format!("{:?}", menu.kind).to_lowercase(),
-                    items: menu.items.iter().map(|item| item.id.clone()).collect(),
-                    highlighted: menu
-                        .items
-                        .get(self.highlight.min(menu.items.len().saturating_sub(1)))
-                        .map(|item| item.id.clone()),
-                    provider: menu.provider.clone(),
-                    note: menu.note.clone(),
-                });
+                let list = controller.list_snapshot.clone();
                 canvas(
                     move |_, _, _| {
                         let controls = controls_on_display(&frame.borrow(), left);
@@ -3635,282 +2447,5 @@ impl Render for AgentSurface {
                 .left_0()
                 .size_0()
             })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        browse_start_path, display_folder_path, join_project_place, list_for_key,
-        place_suggestions, PlaceSuggestion, reconcile_draft_on_sent, should_answer_with_alt_digit,
-        should_reset_offer_on_menu_close, should_take_composer_enter, validate_project_form,
-    };
-    use crate::slash::MenuKind;
-    use crate::{agent, slash};
-    use gpui::Modifiers;
-    use std::collections::HashMap;
-
-    #[test]
-    fn held_enter_and_modified_enter_are_ignored_in_composer() {
-        let plain = Modifiers::default();
-        assert!(should_take_composer_enter(false, &plain, true));
-        assert!(!should_take_composer_enter(true, &plain, true));
-        assert!(!should_take_composer_enter(false, &plain, false));
-        assert!(!should_take_composer_enter(false, &Modifiers::shift(), true));
-        assert!(!should_take_composer_enter(false, &Modifiers::control(), true));
-        assert!(!should_take_composer_enter(false, &Modifiers::alt(), true));
-    }
-
-    #[test]
-    fn alt_digit_is_ignored_when_held_or_away_from_thread() {
-        assert!(should_answer_with_alt_digit(false, false, false));
-        assert!(!should_answer_with_alt_digit(true, false, false));
-        assert!(!should_answer_with_alt_digit(false, true, false));
-        assert!(!should_answer_with_alt_digit(false, false, true));
-    }
-
-    #[test]
-    fn list_for_key_changes_when_async_choices_arrive() {
-        let mut state = agent::AgentState::new(true);
-        state.connected = true;
-        state.list_view = false;
-        state.thread = Some("t-1".into());
-        state.mode = Some("plan".into());
-        let loading = slash::menu("/mode ", &state, None).unwrap();
-        assert!(loading.items.is_empty());
-
-        state.offer_known = true;
-        state.modes = ["ask-first", "full-access", "plan"]
-            .map(|id| agent::ModeInfo {
-                id: id.into(),
-                name: String::new(),
-            })
-            .to_vec();
-        let loaded = slash::menu("/mode ", &state, None).unwrap();
-        assert_eq!(loaded.start(), 2);
-        assert_ne!(list_for_key(&loading, "/mode "), list_for_key(&loaded, "/mode "));
-    }
-
-    #[test]
-    fn reconcile_draft_on_sent_preserves_post_send_edits_whether_open_or_closed() {
-        // Exact match clears the draft (including new-thread "" key).
-        let mut drafts = HashMap::from([("".to_string(), "hello".to_string())]);
-        let next = reconcile_draft_on_sent(&mut drafts, "", "t-1", "hello", Some("hello"));
-        assert_eq!(next.as_deref(), Some(""));
-        assert!(!drafts.contains_key(""));
-        assert!(!drafts.contains_key("t-1"));
-
-        // Typed-ahead suffix is kept under the new thread ID.
-        let mut drafts = HashMap::from([("".to_string(), "hello next".to_string())]);
-        let next = reconcile_draft_on_sent(&mut drafts, "", "t-1", "hello", Some("hello next"));
-        assert_eq!(next.as_deref(), Some("next"));
-        assert_eq!(drafts.get("t-1").map(String::as_str), Some("next"));
-
-        // Unrelated replacement while open is preserved, not wiped.
-        let mut drafts = HashMap::from([("t-1".to_string(), "replacement".to_string())]);
-        let next = reconcile_draft_on_sent(&mut drafts, "t-1", "t-1", "hello", Some("replacement"));
-        assert_eq!(next, None);
-        assert_eq!(drafts.get("t-1").map(String::as_str), Some("replacement"));
-
-        // Closed drawer: exact submitted draft is cleared, but replaced edits stay.
-        let mut drafts = HashMap::from([("".to_string(), "hello".to_string())]);
-        reconcile_draft_on_sent(&mut drafts, "", "t-2", "hello", None);
-        assert!(drafts.is_empty());
-
-        let mut drafts = HashMap::from([("".to_string(), "rewritten before ack".to_string())]);
-        reconcile_draft_on_sent(&mut drafts, "", "t-2", "hello", None);
-        assert!(!drafts.contains_key(""));
-        assert_eq!(drafts.get("t-2").map(String::as_str), Some("rewritten before ack"));
-    }
-
-    #[test]
-    fn closing_effort_menu_resets_offer_guard_after_failed_model_lookup() {
-        let mut state = agent::AgentState::new(true);
-        state.modes_error = Some("Models and modes are not available right now.".into());
-        assert!(should_reset_offer_on_menu_close(Some(MenuKind::Efforts), &state));
-        assert!(should_reset_offer_on_menu_close(Some(MenuKind::Models), &state));
-        assert!(!should_reset_offer_on_menu_close(Some(MenuKind::Commands), &state));
-
-        state.modes_error = None;
-        state.models.push(agent::ModelInfo {
-            id: "acme/small".into(),
-            name: "Small".into(),
-            provider: Some("acme".into()),
-            provider_name: Some("Acme".into()),
-        });
-        state.modes.push(agent::ModeInfo {
-            id: "ask-first".into(),
-            name: "Ask first".into(),
-        });
-        assert!(!should_reset_offer_on_menu_close(Some(MenuKind::Efforts), &state));
-        // Closing `/model` always resets `asked_offer` so reopening picks up
-        // out-of-band provider sign-ins even when the catalog was non-empty.
-        assert!(should_reset_offer_on_menu_close(Some(MenuKind::Models), &state));
-    }
-
-    #[test]
-    fn make_project_form_offers_projects_folder_and_allows_custom_folder() {
-        assert_eq!(join_project_place("~/Projects", ""), "~/Projects");
-        assert_eq!(join_project_place("~/Projects", "  notes "), "~/Projects/notes");
-        assert_eq!(join_project_place("~/Code", "notes"), "~/Code/notes");
-        assert_eq!(join_project_place("~/Code/", ""), "~/Code");
-        assert_eq!(join_project_place("~/notes ", "my-app"), "~/notes /my-app");
-        assert_eq!(join_project_place("~/notes ", ""), "~/notes ");
-        assert_eq!(browse_start_path("  ~/notes "), Some("~/notes ".into()));
-        assert_eq!(browse_start_path("   "), None);
-        assert_eq!(display_folder_path("/home/crowbar/Projects/notes", Some("/home/crowbar")), "~/Projects/notes");
-        assert_eq!(display_folder_path("/home/crowbar", Some("/home/crowbar")), "~");
-
-        // Default place (`~/Projects`) sends name only.
-        assert_eq!(
-            validate_project_form("notes", "~/Projects/notes", Some("~/Projects")),
-            Ok((Some("notes".into()), None, None))
-        );
-        assert!(validate_project_form("", "~/Projects", Some("~/Projects")).is_err());
-        assert!(validate_project_form("a/b", "~/Projects/a/b", Some("~/Projects")).is_err());
-        assert!(validate_project_form("bad\nname", "~/Projects/bad", Some("~/Projects")).is_err());
-
-        // Picking a place chip (e.g. `~/Code` or `~`) keeps place separate from an exact folder:
-        // empty name is refused, and typing a name sends `(name, place, None)`.
-        assert!(validate_project_form("", "~/Code", Some("~/Code")).is_err());
-        assert!(validate_project_form("", "~", Some("~")).is_err());
-        assert_eq!(
-            validate_project_form("notes", "~/Code/notes", Some("~/Code")),
-            Ok((Some("notes".into()), Some("~/Code".into()), None))
-        );
-
-        // Custom exact folder (place = None) sends `(None, None, Some(folder))`
-        // and preserves trailing spaces so existing folders like `notes ` stay distinct.
-        assert_eq!(
-            validate_project_form("notes", "~/Code/notes", None),
-            Ok((None, None, Some("~/Code/notes".into())))
-        );
-        assert_eq!(
-            validate_project_form("notes", "~/notes ", None),
-            Ok((None, None, Some("~/notes ".into())))
-        );
-        assert_eq!(
-            validate_project_form("my-app", "~/notes /my-app", Some("~/notes ")),
-            Ok((Some("my-app".into()), Some("~/notes ".into()), None))
-        );
-        assert_eq!(
-            validate_project_form("", "/home/crowbar/ExistingWork", None),
-            Ok((None, None, Some("/home/crowbar/ExistingWork".into())))
-        );
-        assert!(validate_project_form("", "relative/path", None).is_err());
-
-        // Never guesses `~` from `/home/<name>` or `$HOME`; only shortens
-        // labels when Lever has supplied the person's actual home directory,
-        // and always keeps the exact absolute path as the action value.
-        let mut state = agent::AgentState::new(true);
-        state.cwd = Some("/home/shared/team/app".into());
-        assert_eq!(display_folder_path("/home/shared/team/app", None), "/home/shared/team/app");
-        assert_eq!(
-            display_folder_path("/home/shared/team/app", Some("/home/person")),
-            "/home/shared/team/app"
-        );
-        state.threads.push(agent::ThreadSummary {
-            archived: false,
-            thread: "t-1".into(),
-            title: "t".into(),
-            cwd: "/home/shared/team/app".into(),
-            model: None,
-            started: 0,
-            updated: 0,
-            turns: 1,
-            state: "done".into(),
-            working: false,
-            waiting: false,
-            subagents: 0,
-            mode: None,
-        });
-        state.threads.push(agent::ThreadSummary {
-            archived: false,
-            thread: "t-2".into(),
-            title: "t2".into(),
-            cwd: "/home/person/Work/app".into(),
-            model: None,
-            started: 0,
-            updated: 0,
-            turns: 1,
-            state: "done".into(),
-            working: false,
-            waiting: false,
-            subagents: 0,
-            mode: None,
-        });
-        state.threads.push(agent::ThreadSummary {
-            archived: false,
-            thread: "t-3".into(),
-            title: "t3".into(),
-            cwd: "/home/person/Projects/existing".into(),
-            model: None,
-            started: 0,
-            updated: 0,
-            turns: 1,
-            state: "done".into(),
-            working: false,
-            waiting: false,
-            subagents: 0,
-            mode: None,
-        });
-        // Without Lever's home, thread parents keep full absolute labels and values.
-        assert_eq!(
-            place_suggestions(&state, None),
-            vec![
-                PlaceSuggestion {
-                    label: "~/Projects".into(),
-                    value: "~/Projects".into(),
-                },
-                PlaceSuggestion {
-                    label: "~/Code".into(),
-                    value: "~/Code".into(),
-                },
-                PlaceSuggestion {
-                    label: "~".into(),
-                    value: "~".into(),
-                },
-                PlaceSuggestion {
-                    label: "/home/shared/team".into(),
-                    value: "/home/shared/team".into(),
-                },
-                PlaceSuggestion {
-                    label: "/home/person/Work".into(),
-                    value: "/home/person/Work".into(),
-                },
-                PlaceSuggestion {
-                    label: "/home/person/Projects".into(),
-                    value: "/home/person/Projects".into(),
-                },
-            ]
-        );
-        // With Lever's reported home, only paths under that actual home use `~`
-        // in their label, `~/Projects` deduplicates against the built-in chip,
-        // and the action value stays the exact absolute path.
-        assert_eq!(
-            place_suggestions(&state, Some("/home/person")),
-            vec![
-                PlaceSuggestion {
-                    label: "~/Projects".into(),
-                    value: "~/Projects".into(),
-                },
-                PlaceSuggestion {
-                    label: "~/Code".into(),
-                    value: "~/Code".into(),
-                },
-                PlaceSuggestion {
-                    label: "~".into(),
-                    value: "~".into(),
-                },
-                PlaceSuggestion {
-                    label: "/home/shared/team".into(),
-                    value: "/home/shared/team".into(),
-                },
-                PlaceSuggestion {
-                    label: "~/Work".into(),
-                    value: "/home/person/Work".into(),
-                },
-            ]
-        );
     }
 }

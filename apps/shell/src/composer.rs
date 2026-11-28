@@ -122,7 +122,7 @@ impl Laid {
 }
 
 pub struct Composer {
-    pub palette: crate::theme::Palette,
+    pub palette: crate::appearance::Palette,
     /// A list is open above the box, and takes Up, Down, Tab, and Escape.
     pub list_open: bool,
     /// The list has a rail beside it, which takes Left and Right.
@@ -148,7 +148,7 @@ pub struct Composer {
 impl Composer {
     pub fn new(placeholder: impl Into<SharedString>, max_len: usize, cx: &mut Context<Self>) -> Self {
         Self {
-            palette: crate::theme::Palette::default(),
+            palette: crate::appearance::Palette::default(),
             list_open: false,
             rail_open: false,
             focus_handle: cx.focus_handle(),

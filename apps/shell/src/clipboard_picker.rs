@@ -1,11 +1,22 @@
+// SPDX-License-Identifier: MIT
 //! The launcher's keyboard-first companions: volatile history and characters.
-use super::*;
+
+use gpui::{layer_shell::*, prelude::*, *};
+
+use crate::{
+    input, picker_history, symbols,
+    ui::{
+        ActivePopover, Close, Model, Next, Open, Previous, clear_active_popover_if,
+        close_active_popover, icon, layer, palette_keycap,
+    },
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     History,
     Characters,
 }
+
 pub struct Picker {
     model: Entity<Model>,
     kind: Kind,
@@ -16,11 +27,13 @@ pub struct Picker {
     history: picker_history::History,
     _subscription: Subscription,
 }
+
 struct Row {
     text: String,
     label: String,
     detail: String,
 }
+
 impl Picker {
     fn rows(&self) -> Vec<Row> {
         match self.kind {
@@ -51,12 +64,16 @@ impl Picker {
                 .collect(),
         }
     }
-    fn close(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+
+    pub fn close(&mut self, w: &mut Window, cx: &mut Context<Self>) {
+        if self.model.read(cx).is_picker_open() {
+            log::info!("SHELL picker open=false");
+        }
         self.history.items.clear();
-        self.model.update(cx, |m, _| m.picker = None);
+        clear_active_popover_if(&self.model, |p| matches!(p, ActivePopover::Picker(_)), cx);
         w.remove_window();
-        log::info!("SHELL picker open=false");
     }
+
     fn step(&mut self, delta: i32, w: &mut Window, cx: &mut Context<Self>) {
         if self.input.read(cx).is_composing() {
             return;
@@ -68,6 +85,7 @@ impl Picker {
         }
         cx.notify();
     }
+
     fn copy(&mut self, w: &mut Window, cx: &mut Context<Self>) {
         if self.input.read(cx).is_composing() {
             return;
@@ -84,6 +102,7 @@ impl Picker {
             self.close(w, cx);
         }
     }
+
     pub fn load(&mut self, clear: bool, w: &mut Window, cx: &mut Context<Self>) {
         if self.kind != Kind::History {
             return;
@@ -96,9 +115,10 @@ impl Picker {
         if !self.history.begin(operation) {
             return;
         }
+        let compositor = self.model.read(cx).compositor.clone();
         let task = cx
             .background_executor()
-            .spawn(async move { session::clipboard_history(clear) });
+            .spawn(async move { compositor.clipboard_history(clear) });
         cx.spawn_in(w, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, w, cx| {
@@ -119,6 +139,7 @@ impl Picker {
         cx.notify();
     }
 }
+
 impl Render for Picker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.model.read(cx).palette();
@@ -129,7 +150,6 @@ impl Render for Picker {
         let clearing = self.clear_focus.is_focused(window);
         let rows = self.rows();
         let total = rows.len();
-        // Keep search and Clear visible at large display scales, too.
         let reserved = if history { 272. } else { 232. } + if status.is_some() { 44. } else { 0. };
         let page_size = ((f32::from(window.viewport_size().height) - reserved) / 44.)
             .floor()
@@ -165,7 +185,10 @@ impl Render for Picker {
                     cx.stop_propagation();
                 }
             }))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, w, cx| this.close(w, cx)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, w, cx| this.close(w, cx)),
+            )
             .child(
                 div()
                     .id("picker-panel")
@@ -197,7 +220,10 @@ impl Render for Picker {
                                         "Characters & emoji"
                                     }),
                             )
-                            .child(palette_keycap(if history { "Super+V" } else { "Super+." }, p)),
+                            .child(palette_keycap(
+                                if history { "Super+V" } else { "Super+." },
+                                p,
+                            )),
                     )
                     .child(
                         div()
@@ -243,58 +269,64 @@ impl Render for Picker {
                                         } else {
                                             "Nothing copied yet"
                                         })
-                                        .child(div().text_color(rgb(p.muted)).child(if !self.query.is_empty() {
-                                            "Try another name or keyword."
-                                        } else {
-                                            "Copy text in an app to keep it here."
-                                        })),
+                                        .child(div().text_color(rgb(p.muted)).child(
+                                            if !self.query.is_empty() {
+                                                "Try another name or keyword."
+                                            } else {
+                                                "Copy text in an app to keep it here."
+                                            },
+                                        )),
                                 )
                             })
-                            .children(rows.into_iter().enumerate().skip(page).take(page_size).map(|(i, row)| {
-                                let selected = i == self.selected;
-                                div()
-                                    .id(("picker-row", i))
-                                    .h(px(44.))
-                                    .px(px(10.))
-                                    .flex()
-                                    .gap(px(12.))
-                                    .items_center()
-                                    .rounded(px(6.))
-                                    .bg(rgb(if selected { p.surface } else { p.canvas }))
-                                    .border_1()
-                                    .border_color(rgb(if selected { p.focus } else { p.canvas }))
-                                    .hover(move |s| s.bg(rgb(p.surface)))
-                                    .cursor_pointer()
-                                    .when(!history, |d| {
-                                        d.child(
+                            .children(rows.into_iter().enumerate().skip(page).take(page_size).map(
+                                |(i, row)| {
+                                    let selected = i == self.selected;
+                                    div()
+                                        .id(("picker-row", i))
+                                        .h(px(44.))
+                                        .px(px(10.))
+                                        .flex()
+                                        .gap(px(12.))
+                                        .items_center()
+                                        .rounded(px(6.))
+                                        .bg(rgb(if selected { p.surface } else { p.canvas }))
+                                        .border_1()
+                                        .border_color(rgb(if selected { p.focus } else { p.canvas }))
+                                        .hover(move |s| s.bg(rgb(p.surface)))
+                                        .cursor_pointer()
+                                        .when(!history, |d| {
+                                            d.child(
+                                                div()
+                                                    .w(px(34.))
+                                                    .text_size(px(24.))
+                                                    .when(row.detail == "Emoji", |d| {
+                                                        d.font_family("Noto Color Emoji")
+                                                    })
+                                                    .child(row.text.clone()),
+                                            )
+                                        })
+                                        .child(
                                             div()
-                                                .w(px(34.))
-                                                .text_size(px(24.))
-                                                .when(row.detail == "Emoji", |d| d.font_family("Noto Color Emoji"))
-                                                .child(row.text.clone()),
+                                                .flex_1()
+                                                .min_w_0()
+                                                .overflow_hidden()
+                                                .text_ellipsis()
+                                                .child(row.label),
                                         )
-                                    })
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .child(row.label),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(p.muted))
-                                            .child(row.detail),
-                                    )
-                                    .on_click(cx.listener(move |this, _, w, cx| {
-                                        this.selected = i;
-                                        w.focus(&this.input.focus_handle(cx));
-                                        this.copy(w, cx);
-                                    }))
-                            })),
+                                        .child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .text_size(px(11.))
+                                                .text_color(rgb(p.muted))
+                                                .child(row.detail),
+                                        )
+                                        .on_click(cx.listener(move |this, _, w, cx| {
+                                            this.selected = i;
+                                            w.focus(&this.input.focus_handle(cx));
+                                            this.copy(w, cx);
+                                        }))
+                                },
+                            )),
                     )
                     .child(
                         div()
@@ -306,11 +338,13 @@ impl Render for Picker {
                             .items_center()
                             .justify_between()
                             .gap(px(12.))
-                            .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(if total == 0 {
-                                "0 results".into()
-                            } else {
-                                format!("{} of {total}", self.selected + 1)
-                            }))
+                            .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
+                                if total == 0 {
+                                    "0 results".into()
+                                } else {
+                                    format!("{} of {total}", self.selected + 1)
+                                },
+                            ))
                             .child(
                                 div()
                                     .flex()
@@ -359,37 +393,29 @@ impl Render for Picker {
                                         .focus(move |s| s.border_color(rgb(p.focus)))
                                         .hover(move |s| s.bg(rgb(p.surface)))
                                         .child("Clear")
-                                        .on_click(cx.listener(|this, _, w, cx| this.load(true, w, cx))),
+                                        .on_click(cx.listener(|this, _, w, cx| {
+                                            this.load(true, w, cx)
+                                        })),
                                 ),
                         )
                     }),
             )
     }
 }
-pub fn close(model: &Entity<Model>, cx: &mut App) {
-    if let Some(w) = model.update(cx, |m, _| m.picker.take()) {
-        let _ = w.update(cx, |this, w, _| {
-            this.history.items.clear();
-            w.remove_window();
-        });
-        log::info!("SHELL picker open=false");
-    }
-}
+
 pub fn toggle(model: Entity<Model>, kind: Kind, cx: &mut App) {
     if model.read(cx).snapshot.locked {
         return;
     }
-    if let Some(w) = model.read(cx).picker {
+    if let Some(ActivePopover::Picker(w)) = model.read(cx).active_popover {
         let same = w.read(cx).is_ok_and(|view| view.kind == kind);
-        close(&model, cx);
+        close_active_popover(&model, cx);
         if same {
             return;
         }
+    } else {
+        close_active_popover(&model, cx);
     }
-    close_launcher(&model, cx);
-    close_quick_settings(&model, cx);
-    close_calendar(&model, cx);
-    theme_switcher::close(&model, cx);
     let view_model = model.clone();
     let opened = cx.open_window(
         layer(
@@ -440,7 +466,9 @@ pub fn toggle(model: Entity<Model>, kind: Kind, cx: &mut App) {
     );
     match opened {
         Ok(w) => {
-            model.update(cx, |m, _| m.picker = Some(w));
+            model.update(cx, |m, _| {
+                m.active_popover = Some(ActivePopover::Picker(w));
+            });
             log::info!("SHELL picker open=true kind={kind:?}");
         }
         Err(error) => log::error!("Opening picker: {error}"),
