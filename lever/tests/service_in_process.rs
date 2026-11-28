@@ -1262,17 +1262,24 @@ fn in_process_steering_checks_before_commit_and_failed_commit_neither_dispatches
         "declining session must never receive steer()"
     );
 
-    // 2. Adapter accepts steering (`can_steer == true`), and SQLite fails AFTER the
-    //    `INSERT INTO queued` succeeds (at `touch_thread` inside the transaction, with
-    //    both UPDATE and DELETE on `queued` also blocked):
+    // 2. Adapter accepts steering (`can_steer == true`), and SQLite succeeds on BOTH
+    //    `INSERT INTO queued` and `UPDATE threads` (`touch_thread`), then fails ONLY
+    //    at `COMMIT` via a deferred foreign-key constraint (with UPDATE and DELETE on
+    //    `queued` also blocked):
     //    - Transaction rolls back cleanly -> no row committed or resurrected on restart.
     //    - `steer()` is NEVER called because reservation failed to commit.
     handle.set_decline_steer(false);
     let db = rusqlite::Connection::open(&db_path).unwrap();
     db.execute_batch("DELETE FROM queued;").unwrap();
     db.execute_batch(
-        "CREATE TRIGGER deny_thread_touch BEFORE UPDATE ON threads BEGIN SELECT RAISE(ABORT, 'disk full'); END;\
-         CREATE TRIGGER deny_queued_update BEFORE UPDATE ON queued BEGIN SELECT RAISE(ABORT, 'disk full'); END;\
+        "CREATE TABLE commit_blocker_parent (id INTEGER PRIMARY KEY);
+         CREATE TABLE commit_blocker_child (
+             parent_id INTEGER REFERENCES commit_blocker_parent(id) DEFERRABLE INITIALLY DEFERRED
+         );
+         CREATE TRIGGER fail_queued_at_commit AFTER INSERT ON queued BEGIN
+             INSERT INTO commit_blocker_child(parent_id) VALUES (999);
+         END;
+         CREATE TRIGGER deny_queued_update BEFORE UPDATE ON queued BEGIN SELECT RAISE(ABORT, 'disk full'); END;
          CREATE TRIGGER deny_queued_delete BEFORE DELETE ON queued BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
     )
     .unwrap();
@@ -1296,7 +1303,11 @@ fn in_process_steering_checks_before_commit_and_failed_commit_neither_dispatches
         "failed steering commit must never dispatch steer() to the harness"
     );
     db.execute_batch(
-        "DROP TRIGGER deny_thread_touch; DROP TRIGGER deny_queued_update; DROP TRIGGER deny_queued_delete;",
+        "DROP TRIGGER fail_queued_at_commit;\
+         DROP TRIGGER deny_queued_update;\
+         DROP TRIGGER deny_queued_delete;\
+         DROP TABLE commit_blocker_child;\
+         DROP TABLE commit_blocker_parent;",
     )
     .unwrap();
 
