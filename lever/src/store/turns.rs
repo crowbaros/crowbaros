@@ -388,6 +388,62 @@ impl Store {
         })
     }
 
+    /// Reserves a `steering` row inside a SQLite transaction, invokes `send`
+    /// only after the insert succeeds, and either commits the `steering` row
+    /// (`send() == true`) or transitions it to `queued` before committing
+    /// (`send() == false`). If any write or commit fails, the transaction
+    /// rolls back so an error reply never leaves an orphaned `steering` row.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_steering_or_queue(
+        &self,
+        thread_id: &str,
+        turn_number: u64,
+        text: &str,
+        context: Option<&str>,
+        now: i64,
+        send: impl FnOnce() -> bool,
+    ) -> Result<(bool, QueuedRecord), String> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| format!("could not begin steering transaction: {e}"))?;
+        let id = format!("q-{}", sys::random_hex(6));
+        tx.execute(
+            "INSERT INTO queued (id, thread_id, turn_number, text, context, state, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 'steering', ?6)",
+            params![id, thread_id, turn_number as i64, text, context, now],
+        )
+        .map_err(|e| format!("could not queue the message: {e}"))?;
+        tx.execute(
+            "UPDATE threads SET updated_at = ?1 WHERE id = ?2",
+            params![now, thread_id],
+        )
+        .map_err(|e| format!("could not touch thread timestamp: {e}"))?;
+
+        let sent = send();
+        let state = if sent {
+            "steering"
+        } else {
+            tx.execute(
+                "UPDATE queued SET state = 'queued' WHERE thread_id = ?1 AND id = ?2 AND state = 'steering'",
+                params![thread_id, id],
+            )
+            .map_err(|e| format!("could not change the queued message: {e}"))?;
+            "queued"
+        };
+        tx.commit()
+            .map_err(|e| format!("could not commit queued message: {e}"))?;
+        Ok((
+            sent,
+            QueuedRecord {
+                id,
+                text: text.to_string(),
+                context: context.and_then(|c| serde_json::from_str(c).ok()),
+                state: state.to_string(),
+            },
+        ))
+    }
+
     /// A thread's queued messages in the order sent, each with the turn it
     /// waits behind: those that wait, and with `dropped` those a Stop dropped.
     pub fn queued_of(&self, thread_id: &str, dropped: bool) -> Result<Vec<(u64, QueuedRecord)>, String> {

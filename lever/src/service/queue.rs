@@ -58,51 +58,35 @@ impl Service {
         }
         let (context, context_prompt) = self.desktop_context(is_person);
         let context_json = context.as_ref().map(Value::to_string);
-        let mut queued =
-            match self
-                .store
-                .insert_queued(thread_id, turn, text, context_json.as_deref(), "steering", unix_now())
-            {
-                Ok(queued) => queued,
-                Err(err) => {
-                    store_failed(log, &err);
-                    return error_outcome("storage-error", &err);
-                }
-            };
         let steer = self.turns.next_steer;
         self.turns.next_steer += 1;
-        let sent = self
-            .harness
-            .as_mut()
-            .is_some_and(|harness| harness.steer(thread_id, steer, session_id, context_prompt.as_deref(), text));
-        if !sent {
-            // The adapter declined to send the steering RPC; fall back to
-            // queueing so neither a PendingSteer nor a `"steering"` row is
-            // stranded.
-            match self.store.set_queued_state(thread_id, &queued.id, "steering", "queued") {
-                Ok(true) => {
-                    queued.state = "queued".to_string();
-                    let effects = self.announce_queued(Some(peer_id), thread_id, turn, &queued, context_prompt);
-                    let reply = effects.replies.into_iter().next();
-                    return RequestOutcome {
-                        reply: reply.as_ref().map(|r| r.message.clone()),
-                        subscribe: reply.and_then(|r| r.subscribe),
-                        broadcasts: effects.broadcasts,
-                    };
-                }
-                Ok(false) => {
-                    let _ = self.store.forget_queued(&queued.id);
-                    return error_outcome("working", "The Agent did not take your message into its turn.");
-                }
-                Err(err) => {
-                    // Best-effort rollback so a failed fallback write never leaves
-                    // a `"steering"` row that restart recovery would turn into a
-                    // queued send after the person was told it failed.
-                    let _ = self.store.forget_queued(&queued.id);
-                    store_failed(log, &err);
-                    return error_outcome("storage-error", &err);
-                }
+        let harness = &mut self.harness;
+        let (sent, queued) = match self.store.insert_steering_or_queue(
+            thread_id,
+            turn,
+            text,
+            context_json.as_deref(),
+            unix_now(),
+            || {
+                harness
+                    .as_mut()
+                    .is_some_and(|h| h.steer(thread_id, steer, session_id, context_prompt.as_deref(), text))
+            },
+        ) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                store_failed(log, &err);
+                return error_outcome("storage-error", &err);
             }
+        };
+        if !sent {
+            let effects = self.announce_queued(Some(peer_id), thread_id, turn, &queued, context_prompt);
+            let reply = effects.replies.into_iter().next();
+            return RequestOutcome {
+                reply: reply.as_ref().map(|r| r.message.clone()),
+                subscribe: reply.and_then(|r| r.subscribe),
+                broadcasts: effects.broadcasts,
+            };
         }
         self.turns.pending_steers.push(PendingSteer {
             steer,

@@ -52,11 +52,11 @@ On Base:
 - `--harness` is `/usr/local/bin/opencode` with `--harness-arg acp` and
   `--harness-name OpenCode`
 
-`--harness-dialect` defaults to `opencode-acp` when omitted (preserving
-OpenCode's environment, modes, steering, and child updates; pass
+`--harness-dialect` defaults to `opencode-acp` when omitted, keeping
+OpenCode's environment, modes, steering, and child updates. Pass
 `--harness-dialect opencode-acp` explicitly for a custom-named OpenCode wrapper
 to also use OpenCode's database discovery, or `--harness-dialect generic-acp`
-for a pure ACP v1 harness without OpenCode extensions).
+for a pure ACP v1 harness without OpenCode extensions.
 
 When `--harness` is omitted, Lever runs
 with no harness configured and refuses `send` with `no-harness`. When

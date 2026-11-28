@@ -192,7 +192,10 @@ fn wrapper_launcher_gets_opencode_dialect_consistently_across_launch_and_discove
         name: "Custom Wrapper".into(),
         program: "/usr/local/bin/agent-wrapper".into(),
         args: vec!["acp".into()],
-        env: vec![("XDG_DATA_HOME".into(), "/tmp/fake-xdg-data".into())],
+        env: vec![
+            ("XDG_DATA_HOME".into(), "/tmp/fake-xdg-data".into()),
+            ("OPENCODE_DB".into(), String::new()),
+        ],
         watch_paths: Vec::new(),
         dialect: None,
     };

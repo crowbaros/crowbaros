@@ -1255,13 +1255,15 @@ fn in_process_declining_steer_falls_back_to_queue_and_failed_fallback_leaves_no_
         .unwrap();
     assert_eq!(fallback["reply"], "queued");
 
-    // 2. Now fail UPDATE on `queued` while steer() declines:
-    //    Service returns storage-error AND rolls back the unsent `"steering"` row
-    //    so reopening Store (restart recovery) does NOT resurrect it as queued.
+    // 2. Now fail BOTH UPDATE and DELETE on `queued` while steer() declines:
+    //    Because steering reservation and fallback run inside one transaction,
+    //    the transaction rolls back cleanly without needing DELETE, returning
+    //    storage-error and leaving zero rows for restart recovery to resurrect.
     let db = rusqlite::Connection::open(&db_path).unwrap();
     db.execute_batch("DELETE FROM queued;").unwrap();
     db.execute_batch(
-        "CREATE TRIGGER deny_queued_update BEFORE UPDATE ON queued BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+        "CREATE TRIGGER deny_queued_update BEFORE UPDATE ON queued BEGIN SELECT RAISE(ABORT, 'disk full'); END;\
+         CREATE TRIGGER deny_queued_delete BEFORE DELETE ON queued BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
     )
     .unwrap();
     let failed = svc
@@ -1276,7 +1278,8 @@ fn in_process_declining_steer_falls_back_to_queue_and_failed_fallback_leaves_no_
         .unwrap();
     assert_eq!(failed["reply"], "error");
     assert_eq!(failed["code"], "storage-error");
-    db.execute_batch("DROP TRIGGER deny_queued_update;").unwrap();
+    db.execute_batch("DROP TRIGGER deny_queued_update; DROP TRIGGER deny_queued_delete;")
+        .unwrap();
 
     // Reopen SQLite as a fresh Lever startup: no orphaned row may appear.
     let reopened = Store::open(&db_path, unix_now()).unwrap();
