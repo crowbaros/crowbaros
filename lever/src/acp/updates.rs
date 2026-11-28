@@ -559,9 +559,7 @@ impl AcpHarness {
                     .entry(thread_id.to_string())
                     .or_default()
                     .insert(call_id.clone());
-                let clean_title = self
-                    .dialect
-                    .strip_child_title_prefix(&tc.title, child_title.as_deref());
+                let clean_title = self.dialect.strip_child_title_prefix(&tc.title, child_title.as_deref());
                 if self.take_launcher_call(thread_id, child_sid, &tc, &clean_title, raw_update, events) {
                     return;
                 }

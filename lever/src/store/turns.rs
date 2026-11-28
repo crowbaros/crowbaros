@@ -1,7 +1,7 @@
 //! Turn records, streaming answers, acts, steers, queued messages, notes, and requests.
 
-use super::records::*;
 use super::Store;
+use super::records::*;
 use crate::sys;
 use rusqlite::{OptionalExtension, params};
 
@@ -36,7 +36,6 @@ impl Store {
         all.commit().map_err(|e| format!("could not begin a turn: {e}"))?;
         Ok(turn)
     }
-
 
     /// Begins a turn the harness began itself, with no message from the
     /// person: what it says after a turn of the thread ended is kept apart
@@ -518,7 +517,6 @@ impl Store {
         })
     }
 
-
     /// Keeps a request that waits for the person, and gives it Lever's ID.
     pub fn insert_request(&self, request: &NewRequest<'_>, now: i64) -> Result<RequestRecord, String> {
         // All of it, or none: a request the record holds is one Lever holds.
@@ -649,5 +647,4 @@ impl Store {
             .map_err(|e| format!("could not withdraw waiting requests: {e}"))?;
         Ok(())
     }
-
 }

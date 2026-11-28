@@ -388,7 +388,9 @@ impl AcpHarness {
         {
             return false;
         }
-        if let Some(old) = self.thread_to_session.insert(thread_id.to_string(), session_id.to_string())
+        if let Some(old) = self
+            .thread_to_session
+            .insert(thread_id.to_string(), session_id.to_string())
             && old != session_id
         {
             self.session_to_thread.remove(&old);

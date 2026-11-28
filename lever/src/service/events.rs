@@ -439,9 +439,11 @@ impl Service {
             self.apply_model_catalog(cat, false, log, &mut effects);
         }
         if let Some(t) = turn {
-            let still_waiting = self.turns.working_turns.get(thread_id).is_some_and(|active| {
-                active.turn == t && matches!(active.dispatch, TurnDispatch::WaitingForModel)
-            });
+            let still_waiting = self
+                .turns
+                .working_turns
+                .get(thread_id)
+                .is_some_and(|active| active.turn == t && matches!(active.dispatch, TurnDispatch::WaitingForModel));
             if !still_waiting {
                 if let Some(pos) = self
                     .catalog
@@ -481,9 +483,12 @@ impl Service {
         effects.broadcasts.extend(changes);
         self.catalog.pending_effort_threads.remove(thread_id);
         if let Some(t) = turn {
-            if self.turns.working_turns.get(thread_id).is_some_and(|active| {
-                active.turn == t && matches!(active.dispatch, TurnDispatch::WaitingForModel)
-            }) {
+            if self
+                .turns
+                .working_turns
+                .get(thread_id)
+                .is_some_and(|active| active.turn == t && matches!(active.dispatch, TurnDispatch::WaitingForModel))
+            {
                 effects.broadcasts.extend(self.mirror_effort(thread_id, log));
                 self.continue_turn(thread_id);
             }
@@ -564,9 +569,7 @@ impl Service {
             && let Some(model) = harness.session_current_model(session_id)
             && let Some(selector) = harness.session_effort(session_id)
         {
-            self.catalog
-                .efforts
-                .insert(model.to_string(), selector.options.clone());
+            self.catalog.efforts.insert(model.to_string(), selector.options.clone());
         }
         // What the harness says the session is at is the thread's, once Lever
         // has set the session to what the thread asks. A `set-effort` saved
@@ -905,7 +908,8 @@ impl Service {
                 };
             }
         };
-        self.turns.note_harness_act(thread_id, recorded_turn, &act.id, &act.state);
+        self.turns
+            .note_harness_act(thread_id, recorded_turn, &act.id, &act.state);
         broadcasts.push(Broadcast {
             thread_id: thread_id.to_string(),
             message: act_event_json(thread_id, recorded_turn, &act),

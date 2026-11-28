@@ -4,8 +4,8 @@ use rusqlite::{Connection, params};
 use std::path::Path;
 
 pub(super) fn initialize(conn: &Connection, path: &Path, now: i64) -> Result<(), String> {
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;\n\
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;\n\
              PRAGMA synchronous = NORMAL;\n\
              PRAGMA foreign_keys = ON;\n\
              PRAGMA busy_timeout = 5000;\n\
@@ -140,40 +140,40 @@ pub(super) fn initialize(conn: &Connection, path: &Path, now: i64) -> Result<(),
                  seq INTEGER NOT NULL,\n\
                  UNIQUE(subagent_id, harness_call_id)\n\
              );",
-        )
-        .map_err(|e| format!("could not initialize database {}: {e}", path.display()))?;
+    )
+    .map_err(|e| format!("could not initialize database {}: {e}", path.display()))?;
 
-        // Migrate older databases missing columns added in newer schema versions.
-        ensure_column(conn, "threads", "model", "TEXT")?;
-        ensure_column(conn, "threads", "archived", "INTEGER NOT NULL DEFAULT 0")?;
-        ensure_column(conn, "turns", "context", "TEXT")?;
-        ensure_column(conn, "threads", "mode", "TEXT")?;
-        ensure_column(conn, "turns", "mode", "TEXT")?;
-        ensure_column(conn, "threads", "effort", "TEXT")?;
-        ensure_column(conn, "requests", "subagent_id", "TEXT")?;
-        ensure_column(conn, "turns", "origin", "TEXT")?;
-        ensure_column(conn, "threads", "needs_history", "INTEGER NOT NULL DEFAULT 0")?;
-        ensure_column(conn, "threads", "needs_handoff", "INTEGER NOT NULL DEFAULT 0")?;
-        ensure_column(conn, "ignored_sessions", "thread_id", "TEXT")?;
+    // Migrate older databases missing columns added in newer schema versions.
+    ensure_column(conn, "threads", "model", "TEXT")?;
+    ensure_column(conn, "threads", "archived", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "turns", "context", "TEXT")?;
+    ensure_column(conn, "threads", "mode", "TEXT")?;
+    ensure_column(conn, "turns", "mode", "TEXT")?;
+    ensure_column(conn, "threads", "effort", "TEXT")?;
+    ensure_column(conn, "requests", "subagent_id", "TEXT")?;
+    ensure_column(conn, "turns", "origin", "TEXT")?;
+    ensure_column(conn, "threads", "needs_history", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "threads", "needs_handoff", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "ignored_sessions", "thread_id", "TEXT")?;
 
-        // Any turn or subagent left working by a Lever that ended abruptly is
-        // interrupted, and a request that waited went with the harness that asked it.
-        conn.execute(
-            "UPDATE turns SET state = 'interrupted', ended_at = ?1 WHERE state = 'working'",
-            params![now],
-        )
-        .map_err(|e| format!("could not mark interrupted turns: {e}"))?;
-        conn.execute(
-            "UPDATE subagents SET state = 'interrupted', ended_at = ?1 WHERE state = 'working'",
-            params![now],
-        )
-        .map_err(|e| format!("could not mark interrupted subagents: {e}"))?;
-        conn.execute("UPDATE requests SET state = 'withdrawn' WHERE state = 'waiting'", [])
-            .map_err(|e| format!("could not withdraw waiting requests: {e}"))?;
-        // A message steered into a turn that a crash interrupted, whose taking
-        // the harness never said, waits for the person, who may take it back.
-        conn.execute("UPDATE queued SET state = 'queued' WHERE state = 'steering'", [])
-            .map_err(|e| format!("could not keep steered messages: {e}"))?;
+    // Any turn or subagent left working by a Lever that ended abruptly is
+    // interrupted, and a request that waited went with the harness that asked it.
+    conn.execute(
+        "UPDATE turns SET state = 'interrupted', ended_at = ?1 WHERE state = 'working'",
+        params![now],
+    )
+    .map_err(|e| format!("could not mark interrupted turns: {e}"))?;
+    conn.execute(
+        "UPDATE subagents SET state = 'interrupted', ended_at = ?1 WHERE state = 'working'",
+        params![now],
+    )
+    .map_err(|e| format!("could not mark interrupted subagents: {e}"))?;
+    conn.execute("UPDATE requests SET state = 'withdrawn' WHERE state = 'waiting'", [])
+        .map_err(|e| format!("could not withdraw waiting requests: {e}"))?;
+    // A message steered into a turn that a crash interrupted, whose taking
+    // the harness never said, waits for the person, who may take it back.
+    conn.execute("UPDATE queued SET state = 'queued' WHERE state = 'steering'", [])
+        .map_err(|e| format!("could not keep steered messages: {e}"))?;
 
     Ok(())
 }
@@ -194,4 +194,3 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, sql_type: &str) -
         .map_err(|e| format!("could not migrate {table}.{column} column: {e}"))?;
     Ok(())
 }
-

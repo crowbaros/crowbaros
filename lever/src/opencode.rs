@@ -12,9 +12,7 @@
 //! file `OPENCODE_CONFIG` names, then `OPENCODE_CONFIG_CONTENT`. A project's
 //! own settings, which OpenCode reads for a session in that project, are not.
 
-use crate::discovery::{
-    Classified, KnownSessions, Listing, SessionDiscoverer, spec_has_data, watch_specs_from_paths,
-};
+use crate::discovery::{Classified, KnownSessions, Listing, SessionDiscoverer, spec_has_data, watch_specs_from_paths};
 use crate::harness::{ExternalSession, HarnessConfig};
 use crate::sys;
 use crate::watcher::WatchSpec;

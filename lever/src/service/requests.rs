@@ -232,12 +232,20 @@ impl Service {
             .and_then(Value::as_str)
             .filter(|s| !s.trim().is_empty())
         else {
-            return Err(error_outcome("invalid-request", "Expected a non-empty string text field."));
+            return Err(error_outcome(
+                "invalid-request",
+                "Expected a non-empty string text field.",
+            ));
         };
         let requested_thread = match value.get("thread") {
             None | Some(Value::Null) => None,
             Some(Value::String(s)) if !s.is_empty() => Some(s.as_str()),
-            _ => return Err(error_outcome("invalid-request", "Expected thread to be a string or null.")),
+            _ => {
+                return Err(error_outcome(
+                    "invalid-request",
+                    "Expected thread to be a string or null.",
+                ));
+            }
         };
         let requested_cwd = match value.get("cwd") {
             None | Some(Value::Null) => None,
@@ -260,7 +268,12 @@ impl Service {
                 self.check_mode(s)?;
                 Some(s.as_str())
             }
-            _ => return Err(error_outcome("invalid-request", "Expected mode to be a string or null.")),
+            _ => {
+                return Err(error_outcome(
+                    "invalid-request",
+                    "Expected mode to be a string or null.",
+                ));
+            }
         };
         let requested_effort = match value.get("effort") {
             None | Some(Value::Null) => None,
@@ -392,17 +405,15 @@ impl Service {
         }
 
         let mode_changed = parsed.requested_mode.is_some_and(|m| m != meta.mode);
-        let effort_changed = parsed.requested_effort.is_some_and(|e| meta.effort.as_deref() != Some(e));
-        let model = parsed
-            .requested_model
-            .map(str::to_string)
-            .or(meta.model)
-            .or_else(|| {
-                self.catalog
-                    .model_catalog
-                    .as_ref()
-                    .and_then(|c| c.default_model.clone())
-            });
+        let effort_changed = parsed
+            .requested_effort
+            .is_some_and(|e| meta.effort.as_deref() != Some(e));
+        let model = parsed.requested_model.map(str::to_string).or(meta.model).or_else(|| {
+            self.catalog
+                .model_catalog
+                .as_ref()
+                .and_then(|c| c.default_model.clone())
+        });
         let effort = parsed.requested_effort.map(str::to_string).or(meta.effort);
         let mode = parsed.requested_mode.map(str::to_string).unwrap_or(meta.mode);
         Ok(SendTarget {
@@ -554,13 +565,9 @@ impl Service {
         });
 
         let handoff_prompt = if target.needs_handoff && !target.new_thread {
-            self.store
-                .get_thread(&target.thread_id)
-                .ok()
-                .flatten()
-                .and_then(|rec| {
-                    handoff::render_thread_handoff(&rec, &target.cwd, Some(turn), handoff::MAX_HANDOFF_BYTES)
-                })
+            self.store.get_thread(&target.thread_id).ok().flatten().and_then(|rec| {
+                handoff::render_thread_handoff(&rec, &target.cwd, Some(turn), handoff::MAX_HANDOFF_BYTES)
+            })
         } else {
             None
         };

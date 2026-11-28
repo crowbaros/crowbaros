@@ -732,7 +732,10 @@ impl Service {
         // A harness that cannot steer has the message wait behind the turn.
         // So does a thread whose subagent asks when the harness strands a
         // subagent's request on a new prompt.
-        if !self.harness.as_ref().is_some_and(|h| h.capabilities().supports_steering)
+        if !self
+            .harness
+            .as_ref()
+            .is_some_and(|h| h.capabilities().supports_steering)
             || self.subagent_request_holds_prompt(thread_id)
         {
             return self.queue_message(peer_id, is_person, thread_id, meta, text, wanted, log);
@@ -1190,14 +1193,14 @@ impl Service {
         // A Stop that leaves nothing of the thread working holds against
         // what the harness begins on it after, until the person's next
         // message: OpenCode answers a stopped subagent's report too.
-        let leaves_nothing = self
-            .turns
-            .working_subagents
-            .values()
-            .all(|s| s.thread_id != thread_id || s.stop_asked.is_some())
-            && self.turns.working_turns.get(thread_id).is_none_or(|active| {
-                active.stop_asked.is_some() || requested_turn.is_none_or(|t| active.turn == t)
-            });
+        let leaves_nothing =
+            self.turns
+                .working_subagents
+                .values()
+                .all(|s| s.thread_id != thread_id || s.stop_asked.is_some())
+                && self.turns.working_turns.get(thread_id).is_none_or(|active| {
+                    active.stop_asked.is_some() || requested_turn.is_none_or(|t| active.turn == t)
+                });
         if leaves_nothing {
             self.turns.held_stops.insert(thread_id.to_string());
         }
@@ -1501,7 +1504,9 @@ impl Service {
             active.dispatch = TurnDispatch::WaitingForEffort;
             return;
         }
-        if harness.capabilities().supports_modes && harness.session_current_mode(&session_id) != Some(active.mode.as_str()) {
+        if harness.capabilities().supports_modes
+            && harness.session_current_mode(&session_id) != Some(active.mode.as_str())
+        {
             harness.set_session_mode(thread_id, Some(active.turn), &session_id, &active.mode);
             active.dispatch = TurnDispatch::WaitingForMode;
         } else if holds_prompt && (in_batch || has_subagent_wait) {

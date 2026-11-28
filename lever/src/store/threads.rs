@@ -1,7 +1,7 @@
 //! Thread CRUD, metadata, discovery/history import, project moves, and lifecycle.
 
-use super::records::*;
 use super::Store;
+use super::records::*;
 use crate::harness::SessionHistory;
 use crate::sys;
 use rusqlite::{OptionalExtension, params};
@@ -568,7 +568,6 @@ impl Store {
         Ok(())
     }
 
-
     pub fn list_threads(&self) -> Result<Vec<ThreadSummary>, String> {
         let mut stmt = self
             .conn
@@ -865,5 +864,4 @@ impl Store {
             turns,
         }))
     }
-
 }

@@ -168,11 +168,7 @@ pub(super) fn to_acp_mcp_servers(specs: &[McpServerSpec], dialect: &dyn AcpDiale
                 .into_iter()
                 .map(|(name, value)| EnvVariable::new(name, value))
                 .collect();
-            McpServer::Stdio(
-                McpServerStdio::new(spec.name, spec.command)
-                    .args(spec.args)
-                    .env(env),
-            )
+            McpServer::Stdio(McpServerStdio::new(spec.name, spec.command).args(spec.args).env(env))
         })
         .collect()
 }
@@ -249,10 +245,7 @@ fn ungrouped_model(id: &str, name: &str, dialect: &dyn AcpDialect) -> ModelOptio
 }
 
 /// Extracts the Model selector from ACP session configuration options.
-pub(super) fn extract_model_catalog(
-    options: &[SessionConfigOption],
-    dialect: &dyn AcpDialect,
-) -> Option<ModelCatalog> {
+pub(super) fn extract_model_catalog(options: &[SessionConfigOption], dialect: &dyn AcpDialect) -> Option<ModelCatalog> {
     let (opt, select) = model_option(options)?;
     let mut models = Vec::new();
     match &select.options {

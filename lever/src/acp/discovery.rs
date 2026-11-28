@@ -71,10 +71,7 @@ pub struct AcpSessionDiscoverer {
 impl AcpSessionDiscoverer {
     pub fn new(config: HarnessConfig, watch_specs: Vec<WatchSpec>) -> Self {
         let opencode_env = opencode::is_opencode_config(&config)
-            || Path::new(&config.program)
-                .file_name()
-                .and_then(|n| n.to_str())
-                == Some("crowbar-stub-harness");
+            || Path::new(&config.program).file_name().and_then(|n| n.to_str()) == Some("crowbar-stub-harness");
         Self {
             config,
             watch_specs,
@@ -89,13 +86,7 @@ impl AcpSessionDiscoverer {
         let (env_set, env_remove) = if self.opencode_env {
             opencode::build_discovery_env(&self.config)
         } else {
-            let env_set: Vec<(String, String)> = self
-                .config
-                .env
-                .iter()
-                .filter(|(k, _)| k != "PWD")
-                .cloned()
-                .collect();
+            let env_set: Vec<(String, String)> = self.config.env.iter().filter(|(k, _)| k != "PWD").cloned().collect();
             (env_set, vec!["PWD"])
         };
         let cmd = sys::harness_command(&self.config.program, &self.config.args, &env_set, &env_remove);

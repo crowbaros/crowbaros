@@ -158,14 +158,21 @@ fn generic_acp_dialect_injects_no_opencode_env_or_extensions() {
     assert!(dialect.child_update_notification_method().is_none());
     assert!(!dialect.holds_prompt_during_subagent_request());
     let spec = McpServerSpec::crowbar(PathBuf::from("/bin/lever"), Path::new("/tmp/t.sock"), "a", "s");
-    assert!(!dialect.enrich_mcp_server(&spec).env.iter().any(|(k, _)| k == mcp::ENV_MCP_META_SESSION_KEY));
+    assert!(
+        !dialect
+            .enrich_mcp_server(&spec)
+            .env
+            .iter()
+            .any(|(k, _)| k == mcp::ENV_MCP_META_SESSION_KEY)
+    );
 
     let oc = OpenCodeAcpDialect;
     assert!(oc.holds_prompt_during_subagent_request());
-    assert!(oc
-        .enrich_mcp_server(&spec)
-        .env
-        .contains(&(mcp::ENV_MCP_META_SESSION_KEY.into(), "ai.opencode/sessionID".into())));
+    assert!(
+        oc.enrich_mcp_server(&spec)
+            .env
+            .contains(&(mcp::ENV_MCP_META_SESSION_KEY.into(), "ai.opencode/sessionID".into()))
+    );
 }
 
 #[test]
@@ -179,10 +186,7 @@ fn no_models_error_is_recognized_by_error_name_or_message() {
         &json!({ "code": -32603, "message": "Internal error: No models are available" }),
         "Internal error: No models are available"
     ));
-    assert!(!oc.is_no_models_error(
-        &json!({ "code": -32603, "message": "Timeout" }),
-        "Timeout"
-    ));
+    assert!(!oc.is_no_models_error(&json!({ "code": -32603, "message": "Timeout" }), "Timeout"));
 
     let generic = GenericAcpDialect;
     assert!(!generic.is_no_models_error(

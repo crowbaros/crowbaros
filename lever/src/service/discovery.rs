@@ -273,12 +273,7 @@ impl Service {
     /// Whether a discovery pass is running: a one-shot listing or
     /// classification on the background thread, or a live `session/list`.
     fn discovery_busy(&self) -> bool {
-        self.discovery.live_list_in_flight
-            || self
-                .discovery
-                .runner
-                .as_ref()
-                .is_some_and(DiscoveryRunner::in_flight)
+        self.discovery.live_list_in_flight || self.discovery.runner.as_ref().is_some_and(DiscoveryRunner::in_flight)
     }
 
     /// A live `session/list` the harness has not answered in
@@ -331,12 +326,7 @@ impl Service {
         // What the pass's listing wrote to the store was written before it
         // ended: it is read while the pass still counts as running.
         self.on_store_changed();
-        let Some((outcome, rescan)) = self
-            .discovery
-            .runner
-            .as_mut()
-            .and_then(DiscoveryRunner::take_result)
-        else {
+        let Some((outcome, rescan)) = self.discovery.runner.as_mut().and_then(DiscoveryRunner::take_result) else {
             return Effects::default();
         };
         let (found, fingerprint) = match outcome {

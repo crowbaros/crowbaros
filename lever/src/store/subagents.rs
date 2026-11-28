@@ -1,7 +1,7 @@
 //! Subagent records, messages, and acts.
 
-use super::records::*;
 use super::Store;
+use super::records::*;
 use crate::sys;
 use rusqlite::{OptionalExtension, params};
 
@@ -22,7 +22,6 @@ impl Store {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("could not read subagent message row: {e}"))
     }
-
 
     pub(super) fn subagent_acts(&self, subagent_id: &str) -> Result<Vec<ActRecord>, String> {
         let mut stmt = self
@@ -395,4 +394,3 @@ impl Store {
         Ok(record)
     }
 }
-

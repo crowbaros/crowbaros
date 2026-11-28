@@ -165,7 +165,9 @@ impl AcpHarness {
                 self.listing_sessions = false;
                 self.live_sessions_acc.clear();
                 self.live_sessions_seen.clear();
-                events.push(HarnessEvent::SessionsListed(Err(self.redact_for_thread(None, &raw_msg))));
+                events.push(HarnessEvent::SessionsListed(
+                    Err(self.redact_for_thread(None, &raw_msg)),
+                ));
             }
             PendingRpc::SetModel { thread_id, turn, .. } => {
                 let message = self.redact_for_thread(Some(&thread_id), &raw_msg);
@@ -618,7 +620,8 @@ impl AcpHarness {
         match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
             Ok(resp) => {
                 self.take_modes(&session_id, Some(&resp.config_options));
-                let told = extract_effort(&resp.config_options).or_else(|| self.session_efforts.get(&session_id).cloned());
+                let told =
+                    extract_effort(&resp.config_options).or_else(|| self.session_efforts.get(&session_id).cloned());
                 if let Some(mut selector) = told {
                     selector.current = effort;
                     self.session_efforts.insert(session_id, selector);

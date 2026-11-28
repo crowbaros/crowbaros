@@ -399,11 +399,7 @@ impl AcpDialect for OpenCodeAcpDialect {
 
     fn enrich_mcp_server(&self, spec: &McpServerSpec) -> McpServerSpec {
         let mut enriched = spec.clone();
-        if !enriched
-            .env
-            .iter()
-            .any(|(k, _)| k == mcp::ENV_MCP_META_SESSION_KEY)
-        {
+        if !enriched.env.iter().any(|(k, _)| k == mcp::ENV_MCP_META_SESSION_KEY) {
             enriched.env.push((
                 mcp::ENV_MCP_META_SESSION_KEY.to_string(),
                 OPENCODE_MCP_META_SESSION_KEY.to_string(),

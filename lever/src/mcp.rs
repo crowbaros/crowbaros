@@ -158,9 +158,7 @@ pub fn run_stdio_bridge() -> Result<(), String> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| format!("mcp-bridge requires {ENV_MCP_AUTH}"))?;
     let session = std::env::var(ENV_MCP_SESSION).unwrap_or_default();
-    let meta_session_key = std::env::var(ENV_MCP_META_SESSION_KEY)
-        .ok()
-        .filter(|s| !s.is_empty());
+    let meta_session_key = std::env::var(ENV_MCP_META_SESSION_KEY).ok().filter(|s| !s.is_empty());
 
     let stdin = io::stdin();
     let stdout = io::stdout();

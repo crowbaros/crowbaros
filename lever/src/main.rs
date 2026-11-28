@@ -3,8 +3,8 @@
 //! its person socket, drives a harness over ACP, and keeps the record of every
 //! thread in the person's home.
 
-use crowbar_lever::harness::HarnessConfig;
 use crowbar_lever::channel::{Channel, Peer};
+use crowbar_lever::harness::HarnessConfig;
 use crowbar_lever::log::{Event, Log};
 use crowbar_lever::mcp;
 use crowbar_lever::service::{

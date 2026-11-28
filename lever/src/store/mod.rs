@@ -155,7 +155,6 @@ impl Store {
             .map_err(|e| format!("could not save default_mode setting: {e}"))?;
         Ok(())
     }
-
 }
 
 fn tighten_permissions(db_path: &Path) -> Result<(), String> {
@@ -172,4 +171,3 @@ fn tighten_permissions(db_path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-
