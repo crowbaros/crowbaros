@@ -70,6 +70,7 @@ pub(super) fn extract_modes(options: &[SessionConfigOption], dialect: &dyn AcpDi
         .filter(|(_, value)| values.iter().any(|v| v == value))
         .map(|(id, _)| (*id).to_string())
         .collect();
+    // A selector that offers none of Lever's modes is one Lever leaves alone.
     if modes.is_empty() {
         return None;
     }
@@ -119,6 +120,8 @@ pub(super) fn request_detail(
             .and_then(Value::as_str)
             .map(str::to_string)
     };
+    // A path or a command is something only when it says something. A text
+    // a change takes out or puts in may be empty, as when lines are deleted.
     let field = |name: &str| text(name).filter(|s| !s.is_empty());
     let path = field("path").or_else(|| field("filePath")).or_else(|| {
         fields
@@ -244,8 +247,12 @@ fn ungrouped_model(id: &str, name: &str, dialect: &dyn AcpDialect) -> ModelOptio
     }
 }
 
-/// Extracts the Model selector from ACP session configuration options.
-pub(super) fn extract_model_catalog(options: &[SessionConfigOption], dialect: &dyn AcpDialect) -> Option<ModelCatalog> {
+/// Extracts the Model selector and its ACP configuration option ID from
+/// session configuration options.
+pub(super) fn extract_model_catalog(
+    options: &[SessionConfigOption],
+    dialect: &dyn AcpDialect,
+) -> Option<(ModelCatalog, String)> {
     let (opt, select) = model_option(options)?;
     let mut models = Vec::new();
     match &select.options {
@@ -268,18 +275,21 @@ pub(super) fn extract_model_catalog(options: &[SessionConfigOption], dialect: &d
         _ => {}
     }
     let default_model = (!select.current_value.0.is_empty()).then(|| select.current_value.0.as_ref().to_string());
-    Some(ModelCatalog {
-        supported: true,
-        models,
-        default_model,
-        config_id: Some(opt.id.0.as_ref().to_string()),
-        modes: Vec::new(),
-    })
+    Some((
+        ModelCatalog {
+            supported: true,
+            models,
+            default_model,
+            modes: Vec::new(),
+        },
+        opt.id.0.as_ref().to_string(),
+    ))
 }
 
-/// Reads a session's effort selector: the configuration option of category
-/// `thought_level`. A selector with no levels is none.
-pub(super) fn extract_effort(options: &[SessionConfigOption]) -> Option<EffortSelector> {
+/// Reads a session's effort selector and its ACP configuration option ID: the
+/// configuration option of category `thought_level`. A selector with no levels
+/// is none.
+pub(super) fn extract_effort(options: &[SessionConfigOption]) -> Option<(EffortSelector, String)> {
     let opt = options
         .iter()
         .find(|o| o.category == Some(SessionConfigOptionCategory::ThoughtLevel))?;
@@ -307,11 +317,13 @@ pub(super) fn extract_effort(options: &[SessionConfigOption]) -> Option<EffortSe
     if levels.is_empty() {
         return None;
     }
-    Some(EffortSelector {
-        config_id: opt.id.0.as_ref().to_string(),
-        options: levels,
-        current: select.current_value.0.as_ref().to_string(),
-    })
+    Some((
+        EffortSelector {
+            options: levels,
+            current: select.current_value.0.as_ref().to_string(),
+        },
+        opt.id.0.as_ref().to_string(),
+    ))
 }
 
 /// The commands of an ACP `available_commands_update`, as Lever keeps them.
@@ -414,6 +426,8 @@ pub(super) fn redact_ids(input: &str, mut ids: Vec<&str>) -> String {
         let mut redacted = String::with_capacity(out.len());
         let mut from = 0;
         while let Some(found) = out[from..].find(id) {
+            // Both neighbors are read from the whole text, so a match that
+            // follows another at once still has the character before it.
             let (at, end) = (from + found, from + found + id.len());
             let before = out[..at].chars().next_back();
             let after = out[end..].chars().next();

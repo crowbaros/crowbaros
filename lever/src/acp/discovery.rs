@@ -1,10 +1,11 @@
 //! One-shot ACP v1 session discovery (`initialize` + `session/list`) and
 //! discoverer selection for ACP/OpenCode harnesses.
 
+use super::dialect::dialect_for_config;
 use crate::discovery::{
     Listing, SessionDiscoverer, meta_indicates_subagent, parse_rfc3339_unix, spec_has_data, watch_specs_from_paths,
 };
-use crate::harness::{ExternalSession, HarnessConfig};
+use crate::harness::{ExternalSession, HarnessConfig, HarnessDialect};
 use crate::opencode;
 use crate::sys;
 use crate::version::LEVER_VERSION;
@@ -65,31 +66,22 @@ pub(crate) fn session_info_to_external(info: &SessionInfo) -> Option<ExternalSes
 pub struct AcpSessionDiscoverer {
     config: HarnessConfig,
     watch_specs: Vec<WatchSpec>,
-    opencode_env: bool,
 }
 
 impl AcpSessionDiscoverer {
     pub fn new(config: HarnessConfig, watch_specs: Vec<WatchSpec>) -> Self {
-        let opencode_env = opencode::is_opencode_config(&config)
-            || Path::new(&config.program).file_name().and_then(|n| n.to_str()) == Some("crowbar-stub-harness");
-        Self {
-            config,
-            watch_specs,
-            opencode_env,
-        }
+        Self { config, watch_specs }
     }
 
     /// Runs a single one-shot ACP `initialize` + `session/list` against
     /// `self.config` and immediately terminates the child process.
     pub fn list_via_acp(&self) -> Result<Listing, String> {
+        // The store, watched while the listing runs: what it writes as it
+        // starts is its own, and a write once it has answered is not.
         let mut watcher = StoreWatcher::new(self.watch_specs.clone()).ok().flatten();
-        let (env_set, env_remove) = if self.opencode_env {
-            opencode::build_discovery_env(&self.config)
-        } else {
-            let env_set: Vec<(String, String)> = self.config.env.iter().filter(|(k, _)| k != "PWD").cloned().collect();
-            (env_set, vec!["PWD"])
-        };
+        let (env_set, env_remove) = dialect_for_config(&self.config).prepare_discovery_env(&self.config);
         let cmd = sys::harness_command(&self.config.program, &self.config.args, &env_set, &env_remove);
+        // Dropping the child on any early return ends and waits for it.
         let mut child = sys::WorkerChild::spawn(cmd)
             .map_err(|e| format!("could not start {} to list sessions: {e}", self.config.name))?;
         let mut stdin = child
@@ -129,9 +121,14 @@ impl AcpSessionDiscoverer {
                 return Err("harness uses an unsupported protocol version".to_string());
             }
             if init_resp.agent_capabilities.session_capabilities.list.is_none() {
+                // Nothing was listed, so nothing since is told.
                 watcher = None;
                 return Ok(Vec::new());
             }
+            // The harness writes to its store as it starts, and not once it
+            // has answered: a second listing, taken after the first has
+            // answered and its writes are drained, has every write made
+            // since in it, or seen by the watcher.
             rpc.list_all()?;
             if let Some(watcher) = watcher.as_mut() {
                 let _ = watcher.drain_changed();
@@ -139,6 +136,8 @@ impl AcpSessionDiscoverer {
             rpc.list_all()
         })();
 
+        // Always close stdin and stop the discovery child immediately so no
+        // harness process is ever left running for session discovery.
         drop(rpc);
         drop(stdin);
         drop(stdout);
@@ -147,6 +146,7 @@ impl AcpSessionDiscoverer {
     }
 }
 
+/// One-shot JSON-RPC calls to a harness started for one listing.
 struct OneShotRpc<'a> {
     stdin: &'a mut std::process::ChildStdin,
     stdout: &'a mut std::process::ChildStdout,
@@ -161,6 +161,7 @@ impl OneShotRpc<'_> {
         recv_acp_response(self.stdout, &mut self.read_buf, id, self.deadline)
     }
 
+    /// Every session the harness lists, following its pages.
     fn list_all(&mut self) -> Result<Vec<ExternalSession>, String> {
         let mut all = Vec::new();
         let mut seen_ids = HashSet::new();
@@ -217,8 +218,13 @@ impl SessionDiscoverer for AcpSessionDiscoverer {
 }
 
 /// Selects the right [`SessionDiscoverer`] for a configured ACP/OpenCode harness.
+///
+/// A harness with its own store or subagent rules plugs in here behind the
+/// single [`SessionDiscoverer`] contract, as OpenCode does. Any other ACP
+/// harness configured with `--harness-watch` gets the generic
+/// [`AcpSessionDiscoverer`].
 pub fn discoverer_for_harness(config: &HarnessConfig) -> Option<Box<dyn SessionDiscoverer>> {
-    if opencode::is_opencode_config(config) {
+    if config.dialect == HarnessDialect::OpenCodeAcp && opencode::is_opencode_config(config) {
         let specs = opencode::watch_specs_for(config);
         let lister = Box::new(AcpSessionDiscoverer::new(config.clone(), specs.clone()));
         return Some(Box::new(opencode::OpenCodeSessionDiscoverer::new(

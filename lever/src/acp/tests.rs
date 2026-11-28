@@ -1,12 +1,13 @@
 //! Unit tests for ACP formatting, dialect isolation, history replay, and session routing.
 
-use super::dialect::{AcpDialect, GenericAcpDialect, OpenCodeAcpDialect, dialect_for_config};
+use super::dialect::{AcpDialect, ChildUpdateBody, GenericAcpDialect, OpenCodeAcpDialect, dialect_for_config};
 use super::format::{
     extract_effort, extract_model_catalog, extract_modes, harness_commands, line_diff, redact_ids, request_detail,
     tool_detail, value_to_detail,
 };
 use super::history::HistoryBuilder;
 use super::*;
+use crate::harness::{EffortOption, HarnessCommand, HarnessDialect, ModelOption};
 use crate::mcp;
 use crate::opencode::{ASK_FIRST_AGENT, build_harness_env, opencode_config_content};
 use agent_client_protocol_schema::v1::{AvailableCommandsUpdate, SessionConfigOption, ToolCallUpdateFields, ToolKind};
@@ -30,6 +31,7 @@ fn an_id_is_redacted_as_a_whole_word_and_the_longest_first() {
         redact_ids("session s-9: s-9.", vec!["s-9", ""]),
         "session [redacted]: [redacted]."
     );
+    // An ID that follows itself at once is inside a longer word both times.
     assert_eq!(redact_ids("c1c1 and ac1c1", vec!["c1"]), "c1c1 and ac1c1");
     assert_eq!(redact_ids("c1 c1", vec!["c1"]), "[redacted] [redacted]");
 }
@@ -102,6 +104,7 @@ fn opencode_config_content_disables_self_update_adds_ask_first_and_preserves_oth
 
 #[test]
 fn harness_env_toggles_free_hosted_models_without_losing_extra_env() {
+    // Without extra env, free_hosted_models=false also disables models.opencode.ai fetch.
     let (default_off, _) = build_harness_env(&[], None, &[], false);
     assert!(default_off.contains(&("OPENCODE_DISABLE_FREE_MODELS".into(), "1".into())));
     assert!(default_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
@@ -111,11 +114,13 @@ fn harness_env_toggles_free_hosted_models_without_losing_extra_env() {
     assert!(!default_on.iter().any(|(k, _)| k == "OPENCODE_DISABLE_MODELS_FETCH"));
     assert_eq!(rm_default_on, vec!["OPENCODE_DISABLE_FREE_MODELS"]);
 
+    // Even an explicit `=0` cannot re-enable models.opencode.ai fetch while free Models are off.
     let override_zero = vec![("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "0".to_string())];
     let (forced_off, _) = build_harness_env(&override_zero, None, &[], false);
     assert!(forced_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "1".into())));
     assert!(!forced_off.contains(&("OPENCODE_DISABLE_MODELS_FETCH".into(), "0".into())));
 
+    // Explicit --harness-env OPENCODE_DISABLE_MODELS_FETCH=1 is preserved in both states.
     let extra = vec![("OPENCODE_DISABLE_MODELS_FETCH".to_string(), "1".to_string())];
     let (set_off, rm_off) = build_harness_env(&extra, None, &[], false);
     assert_eq!(
@@ -148,15 +153,20 @@ fn generic_acp_dialect_injects_no_opencode_env_or_extensions() {
         args: vec!["--acp".into()],
         env: vec![("CUSTOM".into(), "1".into())],
         watch_paths: Vec::new(),
+        dialect: HarnessDialect::GenericAcp,
     };
     let dialect = dialect_for_config(&cfg);
     let (env_set, env_remove) = dialect.prepare_spawn_env(&cfg, HarnessLaunchOptions::default());
     assert_eq!(env_set, vec![("CUSTOM".into(), "1".into())]);
     assert!(env_remove.is_empty());
+    let (disc_set, disc_remove) = dialect.prepare_discovery_env(&cfg);
+    assert_eq!(disc_set, vec![("CUSTOM".into(), "1".into())]);
+    assert_eq!(disc_remove, vec!["PWD"]);
     assert!(dialect.initialize_client_meta().is_none());
     assert!(dialect.steering_method().is_none());
     assert!(dialect.child_update_notification_method().is_none());
     assert!(!dialect.holds_prompt_during_subagent_request());
+    assert_eq!(dialect.harness_mode("ask-first"), Some("ask-first"));
     let spec = McpServerSpec::crowbar(PathBuf::from("/bin/lever"), Path::new("/tmp/t.sock"), "a", "s");
     assert!(
         !dialect
@@ -166,7 +176,7 @@ fn generic_acp_dialect_injects_no_opencode_env_or_extensions() {
             .any(|(k, _)| k == mcp::ENV_MCP_META_SESSION_KEY)
     );
 
-    let oc = OpenCodeAcpDialect;
+    let oc = OpenCodeAcpDialect::default();
     assert!(oc.holds_prompt_during_subagent_request());
     assert!(
         oc.enrich_mcp_server(&spec)
@@ -176,8 +186,47 @@ fn generic_acp_dialect_injects_no_opencode_env_or_extensions() {
 }
 
 #[test]
+fn wrapper_launcher_gets_opencode_dialect_consistently_across_launch_and_discovery() {
+    let wrapper_cfg = HarnessConfig {
+        id: "harness-1".into(),
+        name: "Custom Wrapper".into(),
+        program: "/usr/local/bin/agent-wrapper".into(),
+        args: vec!["acp".into()],
+        env: Vec::new(),
+        watch_paths: Vec::new(),
+        dialect: HarnessDialect::default(),
+    };
+    let dialect = dialect_for_config(&wrapper_cfg);
+    let (spawn_env, _) = dialect.prepare_spawn_env(&wrapper_cfg, HarnessLaunchOptions::default());
+    assert!(
+        spawn_env.iter().any(|(k, _)| k == "OPENCODE_CONFIG_CONTENT"),
+        "wrapper launcher using default dialect must keep OpenCode spawn env"
+    );
+    let (disc_env, _) = dialect.prepare_discovery_env(&wrapper_cfg);
+    assert!(
+        disc_env.iter().any(|(k, _)| k == "OPENCODE_CONFIG_CONTENT"),
+        "wrapper launcher using default dialect must keep OpenCode discovery env"
+    );
+    assert_eq!(dialect.steering_method(), Some("_session/steering"));
+    assert!(dialect.holds_prompt_during_subagent_request());
+
+    // Spawning a real child via the production AcpHarnessFactory applies the same dialect.
+    let mut factory = AcpHarnessFactory;
+    let cat_wrapper = HarnessConfig {
+        program: "/bin/cat".into(),
+        args: Vec::new(),
+        ..wrapper_cfg
+    };
+    let harness = factory
+        .spawn(&cat_wrapper, HarnessLaunchOptions::default())
+        .expect("spawn via production factory");
+    assert!(harness.capabilities().holds_prompt_during_subagent_request);
+    harness.kill_tree();
+}
+
+#[test]
 fn no_models_error_is_recognized_by_error_name_or_message() {
-    let oc = OpenCodeAcpDialect;
+    let oc = OpenCodeAcpDialect::default();
     assert!(oc.is_no_models_error(
         &json!({ "code": -32603, "message": "Internal error", "data": { "errorName": "CatalogNotReady" } }),
         "Internal error"
@@ -187,11 +236,24 @@ fn no_models_error_is_recognized_by_error_name_or_message() {
         "Internal error: No models are available"
     ));
     assert!(!oc.is_no_models_error(&json!({ "code": -32603, "message": "Timeout" }), "Timeout"));
+    // Transient errors mentioning the catalog must NOT masquerade as an empty catalog.
+    assert!(!oc.is_no_models_error(
+        &json!({ "code": -32603, "message": "Model catalog request timed out" }),
+        "Model catalog request timed out"
+    ));
 
     let generic = GenericAcpDialect;
     assert!(!generic.is_no_models_error(
         &json!({ "code": -32603, "message": "Internal error", "data": { "errorName": "CatalogNotReady" } }),
         "Internal error"
+    ));
+    assert!(!generic.is_no_models_error(
+        &json!({ "code": -32603, "message": "Model catalog request timed out" }),
+        "Model catalog request timed out"
+    ));
+    assert!(generic.is_no_models_error(
+        &json!({ "code": -32603, "message": "No models are available" }),
+        "No models are available"
     ));
 }
 
@@ -210,6 +272,7 @@ fn a_change_shows_as_the_lines_it_removes_and_adds_with_a_few_around_it() {
     assert_eq!(shown.lines().count(), MAX_DETAIL_LINES + 1);
     assert!(shown.ends_with("… 600 more lines put in"));
 
+    // A long replacement shows what it takes out and what it puts in.
     let old: String = (0..450).map(|n| format!("old {n}\n")).collect();
     let new: String = (0..450).map(|n| format!("new {n}\n")).collect();
     let shown = line_diff(Some(&old), &new);
@@ -223,7 +286,9 @@ fn a_change_shows_as_the_lines_it_removes_and_adds_with_a_few_around_it() {
 
 #[test]
 fn a_models_provider_is_its_group_or_what_its_id_says() {
-    let oc = OpenCodeAcpDialect;
+    let oc = OpenCodeAcpDialect::default();
+    // As OpenCode lists them: no groups, the provider in the ID and at
+    // the front of the name.
     let ungrouped: Vec<SessionConfigOption> = serde_json::from_value(json!([
         { "id": "model", "name": "Model", "category": "model", "type": "select",
           "currentValue": "opencode/big-pickle",
@@ -235,7 +300,8 @@ fn a_models_provider_is_its_group_or_what_its_id_says() {
           ] }
     ]))
     .unwrap();
-    let catalog = extract_model_catalog(&ungrouped, &oc).unwrap();
+    let (catalog, cid) = extract_model_catalog(&ungrouped, &oc).unwrap();
+    assert_eq!(cid, "model");
     let model = |id: &str, name: &str, provider: Option<(&str, &str)>| ModelOption {
         id: id.into(),
         name: name.into(),
@@ -252,6 +318,7 @@ fn a_models_provider_is_its_group_or_what_its_id_says() {
     );
     assert_eq!(catalog.default_model.as_deref(), Some("opencode/big-pickle"));
 
+    // A harness that groups its Models says the provider itself.
     let grouped: Vec<SessionConfigOption> = serde_json::from_value(json!([
         { "id": "model", "name": "Model", "category": "model", "type": "select",
           "currentValue": "m-1",
@@ -261,7 +328,7 @@ fn a_models_provider_is_its_group_or_what_its_id_says() {
           ] }
     ]))
     .unwrap();
-    let catalog = extract_model_catalog(&grouped, &oc).unwrap();
+    let (catalog, _) = extract_model_catalog(&grouped, &oc).unwrap();
     assert_eq!(
         catalog.models,
         [
@@ -289,7 +356,8 @@ fn effort_is_the_thought_level_option_and_a_selector_with_no_levels_is_none() {
           "options": [{ "value": "high", "name": "High" }, { "value": "default", "name": "Default" }] }
     ]))
     .unwrap();
-    let selector = extract_effort(&options).unwrap();
+    let (selector, cid) = extract_effort(&options).unwrap();
+    assert_eq!(cid, "effort");
     assert_eq!(selector.current, "default");
     assert!(selector.offers("high") && !selector.offers("max"));
     assert_eq!(
@@ -305,6 +373,7 @@ fn effort_is_the_thought_level_option_and_a_selector_with_no_levels_is_none() {
             },
         ]
     );
+    // An option that only happens to be named `effort` is not one.
     let unmarked: Vec<SessionConfigOption> = serde_json::from_value(json!([
         { "id": "effort", "name": "Effort", "type": "select", "currentValue": "x",
           "options": [{ "value": "x", "name": "X" }] },
@@ -350,7 +419,7 @@ fn a_command_keeps_its_name_what_the_harness_says_of_it_and_its_hint() {
 
 #[test]
 fn modes_are_lever_s_own_and_only_those_the_harness_reports() {
-    let oc = OpenCodeAcpDialect;
+    let oc = OpenCodeAcpDialect::default();
     let options: Vec<SessionConfigOption> = serde_json::from_value(json!([
         { "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "m",
           "options": [{ "value": "m", "name": "M" }] },
@@ -378,6 +447,7 @@ fn modes_are_lever_s_own_and_only_those_the_harness_reports() {
     assert_eq!(selector.modes, vec!["full-access"]);
     assert_eq!(selector.current, None);
 
+    // A harness whose modes are none of Lever's has none Lever sets.
     let others: Vec<SessionConfigOption> = serde_json::from_value(json!([
         { "id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "default",
           "options": [{ "value": "default", "name": "Default" }, { "value": "yolo", "name": "Yolo" }] }
@@ -419,6 +489,7 @@ fn a_request_shows_the_exact_command_or_the_file_and_the_change() {
         request_detail(Some(ToolKind::Edit), &raw_edit, home),
         (Some("+hello".to_string()), Some("/w/new.txt".to_string()))
     );
+    // Lines taken out, with nothing put in their place, are the change.
     let deletion: ToolCallUpdateFields = serde_json::from_value(json!({
         "kind": "edit", "rawInput": { "filePath": "/w/old.txt", "oldString": "remove me\n", "newString": "" }
     }))
@@ -431,7 +502,7 @@ fn a_request_shows_the_exact_command_or_the_file_and_the_change() {
 
 #[test]
 fn transport_retry_failure_triggers_only_for_repeated_transport_errors() {
-    let oc = OpenCodeAcpDialect;
+    let oc = OpenCodeAcpDialect::default();
     let early = json!({
         "sessionUpdate": "session_info_update",
         "_meta": {
@@ -471,7 +542,9 @@ fn transport_retry_failure_triggers_only_for_repeated_transport_errors() {
 
 #[test]
 fn child_title_prefix_and_opencode_subagent_metadata_are_normalized() {
-    let oc = OpenCodeAcpDialect;
+    let oc = OpenCodeAcpDialect::default();
+    let mut oc_initialized = OpenCodeAcpDialect::default();
+    oc_initialized.on_initialize(Some("opencode"));
     assert_eq!(
         oc.strip_child_title_prefix("Inspect files: Read .env", Some("Inspect files")),
         "Read .env"
@@ -511,15 +584,16 @@ fn child_title_prefix_and_opencode_subagent_metadata_are_normalized() {
             "status": "running"
         }
     });
-    assert!(oc.is_subagent_tool("subagent", ToolKind::Think, Some(&input), &json!({}), false));
-    assert!(oc.is_subagent_tool("task", ToolKind::Think, None, &json!({}), true));
-    assert!(!oc.is_subagent_tool("Task", ToolKind::Think, None, &json!({}), false));
+    // OpenCode's legacy `task` launcher is OpenCode's only: another
+    // harness's `Task` act stays an act.
+    assert!(oc.is_subagent_tool("subagent", ToolKind::Think, Some(&input), &json!({})));
+    assert!(oc_initialized.is_subagent_tool("task", ToolKind::Think, None, &json!({})));
+    assert!(!oc.is_subagent_tool("Task", ToolKind::Think, None, &json!({})));
     assert!(!oc.is_subagent_tool(
         "task",
         ToolKind::Think,
         Some(&input),
         &json!({ "_meta": { "toolName": "task" } }),
-        false
     ));
     assert_eq!(
         oc.extract_subagent_call_fields(Some(&input), Some(&output)),
@@ -529,16 +603,27 @@ fn child_title_prefix_and_opencode_subagent_metadata_are_normalized() {
             Some("ses_child_1".to_string()),
         )
     );
-    assert_eq!(
-        oc.extract_child_error(Some(&json!({ "message": "boom" }))).as_deref(),
-        Some("boom")
-    );
+    let status_payload = json!({
+        "childSessionId": "ses_child_1",
+        "type": "status",
+        "status": "failed",
+        "error": { "message": "boom" }
+    });
+    let parsed = oc.parse_child_update(&status_payload).unwrap();
+    match parsed.body {
+        ChildUpdateBody::Status { state, error } => {
+            assert_eq!(state.as_deref(), Some("failed"));
+            assert_eq!(error.as_deref(), Some("boom"));
+        }
+        _ => panic!("expected status body"),
+    }
 }
 
 #[test]
 fn history_builder_keeps_consecutive_user_messages_as_their_own_turns() {
-    let oc = OpenCodeAcpDialect;
-    let mut b = HistoryBuilder::new(true);
+    let mut oc = OpenCodeAcpDialect::default();
+    oc.on_initialize(Some("opencode"));
+    let mut b = HistoryBuilder::new();
     for (id, text) in [("u1", "First "), ("u1", "part"), ("u2", "Second")] {
         b.push_update(
             &json!({
@@ -567,8 +652,9 @@ fn history_builder_keeps_consecutive_user_messages_as_their_own_turns() {
 
 #[test]
 fn history_builder_reconstructs_multi_turn_replay_with_acts_and_subagents() {
-    let oc = OpenCodeAcpDialect;
-    let mut b = HistoryBuilder::new(true);
+    let mut oc = OpenCodeAcpDialect::default();
+    oc.on_initialize(Some("opencode"));
+    let mut b = HistoryBuilder::new();
     b.push_update(
         &json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "text", "text": "Hello " } }),
         &oc,
@@ -665,12 +751,18 @@ fn late_update_for_known_child_does_not_stamp_retired_turn() {
         args: Vec::new(),
         env: Vec::new(),
         watch_paths: Vec::new(),
+        dialect: HarnessDialect::OpenCodeAcp,
     };
-    let mut harness =
-        AcpHarness::spawn_with_dialect(&cfg, HarnessLaunchOptions::default(), Box::new(OpenCodeAcpDialect)).unwrap();
+    let mut harness = AcpHarness::spawn_with_dialect(
+        &cfg,
+        HarnessLaunchOptions::default(),
+        Box::new(OpenCodeAcpDialect::default()),
+    )
+    .unwrap();
     assert!(harness.bind_session("t1", "ses-root-1"));
 
     let mut events = Vec::new();
+    // Register an earlier-turn direct child while the root session is live.
     harness.handle_child_update_notification(
         Some(&json!({
             "childSessionId": "ses-child-t1",
@@ -684,8 +776,10 @@ fn late_update_for_known_child_does_not_stamp_retired_turn() {
     );
     assert_eq!(harness.retired_turn_of("ses-child-t1"), None);
 
+    // Detach the root session on Turn 2 (after a project move).
     harness.detach_session("t1", Some(2));
 
+    // A late update for the already-known Turn 1 child must NOT stamp Turn 2 onto it.
     harness.handle_child_update_notification(
         Some(&json!({
             "childSessionId": "ses-child-t1",
@@ -699,6 +793,7 @@ fn late_update_for_known_child_does_not_stamp_retired_turn() {
     );
     assert_eq!(harness.retired_turn_of("ses-child-t1"), None);
 
+    // By contrast, a brand-new delayed direct child first seen after detach gets Turn 2.
     harness.handle_child_update_notification(
         Some(&json!({
             "childSessionId": "ses-child-t2",
@@ -711,6 +806,131 @@ fn late_update_for_known_child_does_not_stamp_retired_turn() {
         &mut events,
     );
     assert_eq!(harness.retired_turn_of("ses-child-t2"), Some(2));
+
+    Box::new(harness).kill_tree();
+}
+
+#[test]
+fn render_unknown_update_skips_whitespace_trims_redacts_and_uses_stable_fallback() {
+    let cfg = HarnessConfig {
+        id: "cat-test".into(),
+        name: "cat-test".into(),
+        program: "/bin/cat".into(),
+        args: Vec::new(),
+        env: Vec::new(),
+        watch_paths: Vec::new(),
+        dialect: HarnessDialect::GenericAcp,
+    };
+    let mut harness =
+        AcpHarness::spawn_with_dialect(&cfg, HarnessLaunchOptions::default(), Box::new(GenericAcpDialect)).unwrap();
+    assert!(harness.bind_session("t1", "ses-root-1"));
+
+    // Only whitespace and metadata fields -> stable fallback string.
+    assert_eq!(
+        harness.render_unknown_update(
+            "t1",
+            &json!({
+                "sessionUpdate": "future_update",
+                "blank": "   \t  ",
+                "_meta": { "internal": true }
+            })
+        ),
+        "Unrecognized update from harness."
+    );
+
+    // Non-empty fields are trimmed, joined, and redacted against known + own IDs.
+    assert_eq!(
+        harness.render_unknown_update(
+            "t1",
+            &json!({
+                "sessionUpdate": "future_update",
+                "toolCallId": "call-99",
+                "a": "  ran call-99 in ses-root-1  ",
+                "b": "   ",
+                "c": 42
+            })
+        ),
+        "ran [redacted] in [redacted] 42"
+    );
+
+    Box::new(harness).kill_tree();
+}
+
+#[test]
+fn generic_acp_dialect_maps_canonical_modes_and_declines_steer_cleanly() {
+    let generic = GenericAcpDialect;
+    let options_with_modes: Vec<SessionConfigOption> = serde_json::from_value(json!([
+        { "id": "mode", "name": "Mode", "category": "mode", "type": "select",
+          "currentValue": "ask-first",
+          "options": [
+              { "value": "ask-first", "name": "Ask first" },
+              { "value": "plan", "name": "Plan" }
+          ] }
+    ]))
+    .unwrap();
+    let sel = extract_modes(&options_with_modes, &generic).unwrap();
+    assert_eq!(sel.modes, vec!["ask-first", "plan"]);
+    assert_eq!(sel.current.as_deref(), Some("ask-first"));
+
+    // A generic harness that does not offer `ask-first` (only `full-access`) does not report `ask-first`.
+    let options_without_ask_first: Vec<SessionConfigOption> = serde_json::from_value(json!([
+        { "id": "mode", "name": "Mode", "category": "mode", "type": "select",
+          "currentValue": "full-access",
+          "options": [
+              { "value": "full-access", "name": "Full access" }
+          ] }
+    ]))
+    .unwrap();
+    let sel_no_ask = extract_modes(&options_without_ask_first, &generic).unwrap();
+    assert_eq!(sel_no_ask.modes, vec!["full-access"]);
+    assert_eq!(sel_no_ask.current.as_deref(), Some("full-access"));
+
+    let cfg = HarnessConfig {
+        id: "generic-test".into(),
+        name: "Generic".into(),
+        program: "/bin/cat".into(),
+        args: Vec::new(),
+        env: Vec::new(),
+        watch_paths: Vec::new(),
+        dialect: HarnessDialect::GenericAcp,
+    };
+    let mut harness =
+        AcpHarness::spawn_with_dialect(&cfg, HarnessLaunchOptions::default(), Box::new(GenericAcpDialect)).unwrap();
+    assert!(harness.bind_session("t1", "s-1"));
+    // GenericAcpDialect has no steering method -> steer() returns false cleanly.
+    assert!(!harness.steer("t1", 1, "s-1", None, "hi"));
+
+    // Requesting `ask-first` when the generic harness keeps `full-access` yields ModeSetFailed.
+    harness.set_session_mode("t1", Some(1), "s-1", "ask-first");
+    let rpc_id = *harness
+        .pending
+        .iter()
+        .find_map(|(id, p)| matches!(p, PendingRpc::SetMode { .. }).then_some(id))
+        .expect("pending set_mode rpc");
+    let mut events = Vec::new();
+    harness.handle_message(
+        json!({
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "result": {
+                "configOptions": [{
+                    "id": "mode",
+                    "name": "Mode",
+                    "category": "mode",
+                    "type": "select",
+                    "currentValue": "full-access",
+                    "options": [{ "value": "full-access", "name": "Full access" }]
+                }]
+            }
+        }),
+        &mut events,
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, HarnessEvent::ModeSetFailed { thread_id, turn: Some(1), .. } if thread_id == "t1")),
+        "generic harness that stays in full-access must fail ask-first cleanly: {events:?}"
+    );
 
     Box::new(harness).kill_tree();
 }

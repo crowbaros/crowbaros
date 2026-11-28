@@ -1,5 +1,5 @@
 use super::*;
-use crate::harness::SessionHistory;
+use crate::harness::{STARTING_MODE, SessionHistory};
 
 #[test]
 fn opens_and_migrates_v2_database_without_threads_model_column() {

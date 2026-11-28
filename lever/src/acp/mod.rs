@@ -23,13 +23,12 @@ mod updates;
 #[cfg(test)]
 mod tests;
 
-pub use crate::harness::{
-    EffortOption, EffortSelector, HarnessCapabilities, HarnessCommand, HarnessConfig, HarnessEvent,
-    HarnessLaunchOptions, ModelCatalog, ModelOption, TurnOutcome, is_mode, mode_name,
-};
 pub use discovery::{AcpSessionDiscoverer, discoverer_for_harness};
 
-use crate::harness::{ExternalSession, Harness, HarnessFactory};
+use crate::harness::{
+    EffortSelector, ExternalSession, Harness, HarnessCapabilities, HarnessConfig, HarnessEvent, HarnessFactory,
+    HarnessLaunchOptions,
+};
 use crate::mcp::McpServerSpec;
 use crate::version::LEVER_VERSION;
 use agent_client_protocol_schema::ProtocolVersion;
@@ -153,9 +152,6 @@ pub struct AcpHarness {
     supports_close_session: bool,
     supports_delete_session: bool,
     supports_steering: bool,
-    /// True when the harness's `initialize` response named itself `opencode`,
-    /// gating OpenCode's legacy `task` subagent launcher heuristic.
-    is_opencode_agent: bool,
     probing_models: bool,
     listing_sessions: bool,
     live_sessions_acc: Vec<ExternalSession>,
@@ -174,6 +170,7 @@ pub struct AcpHarness {
     child_retired_turn: HashMap<String, u64>,
     session_models: HashMap<String, String>,
     session_efforts: HashMap<String, EffortSelector>,
+    session_effort_config_ids: HashMap<String, String>,
     probe_sessions: VecDeque<String>,
     new_probe_sessions: Vec<String>,
     probing_efforts: HashSet<String>,
@@ -235,7 +232,6 @@ impl AcpHarness {
             supports_close_session: false,
             supports_delete_session: false,
             supports_steering: false,
-            is_opencode_agent: false,
             probing_models: false,
             listing_sessions: false,
             live_sessions_acc: Vec::new(),
@@ -254,6 +250,7 @@ impl AcpHarness {
             child_retired_turn: HashMap::new(),
             session_models: HashMap::new(),
             session_efforts: HashMap::new(),
+            session_effort_config_ids: HashMap::new(),
             probe_sessions: VecDeque::new(),
             new_probe_sessions: Vec::new(),
             probing_efforts: HashSet::new(),
@@ -306,11 +303,13 @@ impl AcpHarness {
 
     fn take_effort(&mut self, session_id: &str, options: &[SessionConfigOption]) {
         match extract_effort(options) {
-            Some(selector) => {
+            Some((selector, config_id)) => {
                 self.session_efforts.insert(session_id.to_string(), selector);
+                self.session_effort_config_ids.insert(session_id.to_string(), config_id);
             }
             None if model_option(options).is_some() => {
                 self.session_efforts.remove(session_id);
+                self.session_effort_config_ids.remove(session_id);
             }
             None => {}
         }
@@ -397,6 +396,7 @@ impl AcpHarness {
             self.session_models.remove(&old);
             self.session_modes.remove(&old);
             self.session_efforts.remove(&old);
+            self.session_effort_config_ids.remove(&old);
         }
         self.retired_root_to_thread.remove(session_id);
         self.session_to_thread
@@ -518,6 +518,7 @@ impl Harness for AcpHarness {
             self.session_models.remove(&sid);
             self.session_modes.remove(&sid);
             self.session_efforts.remove(&sid);
+            self.session_effort_config_ids.remove(&sid);
             self.retired_root_to_thread
                 .insert(sid.clone(), (thread_id.to_string(), retired_turn));
             if self.supports_close_session {
@@ -538,6 +539,7 @@ impl Harness for AcpHarness {
             self.session_models.remove(&session_id);
             self.session_modes.remove(&session_id);
             self.session_efforts.remove(&session_id);
+            self.session_effort_config_ids.remove(&session_id);
         }
         let child_ids: Vec<String> = self
             .child_to_thread
@@ -572,6 +574,7 @@ impl Harness for AcpHarness {
                 session_id: session_id.into(),
             },
         );
+        let _ = self.transport.on_writable();
         true
     }
 
@@ -608,6 +611,9 @@ impl Harness for AcpHarness {
             self.request_new_session(thread_id, turn, cwd, false, mcp_servers, cur_epoch);
             return;
         };
+        // A session another thread holds, or is loading, is not this thread's
+        // to load, whatever ID the harness once gave it. Nor is one the
+        // record says was given to another thread since: its ID is empty.
         let taken = sid.is_empty()
             || self.session_to_thread.get(sid).is_some_and(|owner| owner != thread_id)
             || self.loading_sessions.contains(sid)
@@ -653,8 +659,7 @@ impl Harness for AcpHarness {
         {
             return false;
         }
-        self.history_loads
-            .insert(session_id.to_string(), HistoryBuilder::new(self.is_opencode_agent));
+        self.history_loads.insert(session_id.to_string(), HistoryBuilder::new());
         let req = LoadSessionRequest::new(SessionId::new(session_id.to_string()), PathBuf::from(cwd))
             .mcp_servers(to_acp_mcp_servers(mcp_servers, self.dialect.as_ref()));
         let id = self.transport.send_request(AGENT_METHOD_NAMES.session_load, &req);
@@ -683,9 +688,9 @@ impl Harness for AcpHarness {
         let _ = self.transport.on_writable();
     }
 
-    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) {
+    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) -> bool {
         let Some(method) = self.dialect.steering_method() else {
-            return;
+            return false;
         };
         let params = json!({
             "sessionId": session_id,
@@ -700,6 +705,7 @@ impl Harness for AcpHarness {
             },
         );
         let _ = self.transport.on_writable();
+        true
     }
 
     fn cancel_session(&mut self, session_id: &str) {
@@ -815,9 +821,9 @@ impl Harness for AcpHarness {
 
     fn set_session_effort(&mut self, thread_id: &str, turn: u64, session_id: &str, effort: &str) {
         let config_id = self
-            .session_efforts
+            .session_effort_config_ids
             .get(session_id)
-            .map(|sel| sel.config_id.clone())
+            .cloned()
             .unwrap_or_else(|| "effort".to_string());
         let req = SetSessionConfigOptionRequest::new(
             SessionId::new(session_id.to_string()),

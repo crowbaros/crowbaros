@@ -189,7 +189,7 @@ impl Service {
     pub(super) fn default_mode(&self) -> String {
         self.store
             .default_mode()
-            .unwrap_or_else(|_| crate::store::STARTING_MODE.to_string())
+            .unwrap_or_else(|_| crate::harness::STARTING_MODE.to_string())
     }
 
     pub(super) fn free_hosted_models(&self) -> bool {

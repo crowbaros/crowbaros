@@ -194,8 +194,6 @@ pub struct NewRequest<'a> {
     pub answers: &'a [(String, String)],
 }
 
-pub use crate::harness::STARTING_MODE;
-
 #[derive(Debug, Clone)]
 pub struct ActRecord {
     pub id: String,

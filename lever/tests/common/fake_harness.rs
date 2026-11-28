@@ -112,9 +112,95 @@ struct Inner {
     session_models: HashMap<String, String>,
     session_modes: HashMap<String, String>,
     session_efforts: HashMap<String, EffortSelector>,
+    /// Pending outbound `set_session_mode` / `set_session_effort` requests,
+    /// committed only when the matching `ModeSet` / `EffortSet` event is
+    /// delivered (matching `AcpHarness`'s async RPC completion semantics).
+    pending_mode_sets: HashMap<String, (String, String)>,
+    pending_effort_sets: HashMap<String, (String, String)>,
     active_permissions: HashSet<u64>,
     probe_sessions: Vec<String>,
     spawns: usize,
+}
+
+impl Inner {
+    fn apply_event(&mut self, event: &HarnessEvent) {
+        match event {
+            HarnessEvent::Initialized => self.initialized = true,
+            HarnessEvent::SessionReady {
+                thread_id,
+                session_id,
+                current_model,
+                ..
+            } => {
+                if let Some(old) = self.thread_to_session.insert(thread_id.clone(), session_id.clone())
+                    && old != *session_id
+                {
+                    self.session_to_thread.remove(&old);
+                    self.session_models.remove(&old);
+                    self.session_modes.remove(&old);
+                    self.session_efforts.remove(&old);
+                }
+                self.session_to_thread.insert(session_id.clone(), thread_id.clone());
+                if let Some(m) = current_model {
+                    self.session_models.insert(session_id.clone(), m.clone());
+                }
+            }
+            HarnessEvent::ModelSet { thread_id, model, .. } => {
+                if let Some(sid) = self.thread_to_session.get(thread_id).cloned() {
+                    self.session_models.insert(sid, model.clone());
+                }
+            }
+            HarnessEvent::ModeSet { thread_id, .. } => {
+                if let Some((sid, mode)) = self.pending_mode_sets.remove(thread_id) {
+                    self.session_modes.insert(sid, mode);
+                }
+            }
+            HarnessEvent::ModeSetFailed { thread_id, .. } => {
+                self.pending_mode_sets.remove(thread_id);
+            }
+            HarnessEvent::EffortSet { thread_id, .. } => {
+                if let Some((sid, effort)) = self.pending_effort_sets.remove(thread_id)
+                    && let Some(sel) = self.session_efforts.get_mut(&sid)
+                {
+                    sel.current = effort;
+                }
+            }
+            HarnessEvent::EffortSetFailed { thread_id, .. } => {
+                self.pending_effort_sets.remove(thread_id);
+            }
+            HarnessEvent::CatalogUpdated {
+                thread_id,
+                current_model,
+                current_mode,
+                ..
+            } => {
+                if let Some(sid) = self.thread_to_session.get(thread_id).cloned() {
+                    if let Some(m) = current_model {
+                        self.session_models.insert(sid.clone(), m.clone());
+                    }
+                    if let Some(mode) = current_mode {
+                        self.session_modes.insert(sid, mode.clone());
+                    }
+                }
+            }
+            HarnessEvent::HistoryLoaded { thread_id, history, .. } => {
+                if let Some(sid) = self.thread_to_session.get(thread_id).cloned()
+                    && let Some(ref m) = history.model
+                {
+                    self.session_models.insert(sid, m.clone());
+                }
+            }
+            HarnessEvent::ModelsProbed(_) => self.probing_models = false,
+            HarnessEvent::SessionsListed(_) => self.listing_sessions = false,
+            HarnessEvent::PermissionRequested { handle, .. } => {
+                self.active_permissions.insert(*handle);
+            }
+            HarnessEvent::PermissionWithdrawn { handle } => {
+                self.active_permissions.remove(handle);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Shared handle held by both the test and the [`FakeHarness`] instances
@@ -170,6 +256,14 @@ impl FakeHarnessHandle {
             .insert(session_id.to_string(), selector);
     }
 
+    pub fn session_current_mode(&self, session_id: &str) -> Option<String> {
+        self.inner.lock().unwrap().session_modes.get(session_id).cloned()
+    }
+
+    pub fn session_current_model(&self, session_id: &str) -> Option<String> {
+        self.inner.lock().unwrap().session_models.get(session_id).cloned()
+    }
+
     pub fn register_subagent(&self, child_session_id: &str, launcher: Option<&str>) {
         let mut g = self.inner.lock().unwrap();
         g.subagent_sessions.insert(child_session_id.to_string());
@@ -179,42 +273,12 @@ impl FakeHarnessHandle {
     }
 
     pub fn push_event(&self, event: HarnessEvent) {
-        let mut g = self.inner.lock().unwrap();
-        match &event {
-            HarnessEvent::Initialized => g.initialized = true,
-            HarnessEvent::SessionReady {
-                thread_id,
-                session_id,
-                current_model,
-                ..
-            } => {
-                if let Some(old) = g.thread_to_session.insert(thread_id.clone(), session_id.clone()) {
-                    g.session_to_thread.remove(&old);
-                }
-                g.session_to_thread.insert(session_id.clone(), thread_id.clone());
-                if let Some(m) = current_model {
-                    g.session_models.insert(session_id.clone(), m.clone());
-                }
-            }
-            HarnessEvent::ModelSet { thread_id, model, .. } => {
-                if let Some(sid) = g.thread_to_session.get(thread_id).cloned() {
-                    g.session_models.insert(sid, model.clone());
-                }
-            }
-            HarnessEvent::ModelsProbed(_) => g.probing_models = false,
-            HarnessEvent::SessionsListed(_) => g.listing_sessions = false,
-            HarnessEvent::PermissionRequested { handle, .. } => {
-                g.active_permissions.insert(*handle);
-            }
-            _ => {}
-        }
-        g.events.push_back(event);
+        self.inner.lock().unwrap().events.push_back(event);
     }
 
     pub fn push_events(&self, events: impl IntoIterator<Item = HarnessEvent>) {
-        for ev in events {
-            self.push_event(ev);
-        }
+        let mut g = self.inner.lock().unwrap();
+        g.events.extend(events);
     }
 
     pub fn take_calls(&self) -> Vec<RecordedCall> {
@@ -244,12 +308,20 @@ impl HarnessFactory for FakeHarnessFactory {
         g.initialized = false;
         g.probing_models = false;
         g.listing_sessions = false;
+        g.fault = None;
+        g.events.clear();
         g.thread_to_session.clear();
         g.session_to_thread.clear();
         g.subagent_sessions.clear();
         g.launchers.clear();
         g.retired_turns.clear();
+        g.session_models.clear();
+        g.session_modes.clear();
+        g.session_efforts.clear();
+        g.pending_mode_sets.clear();
+        g.pending_effort_sets.clear();
         g.active_permissions.clear();
+        g.probe_sessions.clear();
         g.calls.push(RecordedCall::Spawn {
             free_hosted_models: options.free_hosted_models,
         });
@@ -311,8 +383,16 @@ impl Harness for FakeHarness {
     }
 
     fn on_readable(&mut self) -> Vec<HarnessEvent> {
+        let events: Vec<HarnessEvent> = {
+            let mut g = self.handle.inner.lock().unwrap();
+            let drained: Vec<HarnessEvent> = g.events.drain(..).collect();
+            for ev in &drained {
+                g.apply_event(ev);
+            }
+            drained
+        };
         self.sync();
-        self.handle.inner.lock().unwrap().events.drain(..).collect()
+        events
     }
 
     fn fault(&self) -> Option<&'static str> {
@@ -332,7 +412,16 @@ impl Harness for FakeHarness {
     }
 
     fn capabilities(&self) -> HarnessCapabilities {
-        self.handle.inner.lock().unwrap().capabilities
+        let g = self.handle.inner.lock().unwrap();
+        let caps = g.capabilities;
+        HarnessCapabilities {
+            supports_modes: caps.supports_modes,
+            supports_steering: g.initialized && caps.supports_steering,
+            supports_list_sessions: g.initialized && caps.supports_list_sessions,
+            supports_load_session: g.initialized && caps.supports_load_session,
+            supports_delete_session: g.initialized && caps.supports_delete_session,
+            holds_prompt_during_subagent_request: caps.holds_prompt_during_subagent_request,
+        }
     }
 
     fn session_for_thread(&self, thread_id: &str) -> Option<&str> {
@@ -411,7 +500,7 @@ impl Harness for FakeHarness {
         _mcp_servers: &[McpServerSpec],
     ) -> bool {
         let mut g = self.handle.inner.lock().unwrap();
-        if !g.capabilities.supports_load_session {
+        if !g.initialized || !g.capabilities.supports_load_session {
             return false;
         }
         g.calls.push(RecordedCall::LoadSessionHistory {
@@ -424,7 +513,7 @@ impl Harness for FakeHarness {
 
     fn delete_session(&mut self, thread_id: &str, session_id: &str) -> bool {
         let mut g = self.handle.inner.lock().unwrap();
-        if !g.capabilities.supports_delete_session {
+        if !g.initialized || !g.capabilities.supports_delete_session {
             return false;
         }
         g.calls.push(RecordedCall::DeleteSession {
@@ -439,7 +528,12 @@ impl Harness for FakeHarness {
             let mut g = self.handle.inner.lock().unwrap();
             if let Some(sid) = g.thread_to_session.remove(thread_id) {
                 g.session_to_thread.remove(&sid);
+                g.session_models.remove(&sid);
+                g.session_modes.remove(&sid);
+                g.session_efforts.remove(&sid);
             }
+            g.pending_mode_sets.remove(thread_id);
+            g.pending_effort_sets.remove(thread_id);
             g.calls.push(RecordedCall::DetachSession {
                 thread_id: thread_id.to_string(),
                 retired_turn,
@@ -457,6 +551,8 @@ impl Harness for FakeHarness {
                 g.session_modes.remove(&sid);
                 g.session_efforts.remove(&sid);
             }
+            g.pending_mode_sets.remove(thread_id);
+            g.pending_effort_sets.remove(thread_id);
             g.calls.push(RecordedCall::ForgetSession {
                 thread_id: thread_id.to_string(),
             });
@@ -474,14 +570,19 @@ impl Harness for FakeHarness {
         });
     }
 
-    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) {
-        self.handle.inner.lock().unwrap().calls.push(RecordedCall::Steer {
+    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) -> bool {
+        let mut g = self.handle.inner.lock().unwrap();
+        if !g.initialized || !g.capabilities.supports_steering {
+            return false;
+        }
+        g.calls.push(RecordedCall::Steer {
             thread_id: thread_id.to_string(),
             steer,
             session_id: session_id.to_string(),
             context: context.map(str::to_string),
             text: text.to_string(),
         });
+        true
     }
 
     fn cancel_session(&mut self, session_id: &str) {
@@ -534,47 +635,41 @@ impl Harness for FakeHarness {
     }
 
     fn set_session_model(&mut self, thread_id: &str, turn: Option<u64>, session_id: &str, model: &str) {
-        {
-            let mut g = self.handle.inner.lock().unwrap();
-            g.session_models.insert(session_id.to_string(), model.to_string());
-            g.calls.push(RecordedCall::SetSessionModel {
+        self.handle
+            .inner
+            .lock()
+            .unwrap()
+            .calls
+            .push(RecordedCall::SetSessionModel {
                 thread_id: thread_id.to_string(),
                 turn,
                 session_id: session_id.to_string(),
                 model: model.to_string(),
             });
-        }
-        self.sync();
     }
 
     fn set_session_mode(&mut self, thread_id: &str, turn: Option<u64>, session_id: &str, mode: &str) {
-        {
-            let mut g = self.handle.inner.lock().unwrap();
-            g.session_modes.insert(session_id.to_string(), mode.to_string());
-            g.calls.push(RecordedCall::SetSessionMode {
-                thread_id: thread_id.to_string(),
-                turn,
-                session_id: session_id.to_string(),
-                mode: mode.to_string(),
-            });
-        }
-        self.sync();
+        let mut g = self.handle.inner.lock().unwrap();
+        g.pending_mode_sets
+            .insert(thread_id.to_string(), (session_id.to_string(), mode.to_string()));
+        g.calls.push(RecordedCall::SetSessionMode {
+            thread_id: thread_id.to_string(),
+            turn,
+            session_id: session_id.to_string(),
+            mode: mode.to_string(),
+        });
     }
 
     fn set_session_effort(&mut self, thread_id: &str, turn: u64, session_id: &str, effort: &str) {
-        {
-            let mut g = self.handle.inner.lock().unwrap();
-            if let Some(sel) = g.session_efforts.get_mut(session_id) {
-                sel.current = effort.to_string();
-            }
-            g.calls.push(RecordedCall::SetSessionEffort {
-                thread_id: thread_id.to_string(),
-                turn,
-                session_id: session_id.to_string(),
-                effort: effort.to_string(),
-            });
-        }
-        self.sync();
+        let mut g = self.handle.inner.lock().unwrap();
+        g.pending_effort_sets
+            .insert(thread_id.to_string(), (session_id.to_string(), effort.to_string()));
+        g.calls.push(RecordedCall::SetSessionEffort {
+            thread_id: thread_id.to_string(),
+            turn,
+            session_id: session_id.to_string(),
+            effort: effort.to_string(),
+        });
     }
 
     fn is_listing_sessions(&self) -> bool {
@@ -589,7 +684,7 @@ impl Harness for FakeHarness {
 
     fn list_sessions(&mut self) -> bool {
         let mut g = self.handle.inner.lock().unwrap();
-        if !g.capabilities.supports_list_sessions {
+        if !g.initialized || !g.capabilities.supports_list_sessions {
             return false;
         }
         g.listing_sessions = true;

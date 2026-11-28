@@ -12,7 +12,6 @@ use std::collections::HashMap;
 /// for an externally-started session into Lever's harness-agnostic
 /// [`SessionHistory`].
 pub(super) struct HistoryBuilder {
-    is_opencode: bool,
     title: Option<String>,
     turns: Vec<ImportedTurn>,
     in_user_message: bool,
@@ -27,9 +26,8 @@ pub(super) struct HistoryBuilder {
 }
 
 impl HistoryBuilder {
-    pub(super) fn new(is_opencode: bool) -> Self {
+    pub(super) fn new() -> Self {
         Self {
-            is_opencode,
             title: None,
             turns: Vec::new(),
             in_user_message: false,
@@ -62,6 +60,8 @@ impl HistoryBuilder {
         match serde_json::from_value::<SessionUpdate>(raw_update.clone()) {
             Ok(SessionUpdate::UserMessageChunk(chunk)) => {
                 if let Some(text) = content_block_text(&chunk.content) {
+                    // Two messages in a row, the first left unanswered, are
+                    // two turns.
                     let new_message =
                         msg_id.is_some() && self.last_user_message_id.is_some() && msg_id != self.last_user_message_id;
                     if msg_id.is_some() {
@@ -103,7 +103,7 @@ impl HistoryBuilder {
                 self.in_user_message = false;
                 let call_id = tc.tool_call_id.0.as_ref().to_string();
                 self.tool_ids.push(call_id.clone());
-                if dialect.is_subagent_tool(&tc.title, tc.kind, tc.raw_input.as_ref(), raw_update, self.is_opencode) {
+                if dialect.is_subagent_tool(&tc.title, tc.kind, tc.raw_input.as_ref(), raw_update) {
                     let (title, prompt, child_sid) =
                         dialect.extract_subagent_call_fields(tc.raw_input.as_ref(), tc.raw_output.as_ref());
                     if let Some(cid) = child_sid {
@@ -158,7 +158,7 @@ impl HistoryBuilder {
                             tcu.fields.raw_output.as_ref(),
                             tcu.fields.raw_input.as_ref(),
                         )
-                        .and_then(|d| extract_session_id_from_text(&d))
+                        .and_then(|d| dialect.extract_session_id_from_text(&d))
                     });
                     let title = new_title.or(prev_title);
                     let prompt = new_prompt.or(prev_prompt);
@@ -209,6 +209,8 @@ impl HistoryBuilder {
                     });
                 }
             }
+            // A harness that tells of its subagents as ACP does, rather
+            // than through OpenCode's launcher calls, replays them so too.
             Ok(SessionUpdate::SubagentUpdate(sub)) => {
                 let child_sid = sub.session_id.0.as_ref().to_string();
                 if child_sid.is_empty() {
@@ -219,6 +221,8 @@ impl HistoryBuilder {
                     (_, MaybeUndefined::Value(d)) if !d.trim().is_empty() => Some(d.trim().to_string()),
                     _ => None,
                 };
+                // The session ended before it was read: a subagent it left
+                // working is done, as its acts are.
                 let ended = match sub.state {
                     MaybeUndefined::Value(StateUpdate::Idle(idle)) => Some(match idle.stop_reason {
                         Some(IdleStopReason::Cancelled) => ("stopped", None),
@@ -258,6 +262,8 @@ impl HistoryBuilder {
                     prompt: None,
                 });
             }
+            // What the session asked of one of its subagents is that
+            // subagent's prompt.
             Ok(SessionUpdate::SessionMessage(msg)) => {
                 let MaybeUndefined::Value(recipient) = msg.recipient_session_id else {
                     return;
@@ -336,6 +342,8 @@ impl HistoryBuilder {
         model: Option<String>,
         effort: Option<String>,
     ) -> (SessionHistory, Vec<String>, Vec<String>) {
+        // Normalize any still-pending replayed acts to done since the historical
+        // turn already completed before import.
         for turn in &mut self.turns {
             for act in &mut turn.acts {
                 if matches!(act.state.as_str(), "pending" | "working") {
@@ -354,16 +362,4 @@ impl HistoryBuilder {
             self.subagent_ids,
         )
     }
-}
-
-/// Extracts a `sessionID: <id>` token from a subagent launcher's text content
-/// when `rawOutput` omitted structured metadata.
-pub(super) fn extract_session_id_from_text(text: &str) -> Option<String> {
-    let idx = text.find("sessionID:")?;
-    let rest = text[idx + "sessionID:".len()..].trim_start();
-    let id: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
-        .collect();
-    (!id.is_empty()).then_some(id)
 }

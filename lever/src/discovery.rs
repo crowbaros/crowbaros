@@ -11,9 +11,10 @@
 //!    [`SessionDiscoverer::list_sessions`] on a background thread and wakes
 //!    Lever's `poll(2)` loop over a non-blocking pipe.
 //! 4. When the person opens a discovered thread, Lever reads its history into
-//!    Lever's own SQLite record as a harness-agnostic [`SessionHistory`].
+//!    Lever's own SQLite record as a harness-agnostic
+//!    [`SessionHistory`](crate::harness::SessionHistory).
 
-pub use crate::harness::{ExternalSession, ImportedAct, ImportedSubagent, ImportedTurn, SessionHistory};
+use crate::harness::ExternalSession;
 use crate::watcher::{StoreWatcher, WatchSpec};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};

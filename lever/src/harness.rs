@@ -32,6 +32,16 @@ pub fn is_mode(id: &str) -> bool {
     mode_name(id).is_some()
 }
 
+/// Which protocol dialect a configured harness speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HarnessDialect {
+    /// OpenCode over ACP v1 (CrowbarOS's default ACP dialect).
+    #[default]
+    OpenCodeAcp,
+    /// Pure ACP v1 without vendor extensions.
+    GenericAcp,
+}
+
 /// Configuration for a harness Lever can start on demand.
 #[derive(Debug, Clone)]
 pub struct HarnessConfig {
@@ -43,6 +53,8 @@ pub struct HarnessConfig {
     /// Additional on-disk store paths to watch for sessions started outside
     /// Lever (used by tests or harnesses without built-in default paths).
     pub watch_paths: Vec<PathBuf>,
+    /// Explicit protocol dialect for this harness.
+    pub dialect: HarnessDialect,
 }
 
 /// Per-launch options passed when spawning a harness instance.
@@ -94,7 +106,6 @@ pub struct EffortOption {
 /// it is currently at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffortSelector {
-    pub config_id: String,
     pub options: Vec<EffortOption>,
     pub current: String,
 }
@@ -123,7 +134,6 @@ pub struct ModelCatalog {
     pub supported: bool,
     pub models: Vec<ModelOption>,
     pub default_model: Option<String>,
-    pub config_id: Option<String>,
     /// Lever's modes the harness offers, in Lever's order.
     pub modes: Vec<String>,
 }
@@ -450,10 +460,12 @@ pub trait Harness {
     /// Forgets all session bindings for `thread_id` (e.g., on thread deletion).
     fn forget_session(&mut self, thread_id: &str);
 
-    /// Sends a user prompt turn to `session_id`.
+    /// Sends a person's prompt turn to `session_id`.
     fn send_prompt(&mut self, thread_id: &str, turn: u64, session_id: &str, context: Option<&str>, text: &str);
-    /// Steers a message into the running turn of `session_id`.
-    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str);
+    /// Steers a message into the running turn of `session_id`. Returns `false`
+    /// if the adapter cannot send a steering request (for example when the
+    /// harness lacks steering support), so Lever can fall back to queueing.
+    fn steer(&mut self, thread_id: &str, steer: u64, session_id: &str, context: Option<&str>, text: &str) -> bool;
     /// Requests cancellation of an active turn or subagent session.
     fn cancel_session(&mut self, session_id: &str);
     /// Answers (or withdraws with `None`) a waiting permission request.

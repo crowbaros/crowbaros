@@ -119,7 +119,6 @@ impl AcpHarness {
                         supported: true,
                         models: Vec::new(),
                         default_model: None,
-                        config_id: None,
                         modes: Vec::new(),
                     })));
                 } else {
@@ -155,6 +154,7 @@ impl AcpHarness {
             }
             PendingRpc::LoadHistory { thread_id, session_id } => {
                 self.history_loads.remove(&session_id);
+                // The session is not yet the thread's, so it is named here.
                 let message = redact_ids(
                     &self.redact_for_thread(Some(&thread_id), &raw_msg),
                     vec![session_id.as_str()],
@@ -208,6 +208,9 @@ impl AcpHarness {
                     result: Err(self.redact_for_thread(None, &raw_msg)),
                 });
             }
+            // The harness says the turn was cancelled, with an error
+            // where ACP has `StopReason::Cancelled`. Any other error is
+            // a failure, whether or not a stop was asked for.
             PendingRpc::Prompt { thread_id, turn } if cancelled => {
                 let outcome = match self.transport_failures.remove(&thread_id) {
                     Some(message) => TurnOutcome::Failed(message),
@@ -247,10 +250,8 @@ impl AcpHarness {
                 self.supports_close_session = resp.agent_capabilities.session_capabilities.close.is_some();
                 self.supports_delete_session = resp.agent_capabilities.session_capabilities.delete.is_some();
                 self.supports_steering = self.dialect.steering_supported(resp.meta.as_ref());
-                self.is_opencode_agent = resp
-                    .agent_info
-                    .as_ref()
-                    .is_some_and(|info| info.name.eq_ignore_ascii_case("opencode"));
+                self.dialect
+                    .on_initialize(resp.agent_info.as_ref().map(|info| info.name.as_str()));
                 events.push(HarnessEvent::Initialized);
             }
             Ok(_) => events.push(HarnessEvent::InitializeFailed {
@@ -266,17 +267,22 @@ impl AcpHarness {
         self.probing_models = false;
         match serde_json::from_value::<NewSessionResponse>(result) {
             Ok(resp) => {
-                let mut catalog = resp
+                let extracted = resp
                     .config_options
                     .as_deref()
-                    .and_then(|opts| extract_model_catalog(opts, self.dialect.as_ref()))
-                    .unwrap_or(ModelCatalog {
-                        supported: false,
-                        models: Vec::new(),
-                        default_model: None,
-                        config_id: None,
-                        modes: Vec::new(),
-                    });
+                    .and_then(|opts| extract_model_catalog(opts, self.dialect.as_ref()));
+                let (mut catalog, model_cid) = match extracted {
+                    Some((cat, cid)) => (cat, Some(cid)),
+                    None => (
+                        ModelCatalog {
+                            supported: false,
+                            models: Vec::new(),
+                            default_model: None,
+                            modes: Vec::new(),
+                        },
+                        None,
+                    ),
+                };
                 if let Some(selector) = resp
                     .config_options
                     .as_deref()
@@ -285,16 +291,18 @@ impl AcpHarness {
                     self.mode_config_id = Some(selector.config_id);
                     catalog.modes = selector.modes;
                 }
-                if let Some(ref cid) = catalog.config_id {
-                    self.model_config_id = Some(cid.clone());
+                if let Some(cid) = model_cid {
+                    self.model_config_id = Some(cid);
                 }
+                // The session is at the harness's default Model, so
+                // its options say that Model's effort levels too.
                 let efforts = catalog.default_model.clone().map(|model| HarnessEvent::EffortsProbed {
                     model,
                     result: Ok(resp
                         .config_options
                         .as_deref()
                         .and_then(extract_effort)
-                        .map(|selector| selector.options)
+                        .map(|(selector, _)| selector.options)
                         .unwrap_or_default()),
                 });
                 self.close_probe(resp.session_id);
@@ -325,15 +333,21 @@ impl AcpHarness {
             return;
         }
         match serde_json::from_value::<NewSessionResponse>(result) {
+            // A session with no ID is no session: Lever could neither
+            // tell it from another nor load it again.
             Ok(resp) if !resp.session_id.0.is_empty() => {
                 let sid = resp.session_id.0.as_ref().to_string();
-                let mut catalog = resp
+                let extracted = resp
                     .config_options
                     .as_deref()
                     .and_then(|opts| extract_model_catalog(opts, self.dialect.as_ref()));
+                let (mut catalog, model_cid) = match extracted {
+                    Some((cat, cid)) => (Some(cat), Some(cid)),
+                    None => (None, None),
+                };
                 let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
-                if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
-                    self.model_config_id = Some(cid.clone());
+                if let Some(cid) = model_cid {
+                    self.model_config_id = Some(cid);
                 }
                 if self.bind_session(&thread_id, &sid) {
                     if let Some(ref m) = current_model {
@@ -393,13 +407,17 @@ impl AcpHarness {
         }
         match serde_json::from_value::<LoadSessionResponse>(result) {
             Ok(resp) if self.bind_session(&thread_id, &session_id) => {
-                let mut catalog = resp
+                let extracted = resp
                     .config_options
                     .as_deref()
                     .and_then(|opts| extract_model_catalog(opts, self.dialect.as_ref()));
+                let (mut catalog, model_cid) = match extracted {
+                    Some((cat, cid)) => (Some(cat), Some(cid)),
+                    None => (None, None),
+                };
                 let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
-                if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
-                    self.model_config_id = Some(cid.clone());
+                if let Some(cid) = model_cid {
+                    self.model_config_id = Some(cid);
                 }
                 if let Some(ref m) = current_model {
                     self.session_models.insert(session_id.clone(), m.clone());
@@ -431,25 +449,31 @@ impl AcpHarness {
         let builder = self.history_loads.remove(&session_id);
         match serde_json::from_value::<LoadSessionResponse>(result) {
             Ok(resp) if self.bind_session(&thread_id, &session_id) => {
-                let mut catalog = resp
+                let extracted = resp
                     .config_options
                     .as_deref()
                     .and_then(|opts| extract_model_catalog(opts, self.dialect.as_ref()));
+                let (mut catalog, model_cid) = match extracted {
+                    Some((cat, cid)) => (Some(cat), Some(cid)),
+                    None => (None, None),
+                };
                 let current_model = catalog.as_ref().and_then(|c| c.default_model.clone());
-                if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
-                    self.model_config_id = Some(cid.clone());
+                if let Some(cid) = model_cid {
+                    self.model_config_id = Some(cid);
                 }
                 if let Some(ref m) = current_model {
                     self.session_models.insert(session_id.clone(), m.clone());
                 }
                 self.take_effort(&session_id, resp.config_options.as_deref().unwrap_or(&[]));
                 let effort = self.session_efforts.get(&session_id).map(|e| e.current.clone());
+                // The mode it reports is its own default, not the session's:
+                // the thread keeps its own.
                 let modes = self.take_modes(&session_id, resp.config_options.as_deref());
                 if let (Some(cat), Some(selector)) = (catalog.as_mut(), modes.as_ref()) {
                     cat.modes = selector.modes.clone();
                 }
                 let (mut history, tool_ids, subagent_ids) = builder
-                    .unwrap_or_else(|| HistoryBuilder::new(self.is_opencode_agent))
+                    .unwrap_or_else(HistoryBuilder::new)
                     .finish(current_model.clone(), effort);
                 if !tool_ids.is_empty() {
                     self.remember_tool_ids(&thread_id, tool_ids);
@@ -545,10 +569,14 @@ impl AcpHarness {
     ) {
         match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
             Ok(resp) => {
-                let mut catalog = extract_model_catalog(&resp.config_options, self.dialect.as_ref());
+                let extracted = extract_model_catalog(&resp.config_options, self.dialect.as_ref());
+                let (mut catalog, model_cid) = match extracted {
+                    Some((cat, cid)) => (Some(cat), Some(cid)),
+                    None => (None, None),
+                };
                 let applied = catalog.as_ref().and_then(|c| c.default_model.clone()).unwrap_or(model);
-                if let Some(ref cid) = catalog.as_ref().and_then(|c| c.config_id.clone()) {
-                    self.model_config_id = Some(cid.clone());
+                if let Some(cid) = model_cid {
+                    self.model_config_id = Some(cid);
                 }
                 if let (Some(cat), Some(selector)) = (
                     catalog.as_mut(),
@@ -584,6 +612,8 @@ impl AcpHarness {
     ) {
         match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
             Ok(resp) => {
+                // What the harness says the mode is now is what it is. A
+                // harness that says nothing of it took what was asked.
                 self.take_effort(&session_id, &resp.config_options);
                 let selector = self.take_modes(&session_id, Some(&resp.config_options));
                 match selector {
@@ -619,9 +649,20 @@ impl AcpHarness {
     ) {
         match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
             Ok(resp) => {
+                // A harness that answers with no error took the effort.
+                // What its answer says the effort is does not decide
+                // it: OpenCode, while another of its sessions works,
+                // answers with the effort the session was at, and says
+                // the new one in an update that follows. That update,
+                // as any does, says what the session is at from then on.
                 self.take_modes(&session_id, Some(&resp.config_options));
-                let told =
-                    extract_effort(&resp.config_options).or_else(|| self.session_efforts.get(&session_id).cloned());
+                let told = match extract_effort(&resp.config_options) {
+                    Some((selector, cid)) => {
+                        self.session_effort_config_ids.insert(session_id.clone(), cid);
+                        Some(selector)
+                    }
+                    None => self.session_efforts.get(&session_id).cloned(),
+                };
                 if let Some(mut selector) = told {
                     selector.current = effort;
                     self.session_efforts.insert(session_id, selector);
@@ -644,7 +685,7 @@ impl AcpHarness {
                     .and_then(|(_, select)| (select.current_value.0.as_ref() == model).then_some(()))
                     .is_some();
                 if at_model {
-                    let efforts = extract_effort(options).map(|s| s.options).unwrap_or_default();
+                    let efforts = extract_effort(options).map(|(s, _)| s.options).unwrap_or_default();
                     self.probing_efforts.remove(&model);
                     self.close_probe(resp.session_id);
                     events.push(HarnessEvent::EffortsProbed {
@@ -691,7 +732,7 @@ impl AcpHarness {
         self.probing_efforts.remove(&model);
         let outcome = match serde_json::from_value::<SetSessionConfigOptionResponse>(result) {
             Ok(resp) => Ok(extract_effort(&resp.config_options)
-                .map(|s| s.options)
+                .map(|(s, _)| s.options)
                 .unwrap_or_default()),
             Err(_) => Err("The harness returned an invalid configuration response.".to_string()),
         };

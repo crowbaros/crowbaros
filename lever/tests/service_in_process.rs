@@ -7,8 +7,8 @@ use common::TempDir;
 use common::fake_harness::{FakeHarnessHandle, FakeSessionDiscoverer, RecordedCall};
 use crowbar_lever::discovery::SessionDiscoverer;
 use crowbar_lever::harness::{
-    EffortOption, EffortSelector, ExternalSession, HarnessCapabilities, HarnessCommand, HarnessConfig, HarnessEvent,
-    ImportedTurn, ModelCatalog, ModelOption, SessionHistory, TurnOutcome,
+    EffortOption, EffortSelector, ExternalSession, HarnessCapabilities, HarnessCommand, HarnessConfig, HarnessDialect,
+    HarnessEvent, ImportedTurn, ModelCatalog, ModelOption, SessionHistory, TurnOutcome,
 };
 use crowbar_lever::log::Log;
 use crowbar_lever::service::{
@@ -27,6 +27,7 @@ fn fake_config() -> HarnessConfig {
         args: Vec::new(),
         env: Vec::new(),
         watch_paths: Vec::new(),
+        dialect: HarnessDialect::GenericAcp,
     }
 }
 
@@ -52,7 +53,7 @@ fn build_service(
     let store = Store::open(&db_path, unix_now()).expect("open real sqlite store");
     let log = Log::open(log_path).expect("open log");
     let handle = FakeHarnessHandle::new(caps);
-    let svc = Service::with_harness(
+    let svc = Service::new(
         store,
         Some(fake_config()),
         Box::new(handle.factory()),
@@ -541,7 +542,6 @@ fn in_process_models_efforts_modes_and_commands_catalog_flow() {
             },
         ],
         default_model: Some("acme/fast".into()),
-        config_id: Some("model".into()),
         modes: vec!["ask-first".into(), "full-access".into(), "plan".into()],
     };
     handle.push_events([
@@ -612,7 +612,6 @@ fn in_process_models_efforts_modes_and_commands_catalog_flow() {
     handle.set_session_effort(
         "s-deep",
         EffortSelector {
-            config_id: "thought_level".into(),
             current: "low".into(),
             options: vec![
                 EffortOption {
@@ -879,4 +878,349 @@ fn in_process_external_session_discovery_and_on_demand_history_import() {
     assert_eq!(reply.message["turns"][0]["message"], "hello from terminal");
     assert_eq!(reply.message["turns"][0]["answer"], "hello back");
     assert_eq!(reply.message["model"], "acme/fast");
+}
+
+#[test]
+fn subagent_waiting_request_queues_active_turn_and_holds_drain_for_every_harness() {
+    // ADR 0037: even when a harness can steer and does not strand subagent
+    // requests on a fresh prompt (`holds_prompt_during_subagent_request = false`),
+    // an outstanding subagent request still queues messages sent during an
+    // active turn and holds queue drain until the request is answered.
+    let dir = TempDir::new();
+    let mut caps = full_capabilities();
+    caps.supports_steering = true;
+    caps.holds_prompt_during_subagent_request = false;
+    let (mut svc, handle, mut log, _) = build_service(&dir, caps, None);
+
+    let tid = svc
+        .handle_request(1, true, false, &json!({ "op": "send", "text": "start work" }), &mut log)
+        .reply
+        .unwrap()["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    drive_init_and_session(&mut svc, &handle, &mut log, &tid, "s-1", "ask-first");
+    handle.take_calls();
+
+    // Subagent starts and raises a permission request while Turn 1 is still active.
+    handle.push_events([
+        HarnessEvent::SubagentUpdated {
+            thread_id: tid.clone(),
+            harness_subagent_id: "sub-1".into(),
+            title: Some("Worker".into()),
+            state: Some("working".into()),
+            error: None,
+            from_launcher: false,
+        },
+        HarnessEvent::PermissionRequested {
+            thread_id: tid.clone(),
+            harness_subagent_id: Some("sub-1".into()),
+            subagent_title: Some("Worker".into()),
+            handle: 77,
+            harness_call_id: "call-sub-1".into(),
+            kind: Some("command".into()),
+            title: "Run check".into(),
+            detail: None,
+            path: None,
+            answers: vec![("once".into(), "Allow once".into())],
+        },
+    ]);
+    let req_effects = svc.on_harness_readable(&mut log);
+    let req_id = req_effects
+        .broadcasts
+        .iter()
+        .find_map(|b| (b.message["event"] == "request").then(|| b.message["request"].as_str().unwrap().to_string()))
+        .expect("subagent request broadcast");
+
+    // Sending during the active turn must queue (not steer).
+    let queued = svc
+        .handle_request(
+            2,
+            true,
+            false,
+            &json!({ "op": "send", "thread": tid, "text": "follow up" }),
+            &mut log,
+        )
+        .reply
+        .unwrap();
+    assert_eq!(queued["reply"], "queued");
+    assert!(
+        !handle
+            .take_calls()
+            .iter()
+            .any(|c| matches!(c, RecordedCall::Steer { .. })),
+        "must not steer while a subagent request waits"
+    );
+
+    // Finishing Turn 1 while the subagent request still waits must hold the queue.
+    handle.push_event(HarnessEvent::PromptFinished {
+        thread_id: tid.clone(),
+        turn: 1,
+        outcome: TurnOutcome::Done,
+    });
+    svc.on_harness_readable(&mut log);
+    assert!(
+        !handle
+            .take_calls()
+            .iter()
+            .any(|c| matches!(c, RecordedCall::SendPrompt { .. })),
+        "queued message must wait while subagent request is unanswered"
+    );
+
+    // Answering the subagent request releases the queued message as Turn 2.
+    let answered = svc
+        .handle_request(
+            1,
+            true,
+            false,
+            &json!({ "op": "answer", "thread": tid, "request": req_id, "answer": "once" }),
+            &mut log,
+        )
+        .reply
+        .unwrap();
+    assert_eq!(answered["reply"], "ok");
+    svc.on_wake(&mut log);
+    assert!(handle.take_calls().iter().any(|c| matches!(
+        c,
+        RecordedCall::SendPrompt { turn: 2, text, .. } if text == "follow up"
+    )));
+}
+
+#[test]
+fn in_process_stop_drops_queued_messages_and_overdue_stop_kills_tree() {
+    let dir = TempDir::new();
+    let db_path = dir.0.join("lever.db");
+    let log_path = dir.0.join("lever.log");
+    let tool_sock = dir.0.join("tool.sock");
+    let store = Store::open(&db_path, unix_now()).unwrap();
+    let mut log = Log::open(log_path).unwrap();
+    let handle = FakeHarnessHandle::new(full_capabilities());
+    // Very short stop timeout so an unanswered Stop becomes overdue quickly.
+    let mut svc = Service::new(
+        store,
+        Some(fake_config()),
+        Box::new(handle.factory()),
+        None,
+        None,
+        tool_sock,
+        DEFAULT_IDLE_TIMEOUT,
+        Duration::from_millis(20),
+        DEFAULT_WAKE_QUIET,
+        DEFAULT_DISCOVERY_DEBOUNCE,
+    );
+
+    let tid = svc
+        .handle_request(1, true, false, &json!({ "op": "send", "text": "long turn" }), &mut log)
+        .reply
+        .unwrap()["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    drive_init_and_session(&mut svc, &handle, &mut log, &tid, "s-1", "ask-first");
+    handle.take_calls();
+
+    // Queue one message (steer declined -> queued) and send another in-flight steer.
+    let _ = svc.handle_request(
+        2,
+        true,
+        false,
+        &json!({ "op": "send", "thread": tid, "text": "waiting msg" }),
+        &mut log,
+    );
+    let steer_id = handle
+        .take_calls()
+        .into_iter()
+        .find_map(|c| match c {
+            RecordedCall::Steer { steer, .. } => Some(steer),
+            _ => None,
+        })
+        .unwrap();
+    handle.push_event(HarnessEvent::SteerAnswered {
+        steer: steer_id,
+        taken: Err("busy".into()),
+    });
+    svc.on_harness_readable(&mut log);
+
+    // Stop drops the queued message and asks the harness to cancel.
+    let stop_out = svc.handle_request(1, true, false, &json!({ "op": "stop", "thread": tid }), &mut log);
+    assert_eq!(stop_out.reply.unwrap()["reply"], "ok");
+    assert!(
+        stop_out
+            .broadcasts
+            .iter()
+            .any(|b| b.message["event"] == "queued" && b.message["state"] == "dropped")
+    );
+    assert!(
+        handle
+            .take_calls()
+            .iter()
+            .any(|c| matches!(c, RecordedCall::CancelSession { session_id } if session_id == "s-1"))
+    );
+
+    // When the harness ignores cancel past stop_timeout, on_wake kills the tree.
+    std::thread::sleep(Duration::from_millis(35));
+    let woke = svc.on_wake(&mut log);
+    assert!(woke.broadcasts.iter().any(|b| b.message["event"] == "stopped"));
+    assert!(
+        handle
+            .take_calls()
+            .iter()
+            .any(|c| matches!(c, RecordedCall::KilledTree))
+    );
+}
+
+#[test]
+fn in_process_unexpected_harness_exit_interrupts_turn_withdraws_request_and_queues_steer() {
+    let dir = TempDir::new();
+    let (mut svc, handle, mut log, _) = build_service(&dir, full_capabilities(), None);
+
+    let tid = svc
+        .handle_request(1, true, false, &json!({ "op": "send", "text": "work" }), &mut log)
+        .reply
+        .unwrap()["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    drive_init_and_session(&mut svc, &handle, &mut log, &tid, "s-1", "ask-first");
+    handle.take_calls();
+
+    // Open a waiting permission request and an in-flight steer before crash.
+    handle.push_event(HarnessEvent::PermissionRequested {
+        thread_id: tid.clone(),
+        harness_subagent_id: None,
+        subagent_title: None,
+        handle: 55,
+        harness_call_id: "call-crash".into(),
+        kind: Some("command".into()),
+        title: "Run cmd".into(),
+        detail: None,
+        path: None,
+        answers: vec![("once".into(), "Allow once".into())],
+    });
+    svc.on_harness_readable(&mut log);
+
+    let steer_out = svc.handle_request(
+        2,
+        true,
+        false,
+        &json!({ "op": "send", "thread": tid, "text": "mid-crash steer" }),
+        &mut log,
+    );
+    assert!(steer_out.reply.is_none());
+
+    // Harness crashes unexpectedly.
+    handle.push_event(HarnessEvent::Exited);
+    let effects = svc.on_harness_readable(&mut log);
+    assert!(effects.broadcasts.iter().any(|b| b.message["event"] == "interrupted"));
+    assert!(
+        effects
+            .broadcasts
+            .iter()
+            .any(|b| b.message["event"] == "request" && b.message["state"] == "withdrawn")
+    );
+    assert!(
+        effects
+            .replies
+            .iter()
+            .any(|r| r.peer_id == 2 && r.message["reply"] == "queued")
+    );
+}
+
+#[test]
+fn in_process_mode_and_model_set_failures_preserve_prior_session_state() {
+    let dir = TempDir::new();
+    let (mut svc, handle, mut log, _) = build_service(&dir, full_capabilities(), None);
+
+    let tid = svc
+        .handle_request(1, true, false, &json!({ "op": "send", "text": "hello" }), &mut log)
+        .reply
+        .unwrap()["thread"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    handle.set_session_mode("s-1", "ask-first");
+    handle.push_event(HarnessEvent::Initialized);
+    svc.on_harness_readable(&mut log);
+    handle.push_event(HarnessEvent::SessionReady {
+        thread_id: tid.clone(),
+        session_id: "s-1".into(),
+        afresh: false,
+        catalog: Some(ModelCatalog {
+            supported: true,
+            models: vec![
+                ModelOption {
+                    id: "acme/a".into(),
+                    name: "A".into(),
+                    provider: None,
+                },
+                ModelOption {
+                    id: "acme/b".into(),
+                    name: "B".into(),
+                    provider: None,
+                },
+            ],
+            default_model: Some("acme/a".into()),
+            modes: vec!["ask-first".into(), "plan".into()],
+        }),
+        current_model: Some("acme/a".into()),
+    });
+    svc.on_harness_readable(&mut log);
+    handle.push_event(HarnessEvent::PromptFinished {
+        thread_id: tid.clone(),
+        turn: 1,
+        outcome: TurnOutcome::Done,
+    });
+    svc.on_harness_readable(&mut log);
+    handle.take_calls();
+
+    // Attempt to switch mode to `plan` between turns, then fail the RPC.
+    let mode_req = svc.handle_request(
+        2,
+        true,
+        false,
+        &json!({ "op": "set-mode", "thread": tid, "mode": "plan" }),
+        &mut log,
+    );
+    assert!(mode_req.reply.is_none());
+    // Prior mode must still be `ask-first` before completion.
+    assert_eq!(handle.session_current_mode("s-1").as_deref(), Some("ask-first"));
+
+    handle.push_event(HarnessEvent::ModeSetFailed {
+        thread_id: tid.clone(),
+        turn: None,
+        message: "rejected".into(),
+    });
+    let mode_effects = svc.on_harness_readable(&mut log);
+    assert!(
+        mode_effects
+            .replies
+            .iter()
+            .any(|r| r.peer_id == 2 && r.message["reply"] == "error")
+    );
+    assert_eq!(handle.session_current_mode("s-1").as_deref(), Some("ask-first"));
+
+    // Attempt to switch model to `acme/b` between turns, then fail the RPC.
+    let model_req = svc.handle_request(
+        3,
+        true,
+        false,
+        &json!({ "op": "set-model", "thread": tid, "model": "acme/b" }),
+        &mut log,
+    );
+    assert!(model_req.reply.is_none());
+    assert_eq!(handle.session_current_model("s-1").as_deref(), Some("acme/a"));
+
+    handle.push_event(HarnessEvent::ModelSetFailed {
+        thread_id: tid.clone(),
+        turn: None,
+        message: "model unavailable".into(),
+    });
+    let model_effects = svc.on_harness_readable(&mut log);
+    assert!(
+        model_effects
+            .replies
+            .iter()
+            .any(|r| r.peer_id == 3 && r.message["reply"] == "error")
+    );
+    assert_eq!(handle.session_current_model("s-1").as_deref(), Some("acme/a"));
 }

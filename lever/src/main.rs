@@ -3,8 +3,9 @@
 //! its person socket, drives a harness over ACP, and keeps the record of every
 //! thread in the person's home.
 
+use crowbar_lever::acp::{self, AcpHarnessFactory};
 use crowbar_lever::channel::{Channel, Peer};
-use crowbar_lever::harness::HarnessConfig;
+use crowbar_lever::harness::{HarnessConfig, HarnessDialect};
 use crowbar_lever::log::{Event, Log};
 use crowbar_lever::mcp;
 use crowbar_lever::service::{
@@ -35,7 +36,7 @@ const USAGE: &str = "usage: crowbar-lever \
   --surface-socket <path> --shell-uid <uid> \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
-  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-watch <dir>]... [--harness-name <name>]] \
+  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-watch <dir>]... [--harness-name <name>] [--harness-dialect <opencode-acp|generic-acp>]] \
   [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>] [--discovery-debounce-ms <ms>] [--discovery-timeout-ms <ms>]";
 
 struct Options {
@@ -62,6 +63,7 @@ fn parse_options(args: &[String]) -> Option<Options> {
     let mut fulcrum_socket = None;
     let mut harness_program = None;
     let mut harness_name = None;
+    let mut harness_dialect = None;
     let mut harness_args = Vec::new();
     let mut harness_env = Vec::new();
     let mut harness_watch = Vec::new();
@@ -86,6 +88,13 @@ fn parse_options(args: &[String]) -> Option<Options> {
             "--fulcrum-socket" if fulcrum_socket.is_none() => fulcrum_socket = Some(PathBuf::from(value)),
             "--harness" if harness_program.is_none() => harness_program = Some(value.clone()),
             "--harness-name" if harness_name.is_none() => harness_name = Some(value.clone()),
+            "--harness-dialect" if harness_dialect.is_none() => {
+                harness_dialect = Some(match value.as_str() {
+                    "opencode-acp" => HarnessDialect::OpenCodeAcp,
+                    "generic-acp" => HarnessDialect::GenericAcp,
+                    _ => return None,
+                });
+            }
             "--harness-arg" => harness_args.push(value.clone()),
             "--harness-env" => {
                 let (k, v) = value.split_once('=')?;
@@ -130,9 +139,11 @@ fn parse_options(args: &[String]) -> Option<Options> {
                 args: harness_args,
                 env: harness_env,
                 watch_paths: harness_watch,
+                dialect: harness_dialect.unwrap_or_default(),
             })
         }
         None if harness_name.is_some()
+            || harness_dialect.is_some()
             || !harness_args.is_empty()
             || !harness_env.is_empty()
             || !harness_watch.is_empty() =>
@@ -593,9 +604,12 @@ fn run_service(options: Options, started: Instant, log: &mut Log) -> Result<(), 
         }
     };
 
+    let discoverer = options.harness.as_ref().and_then(acp::discoverer_for_harness);
     let mut service = Service::new(
         store,
         options.harness,
+        Box::new(AcpHarnessFactory),
+        discoverer,
         options.fulcrum_socket,
         tool_socket.clone(),
         options.idle_timeout,

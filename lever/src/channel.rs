@@ -3,7 +3,7 @@
 use crate::frames::{self, FrameReader, MAX_FRAME};
 use crate::log::{Event, Log};
 use crate::service::{Broadcast, Service};
-pub use crate::version::{LEVER_VERSION, PROTOCOL_VERSION};
+use crate::version::PROTOCOL_VERSION;
 use serde_json::{Value, json};
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Read, Write};

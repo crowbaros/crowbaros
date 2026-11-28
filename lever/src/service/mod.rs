@@ -2,12 +2,16 @@
 //! harness lifecycle (including the idle timer), active turns across concurrent
 //! threads, discovery, catalog caching, and Lever's wire messages.
 
+mod approvals;
 mod catalog;
 mod discovery;
 mod events;
 mod journal;
+mod lifecycle;
 mod mcp_tools;
-mod requests;
+mod ops;
+mod queue;
+mod subagents;
 mod turns;
 mod wire;
 
@@ -21,7 +25,6 @@ use mcp_tools::McpTools;
 use turns::{TurnDispatch, TurnTracker, WorkingSubagent};
 use wire::{store_failed, subagent_event_json};
 
-use crate::acp::{self, AcpHarnessFactory};
 use crate::discovery::SessionDiscoverer;
 use crate::harness::{Harness, HarnessConfig, HarnessEvent, HarnessFactory, HarnessLaunchOptions};
 use crate::log::{Event, Log};
@@ -68,32 +71,6 @@ pub struct Service {
 impl Service {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        store: Store,
-        harness_config: Option<HarnessConfig>,
-        fulcrum_socket: Option<PathBuf>,
-        tool_socket: PathBuf,
-        idle_timeout: Duration,
-        stop_timeout: Duration,
-        wake_quiet: Duration,
-        discovery_debounce: Duration,
-    ) -> Self {
-        let discoverer = harness_config.as_ref().and_then(acp::discoverer_for_harness);
-        Self::with_harness(
-            store,
-            harness_config,
-            Box::new(AcpHarnessFactory),
-            discoverer,
-            fulcrum_socket,
-            tool_socket,
-            idle_timeout,
-            stop_timeout,
-            wake_quiet,
-            discovery_debounce,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_harness(
         store: Store,
         harness_config: Option<HarnessConfig>,
         harness_factory: Box<dyn HarnessFactory>,

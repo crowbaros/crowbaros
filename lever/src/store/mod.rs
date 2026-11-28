@@ -17,6 +17,7 @@ mod tests;
 
 pub use records::*;
 
+use crate::harness::STARTING_MODE;
 use crate::sys;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::fs::OpenOptions;
@@ -83,7 +84,7 @@ impl Store {
         Ok(())
     }
 
-    /// Whether the person has enabled OpenCode's free hosted Models.
+    /// Whether the person has enabled free hosted Models when the harness offers them.
     /// Defaults to `false` until the person explicitly chooses them.
     pub fn free_hosted_models(&self) -> Result<bool, String> {
         let value: Option<String> = self
@@ -96,7 +97,7 @@ impl Store {
         Ok(value.as_deref() == Some("true"))
     }
 
-    /// Saves the person's choice for OpenCode's free hosted Models.
+    /// Saves the person's choice for free hosted Models.
     pub fn set_free_hosted_models(&self, enabled: bool) -> Result<(), String> {
         let value = if enabled { "true" } else { "false" };
         self.conn

@@ -1,6 +1,7 @@
 //! Incoming JSON-RPC message dispatch, permission requests, session updates,
 //! subagent routing, and ID redaction for [`AcpHarness`].
 
+use super::dialect::ChildUpdateBody;
 use super::format::{
     content_block_text, extract_model_catalog, harness_commands, map_tool_kind, map_tool_status, redact_ids,
     request_detail, tool_detail,
@@ -19,6 +20,7 @@ use serde_json::Value;
 impl AcpHarness {
     pub(super) fn handle_message(&mut self, value: Value, events: &mut Vec<HarnessEvent>) {
         let has_method = value.get("method").and_then(Value::as_str).is_some();
+        // A notification that carries `"id": null` is still a notification.
         let has_id = value.get("id").is_some_and(|id| !id.is_null());
 
         if has_method && has_id {
@@ -84,6 +86,8 @@ impl AcpHarness {
             let _ = self.transport.on_writable();
             return;
         };
+        // A request in the name of a session that is not this thread's
+        // subagent is nobody's to answer here.
         if let Some(ref child_sid) = harness_subagent_id
             && !self.register_child(&thread_id, child_sid, subagent_title.as_deref())
         {
@@ -125,6 +129,8 @@ impl AcpHarness {
             .or_default()
             .insert(call_id.clone());
         let kind = call.fields.kind.map(|k| map_tool_kind(k).to_string());
+        // The command or the change is shown as the Model wrote it, as an
+        // act's is: the person answers for exactly that.
         let (detail, path) = request_detail(call.fields.kind, &call.fields, &self.home);
         let raw_title = call
             .fields
@@ -170,6 +176,7 @@ impl AcpHarness {
         if let Some(handle) = handle
             && let Some(permission) = self.permissions.remove(&handle)
         {
+            // The request still gets its answer, as ACP has it: cancelled.
             self.transport.send_result_response(
                 permission.rpc_id,
                 RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
@@ -211,13 +218,10 @@ impl AcpHarness {
         raw_update: &Value,
         events: &mut Vec<HarnessEvent>,
     ) -> bool {
-        if !self.dialect.is_subagent_tool(
-            title,
-            tc.kind,
-            tc.raw_input.as_ref(),
-            raw_update,
-            self.is_opencode_agent,
-        ) {
+        if !self
+            .dialect
+            .is_subagent_tool(title, tc.kind, tc.raw_input.as_ref(), raw_update)
+        {
             return false;
         }
         let call_id = tc.tool_call_id.0.as_ref().to_string();
@@ -267,16 +271,20 @@ impl AcpHarness {
                 None => t.to_string(),
             })
             .map(|t| t.trim().to_string())
-            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("subagent") && !s.eq_ignore_ascii_case("task"));
+            .filter(|s| !s.is_empty() && !self.dialect.is_launcher_placeholder_title(s));
         if let Some(t) = new_title.or(launcher_title) {
             call.title = Some(t);
         }
         if let Some(p) = new_prompt {
             call.prompt = Some(p);
         }
+        // A launcher names one child. One that later names another is not
+        // believed: the first child keeps its prompt and its thread.
         if call.child_session_id.is_none() {
             call.child_session_id = new_child_sid;
         }
+        // The child it names is taken out of what it says, though the thread
+        // has yet to take the child as its own.
         let named_child = call.child_session_id.clone();
         let failed = tcu.fields.status == Some(ToolCallStatus::Failed);
         let error = failed.then(|| {
@@ -348,6 +356,8 @@ impl AcpHarness {
         let Some(cid) = call.child_session_id.clone() else {
             return false;
         };
+        // A child that is a thread's own session, or another thread's
+        // subagent, is not this launcher's to take.
         if self.session_to_thread.contains_key(&cid)
             || self.child_to_thread.get(&cid).is_some_and(|owner| owner != thread_id)
         {
@@ -397,18 +407,12 @@ impl AcpHarness {
     }
 
     pub(super) fn handle_child_update_notification(&mut self, params: Option<&Value>, events: &mut Vec<HarnessEvent>) {
-        let Some(obj) = params.and_then(Value::as_object) else {
+        let Some(envelope) = params.and_then(|p| self.dialect.parse_child_update(p)) else {
             return;
         };
-        let Some(child_sid) = obj
-            .get("childSessionId")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-        else {
-            return;
-        };
-        let root_sid = obj.get("rootSessionId").and_then(Value::as_str);
-        let parent_sid = obj.get("parentSessionId").and_then(Value::as_str);
+        let child_sid = envelope.child_session_id;
+        let root_sid = envelope.root_session_id;
+        let parent_sid = envelope.parent_session_id;
         let retired_turn = parent_sid
             .and_then(|s| self.child_retired_turn.get(s).copied())
             .or_else(|| {
@@ -444,18 +448,15 @@ impl AcpHarness {
         if self.thread_loading(&thread_id) {
             return;
         }
-        let title = obj
-            .get("title")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
         let had_child = self.child_to_thread.contains_key(child_sid);
-        if !self.register_child(&thread_id, child_sid, title) {
+        if !self.register_child(&thread_id, child_sid, envelope.title) {
             return;
         }
         if !had_child && let Some(turn) = retired_turn {
             self.child_retired_turn.entry(child_sid.to_string()).or_insert(turn);
         }
+        // A child of another of the thread's subagents was launched by it,
+        // though the launcher has yet to name it.
         if let Some(parent) = parent_sid
             && parent != child_sid
             && self.child_to_thread.get(parent) == Some(&thread_id)
@@ -464,24 +465,15 @@ impl AcpHarness {
                 .entry(child_sid.to_string())
                 .or_insert_with(|| parent.to_string());
         }
-        let effective_title = title
+        let effective_title = envelope
+            .title
             .map(str::to_string)
             .or_else(|| self.child_titles.get(child_sid).cloned());
 
-        match obj.get("type").and_then(Value::as_str) {
-            Some("status") => {
-                let raw_status = obj.get("status").and_then(Value::as_str);
-                let state = match raw_status {
-                    Some("created" | "running") => Some("working".to_string()),
-                    Some("completed") => Some("done".to_string()),
-                    Some("cancelled" | "canceled") => Some("stopped".to_string()),
-                    Some("interrupted") => Some("interrupted".to_string()),
-                    Some("failed") => Some("failed".to_string()),
-                    _ => None,
-                };
+        match envelope.body {
+            ChildUpdateBody::Status { state, error } => {
                 let error = if state.as_deref() == Some("failed") {
-                    self.dialect
-                        .extract_child_error(obj.get("error"))
+                    error
                         .map(|raw| self.redact_for_thread(Some(&thread_id), &raw))
                         .or_else(|| Some("The subagent failed.".to_string()))
                 } else {
@@ -496,18 +488,9 @@ impl AcpHarness {
                     from_launcher: false,
                 });
             }
-            Some("update") => {
-                if let Some(raw_update) = obj.get("update") {
-                    self.handle_child_session_update(
-                        &thread_id,
-                        child_sid,
-                        effective_title.as_deref(),
-                        raw_update,
-                        events,
-                    );
-                }
+            ChildUpdateBody::Update(raw_update) => {
+                self.handle_child_session_update(&thread_id, child_sid, effective_title.as_deref(), raw_update, events);
             }
-            _ => {}
         }
     }
 
@@ -541,6 +524,8 @@ impl AcpHarness {
                 }
             }
             Ok(SessionUpdate::UserMessageChunk(chunk)) => {
+                // The launcher's prompt is the one shown when it came first;
+                // otherwise each piece of the stream is.
                 let from_launcher = self.child_prompts.get(child_sid) == Some(&PromptFrom::Launcher);
                 if !from_launcher && let Some(text) = content_block_text(&chunk.content) {
                     self.child_prompts.insert(child_sid.to_string(), PromptFrom::Stream);
@@ -560,6 +545,8 @@ impl AcpHarness {
                     .or_default()
                     .insert(call_id.clone());
                 let clean_title = self.dialect.strip_child_title_prefix(&tc.title, child_title.as_deref());
+                // A subagent that launches a subagent: the launch is kept as
+                // the root's is, and the grandchild becomes the thread's.
                 if self.take_launcher_call(thread_id, child_sid, &tc, &clean_title, raw_update, events) {
                     return;
                 }
@@ -640,6 +627,9 @@ impl AcpHarness {
         let Some(raw_update) = params.get("update") else {
             return;
         };
+        // When importing an externally-started session's history, capture the
+        // replayed updates into the session's `HistoryBuilder` instead of
+        // dropping them or streaming them as live turn events.
         if self.history_loads.contains_key(session_id) {
             if let Ok(SessionUpdate::AvailableCommandsUpdate(update)) =
                 serde_json::from_value::<SessionUpdate>(raw_update.clone())
@@ -662,6 +652,10 @@ impl AcpHarness {
             }
             return;
         }
+        // Ignore history replayed by the harness while `session/load` is in flight:
+        // Lever already owns the authoritative record in SQLite. The session's
+        // commands are no history, and are kept, as are those of a session
+        // Lever opened to read what the harness offers.
         let loading = self.loading_sessions.contains(session_id);
         if loading || self.probe_sessions.iter().any(|s| s == session_id) {
             let thread_id = if loading { self.loading_thread(session_id) } else { None };
@@ -879,12 +873,16 @@ impl AcpHarness {
                 self.take_effort(session_id, &cfg.config_options);
                 let effort_changed = effort_before.as_ref() != self.session_efforts.get(session_id);
                 let modes = self.take_modes(session_id, Some(&cfg.config_options));
-                let mut catalog = extract_model_catalog(&cfg.config_options, self.dialect.as_ref());
+                let extracted = extract_model_catalog(&cfg.config_options, self.dialect.as_ref());
+                let (mut catalog, model_cid) = match extracted {
+                    Some((cat, cid)) => (Some(cat), Some(cid)),
+                    None => (None, None),
+                };
                 let mut current_model = None;
+                if let Some(cid) = model_cid {
+                    self.model_config_id = Some(cid);
+                }
                 if let Some(cat) = catalog.as_mut() {
-                    if let Some(ref cid) = cat.config_id {
-                        self.model_config_id = Some(cid.clone());
-                    }
                     current_model = cat.default_model.clone();
                     if let Some(ref m) = current_model {
                         self.session_models.insert(session_id.to_string(), m.clone());
@@ -904,6 +902,10 @@ impl AcpHarness {
                     });
                 }
             }
+            // Known ACP v1 updates that Lever does not show as thread notes:
+            // thoughts stream a few tokens at a time, and modes, plans, usage,
+            // and notices are either dropped on purpose or handled in their
+            // own slices.
             Ok(
                 SessionUpdate::UserMessageChunk(_)
                 | SessionUpdate::AgentThoughtChunk(_)
@@ -917,6 +919,8 @@ impl AcpHarness {
                 | SessionUpdate::CompactionSummaryChunk(_)
                 | SessionUpdate::SessionMessageChunk(_),
             ) => {}
+            // Any unrecognized or future update is kept as JSON in the record
+            // and rendered plainly.
             Ok(_) | Err(_) => {
                 let plain = self.render_unknown_update(&thread_id, raw_update);
                 events.push(HarnessEvent::UnknownUpdate {
@@ -956,10 +960,17 @@ impl AcpHarness {
         redact_ids(input, self.known_ids(thread_id))
     }
 
-    fn render_unknown_update(&self, thread_id: &str, raw: &Value) -> String {
+    /// Turns an unknown ACP update payload into plain text without exposing
+    /// ACP's discriminator tag (`sessionUpdate`), schema field names, metadata,
+    /// or harness IDs.
+    pub(super) fn render_unknown_update(&self, thread_id: &str, raw: &Value) -> String {
         let Some(obj) = raw.as_object() else {
             return self.redact_for_thread(Some(thread_id), &raw.to_string());
         };
+        // The update's own session and tool call IDs are taken out of what
+        // it says too, with the IDs Lever knows, in one pass: an update can
+        // name a tool call Lever has seen no act for, and the longest ID
+        // must go first whichever kind it is.
         let own_ids: Vec<String> = ["sessionId", "toolCallId"]
             .iter()
             .filter_map(|field| match obj.get(*field) {
@@ -991,20 +1002,17 @@ impl AcpHarness {
             ) {
                 continue;
             }
-            let rendered = match v {
-                Value::String(s) => s.clone(),
-                Value::Bool(b) => b.to_string(),
-                Value::Number(n) => n.to_string(),
-                _ => continue,
-            };
-            if !rendered.is_empty() {
-                parts.push(redact(&rendered));
+            match v {
+                Value::String(s) if !s.trim().is_empty() => parts.push(s.trim().to_string()),
+                Value::Number(n) => parts.push(n.to_string()),
+                Value::Bool(b) => parts.push(b.to_string()),
+                _ => {}
             }
         }
         if parts.is_empty() {
-            "The Agent sent an update Lever does not recognize.".to_string()
+            "Unrecognized update from harness.".to_string()
         } else {
-            parts.join(" ")
+            redact(&parts.join(" "))
         }
     }
 }

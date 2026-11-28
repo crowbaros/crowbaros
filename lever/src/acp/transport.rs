@@ -168,6 +168,7 @@ impl AcpTransport {
                     taken += n;
                     self.read_buf.extend_from_slice(&buf[..n]);
                     self.drain_lines(&mut on_message);
+                    // What is left is the start of a line with no end yet.
                     if self.read_buf.len() > MAX_LINE {
                         self.fault = Some(LONG_LINE);
                     }
@@ -186,6 +187,8 @@ impl AcpTransport {
     fn drain_lines(&mut self, on_message: &mut impl FnMut(Value)) {
         while let Some(found) = self.read_buf[self.scanned..].iter().position(|&b| b == b'\n') {
             let pos = self.scanned + found;
+            // A line that is too long is too long wherever its end came in
+            // what was read.
             if pos > MAX_LINE {
                 self.fault = Some(LONG_LINE);
                 return;
@@ -215,6 +218,8 @@ impl AcpTransport {
         sys::kill_all_of_harness(pid, self.started);
         let _ = self.child.kill();
         let _ = self.child.wait();
+        // What it left behind ended too, and is Lever's to wait for. One
+        // that is still there is ended again.
         let deadline = Instant::now() + Duration::from_secs(1);
         loop {
             sys::reap_orphans(None);

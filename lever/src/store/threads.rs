@@ -2,7 +2,7 @@
 
 use super::Store;
 use super::records::*;
-use crate::harness::SessionHistory;
+use crate::harness::{STARTING_MODE, SessionHistory};
 use crate::sys;
 use rusqlite::{OptionalExtension, params};
 use std::collections::{HashMap, HashSet};

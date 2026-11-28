@@ -1,4 +1,4 @@
-//! ACP dialect seam (inspired by T3 Code's `AcpAdapterV2Flavor`).
+//! ACP dialect seam.
 //!
 //! Isolates harness-specific ACP extensions (such as OpenCode's
 //! `OPENCODE_CONFIG_CONTENT`, `crowbar-ask-first` mode mapping,
@@ -6,12 +6,11 @@
 //! transport retry loop detection) behind a narrow trait so generic ACP v1
 //! harnesses stay completely clean of OpenCode-specific logic.
 
-use crate::harness::{HarnessConfig, HarnessLaunchOptions};
+use crate::harness::{HarnessConfig, HarnessDialect, HarnessLaunchOptions};
 use crate::mcp::{self, McpServerSpec};
 use crate::opencode;
 use agent_client_protocol_schema::v1::ToolKind;
 use serde_json::{Map, Value, json};
-use std::path::Path;
 
 /// OpenCode's own request that steers a message into a session's running prompt.
 const OPENCODE_STEERING: &str = "_session/steering";
@@ -46,6 +45,24 @@ const GENERIC_MODES: [(&str, &str); 3] = [
     ("plan", "plan"),
 ];
 
+/// Dialect-parsed body of a vendor child-session notification.
+pub(crate) enum ChildUpdateBody<'a> {
+    Status {
+        state: Option<String>,
+        error: Option<String>,
+    },
+    Update(&'a Value),
+}
+
+/// Dialect-parsed envelope of a vendor child-session notification.
+pub(crate) struct ChildUpdateEnvelope<'a> {
+    pub(crate) child_session_id: &'a str,
+    pub(crate) root_session_id: Option<&'a str>,
+    pub(crate) parent_session_id: Option<&'a str>,
+    pub(crate) title: Option<&'a str>,
+    pub(crate) body: ChildUpdateBody<'a>,
+}
+
 /// Per-harness ACP dialect hooks kept internal to the ACP adapter.
 pub(crate) trait AcpDialect {
     /// Builds `(env_set, env_remove)` for spawning the long-lived ACP child.
@@ -54,6 +71,15 @@ pub(crate) trait AcpDialect {
         config: &HarnessConfig,
         options: HarnessLaunchOptions,
     ) -> (Vec<(String, String)>, Vec<&'static str>);
+
+    /// Builds `(env_set, env_remove)` for a one-shot ACP discovery child.
+    fn prepare_discovery_env(&self, config: &HarnessConfig) -> (Vec<(String, String)>, Vec<&'static str>) {
+        let env_set: Vec<(String, String)> = config.env.iter().filter(|(k, _)| k != "PWD").cloned().collect();
+        (env_set, vec!["PWD"])
+    }
+
+    /// Records the agent identity reported in the ACP `initialize` response.
+    fn on_initialize(&mut self, _agent_name: Option<&str>) {}
 
     /// Optional `_meta` map attached to `ClientCapabilities` in `initialize`.
     fn initialize_client_meta(&self) -> Option<Map<String, Value>> {
@@ -89,6 +115,11 @@ pub(crate) trait AcpDialect {
         None
     }
 
+    /// Parses a dialect-specific child-session update notification payload.
+    fn parse_child_update<'a>(&self, _params: &'a Value) -> Option<ChildUpdateEnvelope<'a>> {
+        None
+    }
+
     /// Extracts `(child_session_id, optional_title)` from vendor child-session `_meta`.
     fn extract_child_meta(&self, _val: &Value) -> Option<(String, Option<String>)> {
         None
@@ -99,20 +130,14 @@ pub(crate) trait AcpDialect {
         title.to_string()
     }
 
-    /// Extracts a human-readable error message from a dialect child status payload.
-    fn extract_child_error(&self, _error: Option<&Value>) -> Option<String> {
-        None
+    /// Whether a tool call is this dialect's subagent wrapper launcher tool.
+    fn is_subagent_tool(&self, _title: &str, _kind: ToolKind, _raw_input: Option<&Value>, _raw_update: &Value) -> bool {
+        false
     }
 
-    /// Whether a tool call is this dialect's subagent wrapper launcher tool.
-    fn is_subagent_tool(
-        &self,
-        _title: &str,
-        _kind: ToolKind,
-        _raw_input: Option<&Value>,
-        _raw_update: &Value,
-        _is_opencode_agent: bool,
-    ) -> bool {
+    /// Whether a subagent launcher's fallback title is a generic placeholder
+    /// (for example OpenCode's `"subagent"` or `"task"`).
+    fn is_launcher_placeholder_title(&self, _title: &str) -> bool {
         false
     }
 
@@ -125,15 +150,22 @@ pub(crate) trait AcpDialect {
         (None, None, None)
     }
 
+    /// Extracts a child session ID from a launcher's plain-text output when
+    /// structured output metadata was omitted.
+    fn extract_session_id_from_text(&self, _text: &str) -> Option<String> {
+        None
+    }
+
     /// Detects an endless provider transport retry loop from a raw update payload.
     fn extract_transport_retry_failure(&self, _raw_update: &Value) -> Option<String> {
         None
     }
 
-    /// Recognizes an error indicating that no Model is configured/ready.
+    /// Whether a JSON-RPC error from `session/new` means the harness has no
+    /// Models available (for example OpenCode's `CatalogNotReady` when free
+    /// hosted Models are switched off and no provider is signed in).
     fn is_no_models_error(&self, _err_val: &Value, message: &str) -> bool {
-        let lower = message.to_ascii_lowercase();
-        lower.contains("no models") || lower.contains("no model available") || lower.contains("model catalog")
+        message.to_ascii_lowercase().contains("no models are available")
     }
 
     /// Display name for a provider prefix in an ungrouped `<provider>/<model>` ID.
@@ -187,7 +219,28 @@ impl AcpDialect for GenericAcpDialect {
 /// OpenCode ACP dialect: encapsulates all OpenCode-specific env vars,
 /// agent-mode mapping, steering RPC, child-session notifications, subagent
 /// launcher normalization, transport retry detection, and MCP session meta key.
-pub(crate) struct OpenCodeAcpDialect;
+#[derive(Default)]
+pub(crate) struct OpenCodeAcpDialect {
+    /// True when the harness's `initialize` response named itself `opencode`,
+    /// gating OpenCode's legacy `task` subagent launcher heuristic.
+    is_opencode_agent: bool,
+}
+
+impl OpenCodeAcpDialect {
+    fn extract_child_error(error: Option<&Value>) -> Option<String> {
+        let val = error?;
+        match val {
+            Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            Value::Object(map) => ["message", "error", "detail"]
+                .iter()
+                .find_map(|k| map.get(*k).and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            _ => None,
+        }
+    }
+}
 
 impl AcpDialect for OpenCodeAcpDialect {
     fn prepare_spawn_env(
@@ -209,6 +262,14 @@ impl AcpDialect for OpenCodeAcpDialect {
             &person,
             options.free_hosted_models,
         )
+    }
+
+    fn prepare_discovery_env(&self, config: &HarnessConfig) -> (Vec<(String, String)>, Vec<&'static str>) {
+        opencode::build_discovery_env(config)
+    }
+
+    fn on_initialize(&mut self, agent_name: Option<&str>) {
+        self.is_opencode_agent = agent_name.is_some_and(|name| name.eq_ignore_ascii_case("opencode"));
     }
 
     fn initialize_client_meta(&self) -> Option<Map<String, Value>> {
@@ -239,6 +300,8 @@ impl AcpDialect for OpenCodeAcpDialect {
         Some(OPENCODE_STEERING)
     }
 
+    /// Whether an `initialize` answer's `_meta` says the harness steers, as
+    /// OpenCode 2.4.1 says it.
     fn steering_supported(&self, init_meta: Option<&Map<String, Value>>) -> bool {
         init_meta
             .and_then(|m| m.get("steering"))
@@ -257,6 +320,48 @@ impl AcpDialect for OpenCodeAcpDialect {
 
     fn child_update_notification_method(&self) -> Option<&'static str> {
         Some(OPENCODE_CHILD_UPDATE)
+    }
+
+    fn parse_child_update<'a>(&self, params: &'a Value) -> Option<ChildUpdateEnvelope<'a>> {
+        let obj = params.as_object()?;
+        let child_session_id = obj
+            .get("childSessionId")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())?;
+        let root_session_id = obj.get("rootSessionId").and_then(Value::as_str);
+        let parent_session_id = obj.get("parentSessionId").and_then(Value::as_str);
+        let title = obj
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let body = match obj.get("type").and_then(Value::as_str) {
+            Some("status") => {
+                let state = match obj.get("status").and_then(Value::as_str) {
+                    Some("created" | "running") => Some("working".to_string()),
+                    Some("completed") => Some("done".to_string()),
+                    Some("cancelled" | "canceled") => Some("stopped".to_string()),
+                    Some("interrupted") => Some("interrupted".to_string()),
+                    Some("failed") => Some("failed".to_string()),
+                    _ => None,
+                };
+                let error = if state.as_deref() == Some("failed") {
+                    Self::extract_child_error(obj.get("error"))
+                } else {
+                    None
+                };
+                ChildUpdateBody::Status { state, error }
+            }
+            Some("update") => ChildUpdateBody::Update(obj.get("update")?),
+            _ => return None,
+        };
+        Some(ChildUpdateEnvelope {
+            child_session_id,
+            root_session_id,
+            parent_session_id,
+            title,
+            body,
+        })
     }
 
     fn extract_child_meta(&self, val: &Value) -> Option<(String, Option<String>)> {
@@ -287,47 +392,30 @@ impl AcpDialect for OpenCodeAcpDialect {
         title.to_string()
     }
 
-    fn extract_child_error(&self, error: Option<&Value>) -> Option<String> {
-        let val = error?;
-        match val {
-            Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
-            Value::Object(map) => ["message", "error", "detail"]
-                .iter()
-                .find_map(|k| map.get(*k).and_then(Value::as_str))
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string),
-            _ => None,
-        }
-    }
-
-    fn is_subagent_tool(
-        &self,
-        title: &str,
-        kind: ToolKind,
-        raw_input: Option<&Value>,
-        raw_update: &Value,
-        is_opencode_agent: bool,
-    ) -> bool {
+    fn is_subagent_tool(&self, title: &str, kind: ToolKind, raw_input: Option<&Value>, raw_update: &Value) -> bool {
         let named = |pointer: &str| {
             matches!(
                 raw_update.pointer(pointer).and_then(Value::as_str),
                 Some("subagent" | "task")
             )
         };
-        if named("/_meta/opencode/toolName") || (is_opencode_agent && named("/_meta/toolName")) {
+        if named("/_meta/opencode/toolName") || (self.is_opencode_agent && named("/_meta/toolName")) {
             return true;
         }
         let clean = title.trim();
         if clean.eq_ignore_ascii_case("subagent") {
             return true;
         }
-        is_opencode_agent
+        self.is_opencode_agent
             && clean.eq_ignore_ascii_case("task")
             && (kind == ToolKind::Think
                 || raw_input.is_some_and(|v| {
                     v.get("prompt").is_some() && (v.get("agent").is_some() || v.get("subagent_type").is_some())
                 }))
+    }
+
+    fn is_launcher_placeholder_title(&self, title: &str) -> bool {
+        title.eq_ignore_ascii_case("subagent") || title.eq_ignore_ascii_case("task")
     }
 
     fn extract_subagent_call_fields(
@@ -361,6 +449,16 @@ impl AcpDialect for OpenCodeAcpDialect {
         (title, prompt, child_sid)
     }
 
+    fn extract_session_id_from_text(&self, text: &str) -> Option<String> {
+        let idx = text.find("sessionID:")?;
+        let rest = text[idx + "sessionID:".len()..].trim_start();
+        let id: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+            .collect();
+        (!id.is_empty()).then_some(id)
+    }
+
     fn extract_transport_retry_failure(&self, raw_update: &Value) -> Option<String> {
         let retry = raw_update.get("_meta")?.get("opencode/retry")?;
         let attempt = retry.get("attempt")?.as_u64()?;
@@ -389,8 +487,7 @@ impl AcpDialect for OpenCodeAcpDialect {
         {
             return true;
         }
-        let lower = message.to_ascii_lowercase();
-        lower.contains("no models") || lower.contains("no model available") || lower.contains("model catalog")
+        message.to_ascii_lowercase().contains("no models are available")
     }
 
     fn provider_display_name(&self, provider_id: &str) -> String {
@@ -413,19 +510,10 @@ impl AcpDialect for OpenCodeAcpDialect {
     }
 }
 
-/// Selects the ACP dialect for a configured harness.
-///
-/// OpenCode and Lever's ACP test stub (`crowbar-stub-harness`, which exercises
-/// OpenCode's ACP extensions) receive [`OpenCodeAcpDialect`]; other ACP
-/// harnesses receive the clean [`GenericAcpDialect`].
+/// Selects the ACP dialect from `config.dialect`.
 pub(crate) fn dialect_for_config(config: &HarnessConfig) -> Box<dyn AcpDialect> {
-    let program_name = Path::new(&config.program)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
-    if opencode::is_opencode_config(config) || program_name == "crowbar-stub-harness" {
-        Box::new(OpenCodeAcpDialect)
-    } else {
-        Box::new(GenericAcpDialect)
+    match config.dialect {
+        HarnessDialect::OpenCodeAcp => Box::new(OpenCodeAcpDialect::default()),
+        HarnessDialect::GenericAcp => Box::new(GenericAcpDialect),
     }
 }

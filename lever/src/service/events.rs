@@ -412,7 +412,6 @@ impl Service {
                 supported: true,
                 models: Vec::new(),
                 default_model: None,
-                config_id: None,
                 modes: Vec::new(),
             };
             self.apply_model_catalog(empty, true, log, &mut effects);
