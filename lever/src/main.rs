@@ -3,28 +3,17 @@
 //! its person socket, drives a harness over ACP, and keeps the record of every
 //! thread in the person's home.
 
-mod acp;
-mod channel;
-mod discovery;
-mod frames;
-mod fulcrum;
-mod handoff;
-mod log;
-mod mcp;
-mod opencode;
-mod project;
-mod service;
-mod store;
-mod sys;
-mod watcher;
-
-use acp::HarnessConfig;
-use channel::{Channel, LEVER_VERSION, Peer};
-use log::{Event, Log};
-use service::{
-    Broadcast, DEFAULT_DISCOVERY_DEBOUNCE, DEFAULT_IDLE_TIMEOUT, DEFAULT_STOP_TIMEOUT, DEFAULT_WAKE_QUIET, Effects,
-    PeerReply, Service, unix_now,
+use crowbar_lever::harness::HarnessConfig;
+use crowbar_lever::channel::{Channel, Peer};
+use crowbar_lever::log::{Event, Log};
+use crowbar_lever::mcp;
+use crowbar_lever::service::{
+    self, Broadcast, DEFAULT_DISCOVERY_DEBOUNCE, DEFAULT_IDLE_TIMEOUT, DEFAULT_STOP_TIMEOUT, DEFAULT_WAKE_QUIET,
+    Effects, PeerReply, Service, unix_now,
 };
+use crowbar_lever::store::Store;
+use crowbar_lever::sys::{self, SignalPipe};
+use crowbar_lever::version::LEVER_VERSION;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::os::fd::AsRawFd;
@@ -33,8 +22,6 @@ use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
-use store::Store;
-use sys::SignalPipe;
 
 /// Most connections Lever keeps open on one socket. Each socket has its own
 /// count, so the person's clients cannot use up the shell's.

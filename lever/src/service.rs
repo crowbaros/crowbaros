@@ -2,13 +2,14 @@
 //! ACP harness lifecycle (including the idle timer), active turns across
 //! concurrent threads, and Lever's wire messages.
 
-use crate::acp::{self, AcpEvent, AcpHarness, EffortOption, HarnessCommand, HarnessConfig, ModelCatalog, TurnOutcome};
-use crate::channel::LEVER_VERSION;
-use crate::discovery::{
-    self, DiscoveryRunner, DiscoverySchedule, ExternalSession, KnownSessions, PassEnd, SessionHistory,
-};
+use crate::acp::{self, AcpHarnessFactory};
+use crate::discovery::{self, DiscoveryRunner, DiscoverySchedule, KnownSessions, PassEnd};
 use crate::fulcrum;
 use crate::handoff;
+use crate::harness::{
+    self, EffortOption, EffortSelector, ExternalSession, Harness, HarnessCommand, HarnessConfig, HarnessEvent,
+    HarnessFactory, HarnessLaunchOptions, ModelCatalog, SessionHistory, TurnOutcome,
+};
 use crate::log::{Event, Log};
 use crate::mcp::{self, McpServerSpec};
 use crate::project;
@@ -17,6 +18,7 @@ use crate::store::{
     SubagentActPatch, SubagentPatch, SubagentRecord, ThreadMeta, ThreadRecord, ThreadSummary, TurnRecord,
 };
 use crate::sys;
+use crate::version::LEVER_VERSION;
 use crate::watcher::StoreWatcher;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -347,7 +349,9 @@ pub struct Service {
     /// or harness continuations still route to the thread, and is detached
     /// before the next turn or session-level control runs.
     pending_session_resets: HashMap<String, Option<u64>>,
-    harness: Option<AcpHarness>,
+    harness: Option<Box<dyn Harness>>,
+    harness_factory: Box<dyn HarnessFactory>,
+    harness_gen: u64,
     watcher: Option<StoreWatcher>,
     discovery: Option<DiscoveryRunner>,
     discovery_schedule: DiscoverySchedule,
@@ -485,14 +489,40 @@ impl Service {
         wake_quiet: Duration,
         discovery_debounce: Duration,
     ) -> Self {
-        let discovery = harness_config
-            .as_ref()
-            .and_then(discovery::for_harness)
-            .and_then(|d| DiscoveryRunner::new(d).ok());
+        let discoverer = harness_config.as_ref().and_then(acp::discoverer_for_harness);
+        Self::with_harness(
+            store,
+            harness_config,
+            Box::new(AcpHarnessFactory),
+            discoverer,
+            fulcrum_socket,
+            tool_socket,
+            idle_timeout,
+            stop_timeout,
+            wake_quiet,
+            discovery_debounce,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_harness(
+        store: Store,
+        harness_config: Option<HarnessConfig>,
+        harness_factory: Box<dyn HarnessFactory>,
+        discoverer: Option<Box<dyn crate::discovery::SessionDiscoverer>>,
+        fulcrum_socket: Option<PathBuf>,
+        tool_socket: PathBuf,
+        idle_timeout: Duration,
+        stop_timeout: Duration,
+        wake_quiet: Duration,
+        discovery_debounce: Duration,
+    ) -> Self {
+        let discovery = discoverer.and_then(|d| DiscoveryRunner::new(d).ok());
         let watcher = discovery
             .as_ref()
             .and_then(|d| StoreWatcher::new(d.watch_specs()).ok().flatten());
-        let mut discovery_schedule = DiscoverySchedule::new(discovery_debounce, discovery::DISCOVERY_MAX_WAIT);
+        let mut discovery_schedule =
+            DiscoverySchedule::new(discovery_debounce, crate::discovery::DISCOVERY_MAX_WAIT);
         let store_seen = if discovery.as_ref().is_some_and(DiscoveryRunner::has_store_data) {
             discovery_schedule.request(Instant::now());
             StoreSeen::Ready
@@ -511,6 +541,8 @@ impl Service {
             mcp_sessions: HashMap::new(),
             pending_session_resets: HashMap::new(),
             harness: None,
+            harness_factory,
+            harness_gen: 0,
             watcher,
             discovery,
             discovery_schedule,
@@ -569,14 +601,14 @@ impl Service {
     }
 
     pub fn harness_stdout_fd(&self) -> Option<RawFd> {
-        self.harness.as_ref().map(AcpHarness::stdout_fd)
+        self.harness.as_ref().and_then(|h| h.stdout_fd())
     }
 
     pub fn harness_stdin_fd(&self) -> Option<RawFd> {
         self.harness
             .as_ref()
             .filter(|h| h.wants_write())
-            .and_then(AcpHarness::stdin_fd)
+            .and_then(|h| h.stdin_fd())
     }
 
     /// Sets how long a running harness has to answer a `session/list`.
@@ -769,7 +801,7 @@ impl Service {
         // `session/list`, ask it over the existing pipe instead of spawning a
         // second harness process on every write Lever's own turns make.
         if let Some(harness) = self.harness.as_mut()
-            && harness.can_list_sessions()
+            && harness.capabilities().supports_list_sessions
             && !self.live_list_unanswered
         {
             if harness.is_listing_sessions() {
@@ -998,7 +1030,7 @@ impl Service {
             || !self.pending_sends.is_empty()
             || self.probe_wanted
             || self.live_list_in_flight
-            || self.harness.as_ref().is_some_and(AcpHarness::probing_models)
+            || self.harness.as_ref().is_some_and(|h| h.probing_models())
     }
 
     /// Whether Lever is still setting a thread's session to what the thread
@@ -1200,7 +1232,7 @@ impl Service {
         // A harness that says only what changed, the Model, still offers the
         // modes it offered.
         if cat.modes.is_empty()
-            && self.harness.as_ref().is_some_and(AcpHarness::has_modes)
+            && self.harness.as_ref().is_some_and(|h| h.capabilities().supports_modes)
             && let Some(existing) = &self.model_catalog
         {
             cat.modes = existing.modes.clone();
@@ -1277,7 +1309,7 @@ impl Service {
     /// stops a harness whose environment changed once it is idle, and stops
     /// the harness if no thread has worked for `idle_timeout`.
     pub fn on_wake(&mut self, log: &mut Log) -> Effects {
-        sys::reap_orphans(self.harness.as_ref().map(AcpHarness::pid));
+        sys::reap_orphans(self.harness.as_ref().and_then(|h| h.pid()));
         self.give_up_unanswered_live_list(log);
         if self.discovery_schedule.take_due(Instant::now()) {
             self.trigger_discovery(log);
@@ -1378,6 +1410,7 @@ impl Service {
     /// ends what it was working on.
     fn kill_harness(&mut self, why: &str, log: &mut Log) -> Effects {
         if let Some(harness) = self.harness.take() {
+            self.harness_gen = self.harness_gen.wrapping_add(1);
             let pid = harness.pid();
             harness.kill_tree();
             let name = self
@@ -1385,10 +1418,11 @@ impl Service {
                 .as_ref()
                 .map(|c| c.name.as_str())
                 .unwrap_or("harness");
-            let _ = log.write(
-                Event::Harness,
-                &format!("stopped {name} (process {pid}) and every process under it: {why}"),
-            );
+            let msg = match pid {
+                Some(pid) => format!("stopped {name} (process {pid}) and every process under it: {why}"),
+                None => format!("stopped {name} and every process under it: {why}"),
+            };
+            let _ = log.write(Event::Harness, &msg);
         }
         self.after_harness_gone("The harness was stopped.", log)
     }
@@ -1512,7 +1546,7 @@ impl Service {
     }
 
     pub fn on_harness_writable(&mut self, log: &mut Log) -> Effects {
-        let ok = self.harness.as_mut().is_none_or(AcpHarness::on_writable);
+        let ok = self.harness.as_mut().is_none_or(|h| h.on_writable());
         if !ok {
             let mut effects = self.on_harness_exited(log);
             effects.broadcasts.extend(self.drain_queues(log));
@@ -1533,7 +1567,7 @@ impl Service {
         let probes = self
             .harness
             .as_mut()
-            .map(AcpHarness::take_new_probe_sessions)
+            .map(|h| h.take_new_probe_sessions())
             .unwrap_or_default();
         for probe in probes {
             if let Err(err) = self.store.remember_ignored_session(&probe, "probe", unix_now()) {
@@ -1541,22 +1575,22 @@ impl Service {
             }
         }
         let mut effects = Effects::default();
-        let pid = self.harness.as_ref().map(AcpHarness::pid);
+        let batch_gen = self.harness_gen;
         self.in_harness_batch = true;
         for ev in events {
             match ev {
-                AcpEvent::Exited => {
+                HarnessEvent::Exited => {
                     effects.extend(self.on_harness_exited(log));
                     break;
                 }
-                other => effects.extend(self.apply_acp_event(other, log)),
+                other => effects.extend(self.apply_harness_event(other, log)),
             }
             if let Some(why) = self.kill_wanted.take() {
                 effects.extend(self.kill_harness(why, log));
             }
             // What came after in the same read was the stopped harness's:
             // it says nothing of the work Lever has ended.
-            if self.harness.as_ref().map(AcpHarness::pid) != pid {
+            if self.harness_gen != batch_gen || self.harness.is_none() {
                 break;
             }
         }
@@ -2031,7 +2065,7 @@ impl Service {
         self.loading_history
             .entry(thread_id.to_string())
             .or_insert_with(|| (session_id.to_string(), cwd.to_string()));
-        if self.harness.as_ref().is_some_and(AcpHarness::is_initialized) && !self.dispatched_history.contains(thread_id)
+        if self.harness.as_ref().is_some_and(|h| h.is_initialized()) && !self.dispatched_history.contains(thread_id)
         {
             let mcp_servers = self.mcp_servers_for_thread(thread_id);
             let loaded = self
@@ -2332,7 +2366,7 @@ impl Service {
         }
         // What the harness offers is not known yet: it is asked once, and the
         // answer comes as a `commands` event to whoever watches.
-        let probing = self.probe_wanted || self.harness.as_ref().is_some_and(AcpHarness::probing_models);
+        let probing = self.probe_wanted || self.harness.as_ref().is_some_and(|h| h.probing_models());
         if known.is_none() && !self.commands_probed && !probing && !self.harness_env_stale {
             self.read_what_the_harness_offers(log);
         }
@@ -2480,7 +2514,7 @@ impl Service {
 
     /// Keeps the effort levels a thread's session offers for its Model, and
     /// returns the session's effort selector.
-    fn note_session_efforts(&mut self, thread_id: &str) -> Option<Option<crate::acp::EffortSelector>> {
+    fn note_session_efforts(&mut self, thread_id: &str) -> Option<Option<EffortSelector>> {
         let harness = self.harness.as_ref()?;
         let session_id = harness.session_for_thread(thread_id)?;
         let selector = harness.session_effort(session_id).cloned();
@@ -3027,7 +3061,7 @@ impl Service {
             };
         }
 
-        if self.harness.as_ref().is_some_and(AcpHarness::is_initialized) {
+        if self.harness.as_ref().is_some_and(|h| h.is_initialized()) {
             self.dispatch_turn(&thread_id);
         }
 
@@ -3095,7 +3129,7 @@ impl Service {
         // So does a thread whose subagent asks: OpenCode 2.4.1 withdraws a
         // subagent's request when a new prompt comes, and a steered message
         // comes as one.
-        if !self.harness.as_ref().is_some_and(AcpHarness::can_steer)
+        if !self.harness.as_ref().is_some_and(|h| h.capabilities().supports_steering)
             || self
                 .waiting
                 .values()
@@ -3669,7 +3703,7 @@ impl Service {
     /// Whether `mode` is one Lever offers: one of its own, and, once Lever
     /// knows which the harness reports, one of those.
     fn check_mode(&self, mode: &str) -> Result<(), RequestOutcome> {
-        if !acp::is_mode(mode) {
+        if !harness::is_mode(mode) {
             return Err(error_outcome("invalid-mode", &format!("There is no mode {mode}.")));
         }
         if let Some(catalog) = &self.model_catalog
@@ -3712,7 +3746,7 @@ impl Service {
         // is saved for the fresh session instead.
         self.flush_pending_session_reset(thread_id);
         if let Some(harness) = self.harness.as_mut()
-            && harness.has_modes()
+            && harness.capabilities().supports_modes
             && let Some(session_id) = harness.session_for_thread(thread_id).map(str::to_string)
             && harness.session_current_mode(&session_id) != Some(mode)
         {
@@ -3937,12 +3971,16 @@ impl Service {
             .ok_or_else(|| "No harness is available.".to_string())?
             .clone();
         let free_hosted_models = self.free_hosted_models();
-        let harness = AcpHarness::spawn(&cfg, free_hosted_models)?;
-        let _ = log.write(
-            Event::Harness,
-            &format!("started {} (process {})", cfg.name, harness.pid()),
-        );
+        let harness = self
+            .harness_factory
+            .spawn(&cfg, HarnessLaunchOptions { free_hosted_models })?;
+        let started_msg = match harness.pid() {
+            Some(pid) => format!("started {} (process {pid})", cfg.name),
+            None => format!("started {}", cfg.name),
+        };
+        let _ = log.write(Event::Harness, &started_msg);
         self.harness = Some(harness);
+        self.harness_gen = self.harness_gen.wrapping_add(1);
         self.mcp_auth = sys::random_hex(16);
         self.mcp_sessions.clear();
         self.pending_session_resets.clear();
@@ -3954,6 +3992,7 @@ impl Service {
 
     fn stop_harness(&mut self, reason: &str, log: &mut Log) {
         if let Some(harness) = self.harness.take() {
+            self.harness_gen = self.harness_gen.wrapping_add(1);
             let pid = harness.pid();
             harness.stop();
             let name = self
@@ -3961,7 +4000,11 @@ impl Service {
                 .as_ref()
                 .map(|c| c.name.as_str())
                 .unwrap_or("harness");
-            let _ = log.write(Event::Harness, &format!("stopped {name} (process {pid}) {reason}"));
+            let msg = match pid {
+                Some(pid) => format!("stopped {name} (process {pid}) {reason}"),
+                None => format!("stopped {name} {reason}"),
+            };
+            let _ = log.write(Event::Harness, &msg);
         }
         self.mcp_auth.clear();
         self.mcp_sessions.clear();
@@ -4454,7 +4497,7 @@ impl Service {
             active.dispatch = TurnDispatch::WaitingForEffort;
             return;
         }
-        if harness.has_modes() && harness.session_current_mode(&session_id) != Some(active.mode.as_str()) {
+        if harness.capabilities().supports_modes && harness.session_current_mode(&session_id) != Some(active.mode.as_str()) {
             harness.set_session_mode(thread_id, Some(active.turn), &session_id, &active.mode);
             active.dispatch = TurnDispatch::WaitingForMode;
         } else if self.in_harness_batch
@@ -4486,12 +4529,15 @@ impl Service {
         }
     }
 
-    fn apply_acp_event(&mut self, event: AcpEvent, log: &mut Log) -> Effects {
+    fn apply_harness_event(&mut self, event: HarnessEvent, log: &mut Log) -> Effects {
         match event {
-            AcpEvent::SessionDeleted { thread_id, result } => self.finish_delete(&thread_id, result, None, log),
-            AcpEvent::SteerAnswered { steer, taken } => self.steer_answered(steer, taken, log),
-            AcpEvent::Initialized => {
-                self.steering = self.harness.as_ref().is_some_and(AcpHarness::can_steer);
+            HarnessEvent::SessionDeleted { thread_id, result } => self.finish_delete(&thread_id, result, None, log),
+            HarnessEvent::SteerAnswered { steer, taken } => self.steer_answered(steer, taken, log),
+            HarnessEvent::Initialized => {
+                self.steering = self
+                    .harness
+                    .as_ref()
+                    .is_some_and(|h| h.capabilities().supports_steering);
                 let waiting: Vec<String> = self
                     .working_turns
                     .iter()
@@ -4516,7 +4562,7 @@ impl Service {
                 effects.extend(self.dispatch_deletes(log));
                 effects
             }
-            AcpEvent::InitializeFailed { message } => {
+            HarnessEvent::InitializeFailed { message } => {
                 // What the harness said goes to the turns it fails, which
                 // are the person's, and not into the log.
                 let _ = log.write(Event::Error, "the harness could not be initialized");
@@ -4533,7 +4579,7 @@ impl Service {
                 self.stop_harness("after initialize failure", log);
                 effects
             }
-            AcpEvent::ModelsProbed(result) => {
+            HarnessEvent::ModelsProbed(result) => {
                 let mut effects = Effects::default();
                 if self.harness_env_stale {
                     let msg = "Lever is restarting the harness after the free hosted Models setting changed; try again when active turns finish.";
@@ -4617,7 +4663,7 @@ impl Service {
                 }
                 effects
             }
-            AcpEvent::SessionReady {
+            HarnessEvent::SessionReady {
                 thread_id,
                 session_id,
                 afresh,
@@ -4690,7 +4736,7 @@ impl Service {
                 }
                 effects
             }
-            AcpEvent::SessionFailed {
+            HarnessEvent::SessionFailed {
                 thread_id,
                 turn,
                 message,
@@ -4715,7 +4761,7 @@ impl Service {
                     .extend(self.fail_turn(&thread_id, turn, &display, log));
                 effects
             }
-            AcpEvent::ModelSet {
+            HarnessEvent::ModelSet {
                 thread_id,
                 turn,
                 model,
@@ -4793,7 +4839,7 @@ impl Service {
                 }
                 effects
             }
-            AcpEvent::ModelSetFailed {
+            HarnessEvent::ModelSetFailed {
                 thread_id,
                 turn,
                 message,
@@ -4829,7 +4875,7 @@ impl Service {
                 }
                 effects
             }
-            AcpEvent::CatalogUpdated {
+            HarnessEvent::CatalogUpdated {
                 thread_id,
                 catalog,
                 current_model,
@@ -4897,7 +4943,7 @@ impl Service {
                 }
                 effects
             }
-            AcpEvent::ModeSet { thread_id, turn } => {
+            HarnessEvent::ModeSet { thread_id, turn } => {
                 if turn.is_some()
                     && self
                         .working_turns
@@ -4913,7 +4959,7 @@ impl Service {
                 }
                 Effects::default()
             }
-            AcpEvent::ModeSetFailed {
+            HarnessEvent::ModeSetFailed {
                 thread_id,
                 turn,
                 message,
@@ -4927,7 +4973,7 @@ impl Service {
                     None => self.finish_set_mode(&thread_id, Some(&message), log),
                 }
             }
-            AcpEvent::EffortSet { thread_id, turn } => {
+            HarnessEvent::EffortSet { thread_id, turn } => {
                 self.pending_effort_threads.remove(&thread_id);
                 if self
                     .working_turns
@@ -4940,7 +4986,7 @@ impl Service {
                 }
                 Effects::default()
             }
-            AcpEvent::EffortSetFailed {
+            HarnessEvent::EffortSetFailed {
                 thread_id,
                 turn,
                 message,
@@ -4956,7 +5002,7 @@ impl Service {
                     replies: Vec::new(),
                 }
             }
-            AcpEvent::EffortsProbed { model, result } => {
+            HarnessEvent::EffortsProbed { model, result } => {
                 let mut effects = Effects::default();
                 let waiting: Vec<u64> = self
                     .pending_efforts
@@ -4993,7 +5039,7 @@ impl Service {
                 }
                 effects
             }
-            AcpEvent::Commands { thread_id, commands } => {
+            HarnessEvent::Commands { thread_id, commands } => {
                 let mut effects = Effects::default();
                 match thread_id {
                     Some(thread_id) => {
@@ -5021,7 +5067,7 @@ impl Service {
                 }
                 effects
             }
-            AcpEvent::PermissionRequested {
+            HarnessEvent::PermissionRequested {
                 thread_id,
                 harness_subagent_id,
                 subagent_title,
@@ -5050,7 +5096,7 @@ impl Service {
                     log,
                 )
             }
-            AcpEvent::PermissionWithdrawn { handle } => {
+            HarnessEvent::PermissionWithdrawn { handle } => {
                 let id = self
                     .waiting
                     .iter()
@@ -5062,7 +5108,7 @@ impl Service {
                 }
                 effects
             }
-            AcpEvent::SubagentUpdated {
+            HarnessEvent::SubagentUpdated {
                 thread_id,
                 harness_subagent_id,
                 title,
@@ -5078,7 +5124,7 @@ impl Service {
                 from_launcher,
                 log,
             ),
-            AcpEvent::SubagentMessage {
+            HarnessEvent::SubagentMessage {
                 thread_id,
                 harness_subagent_id,
                 title,
@@ -5116,7 +5162,7 @@ impl Service {
                     replies: Vec::new(),
                 }
             }
-            AcpEvent::SubagentAct {
+            HarnessEvent::SubagentAct {
                 thread_id,
                 harness_subagent_id,
                 subagent_title,
@@ -5159,7 +5205,7 @@ impl Service {
                     replies: Vec::new(),
                 }
             }
-            AcpEvent::TextChunk { thread_id, text } => {
+            HarnessEvent::TextChunk { thread_id, text } => {
                 let mut broadcasts = Vec::new();
                 let Some(turn) = self.turn_for_session_update(&thread_id, true, &mut broadcasts, log) else {
                     return Effects::default();
@@ -5184,7 +5230,7 @@ impl Service {
                     replies: Vec::new(),
                 }
             }
-            AcpEvent::Act {
+            HarnessEvent::Act {
                 thread_id,
                 harness_call_id,
                 is_new,
@@ -5230,7 +5276,7 @@ impl Service {
                     replies: Vec::new(),
                 }
             }
-            AcpEvent::TitleUpdated { thread_id, title } => {
+            HarnessEvent::TitleUpdated { thread_id, title } => {
                 if let Err(err) = self.store.update_thread_title(&thread_id, &title, unix_now()) {
                     self.could_not_save(&thread_id, &err, log);
                     return Effects::default();
@@ -5247,7 +5293,7 @@ impl Service {
                     replies: Vec::new(),
                 }
             }
-            AcpEvent::UnknownUpdate {
+            HarnessEvent::UnknownUpdate {
                 thread_id,
                 raw_json,
                 plain_text,
@@ -5258,7 +5304,7 @@ impl Service {
                     replies: Vec::new(),
                 }
             }
-            AcpEvent::PromptFinished {
+            HarnessEvent::PromptFinished {
                 thread_id,
                 turn,
                 outcome,
@@ -5323,13 +5369,13 @@ impl Service {
                     replies: Vec::new(),
                 }
             }
-            AcpEvent::HistoryLoaded {
+            HarnessEvent::HistoryLoaded {
                 thread_id,
                 history,
                 catalog,
             } => self.finish_history_loaded(&thread_id, history, catalog, log),
-            AcpEvent::HistoryLoadFailed { thread_id, message } => self.fail_history_load(&thread_id, &message),
-            AcpEvent::SessionsListed(result) => {
+            HarnessEvent::HistoryLoadFailed { thread_id, message } => self.fail_history_load(&thread_id, &message),
+            HarnessEvent::SessionsListed(result) => {
                 // What the listing wrote, it wrote before it answered.
                 self.on_store_changed();
                 self.live_list_in_flight = false;
@@ -5383,7 +5429,7 @@ impl Service {
                 );
                 applied.effects
             }
-            AcpEvent::Exited => Effects::default(),
+            HarnessEvent::Exited => Effects::default(),
         }
     }
 
@@ -5901,6 +5947,7 @@ impl Service {
 
     fn on_harness_exited(&mut self, log: &mut Log) -> Effects {
         if let Some(harness) = self.harness.take() {
+            self.harness_gen = self.harness_gen.wrapping_add(1);
             let pid = harness.pid();
             let fault = harness.fault();
             // A turn or subagent the person asked to stop ends with everything
@@ -5917,9 +5964,13 @@ impl Service {
                 .as_ref()
                 .map(|c| c.name.as_str())
                 .unwrap_or("harness");
+            let who = match pid {
+                Some(pid) => format!("{name} (process {pid})"),
+                None => name.to_string(),
+            };
             let what = match fault {
-                Some(fault) => format!("{name} (process {pid}) was stopped: it {fault}"),
-                None => format!("{name} (process {pid}) exited unexpectedly"),
+                Some(fault) => format!("{who} was stopped: it {fault}"),
+                None => format!("{who} exited unexpectedly"),
             };
             let _ = log.write(Event::Harness, &what);
         }
@@ -6548,7 +6599,7 @@ fn models_payload_json(kind_key: &str, catalog: &ModelCatalog, free_hosted_model
         "modes": catalog
             .modes
             .iter()
-            .map(|m| json!({ "id": m, "name": acp::mode_name(m).unwrap_or(m) }))
+            .map(|m| json!({ "id": m, "name": harness::mode_name(m).unwrap_or(m) }))
             .collect::<Vec<_>>(),
         "steering": steering,
     });

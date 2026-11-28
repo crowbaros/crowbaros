@@ -10,6 +10,10 @@ description = "Lever, the CrowbarOS service that drives the person's harnesses. 
 members = [".", "client"]
 default-members = [".", "client"]
 
+[lib]
+name = "crowbar_lever"
+path = "src/lib.rs"
+
 [[bin]]
 name = "crowbar-lever"
 path = "src/main.rs"
