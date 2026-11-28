@@ -73,11 +73,14 @@ sides hold.
 | Change touches | Run | Show |
 | --- | --- | --- |
 | The compositor check or guest driver in `lab/void/` | `lab/void/compositor_check.py` | The evidence log it writes |
-| The desktop: how `base/` builds or runs the compositor, the shell, Lever, or the apps, or `lever/`, or the desktop check or guest driver in `lab/void/` | `lab/void/desktop_check.py` | The run's `desktop.log` and `results.json` |
-| The pinned version of OpenCode (`opencode_*` in [`base/config.json`](base/config.json)) | `lab/void/desktop_check.py` | The run's `desktop.log` and `results.json` |
 | How the compositor serves clients: [`compositor/`](compositor/README.md) | `lab/void/compositor_check.py` | The evidence log it writes |
 | `apps/` | The app's Void build and run steps in its README | Before and after captures; a short recording for motion |
 
+- The desktop check, `lab/void/desktop_check.py`, boots Base's desktop in the
+  graphical guest and drives the shell, Lever, and the apps. No change
+  requires it. An agent runs it only when the person it works for asks. If
+  you run it, show the run's `desktop.log` and `results.json` in the pull
+  request, and say which `main` commit it ran on.
 - While you iterate, run the quickest thing that can fail: the component's
   own tests (`cargo test` in its directory, or the `test_*.py` beside a
   script), and a lab check with `--no-build` when only the check itself
@@ -85,8 +88,7 @@ sides hold.
   evidence. Before you push, run the full check the table above asks for.
 - When `main` moves while your check runs, rebase, but run the check again only
   if what landed touches a path that check covers. The compositor check covers
-  `base/`, `lab/void/`, and `compositor/`. The desktop check covers `base/`,
-  `lab/void/`, `compositor/`, `lever/`, and `apps/`. To see what landed, give
+  `base/`, `lab/void/`, and `compositor/`. To see what landed, give
   the `main` commit your branch sat on when you ran the check:
   `git diff --stat <that commit>..origin/main -- <the paths>`. If it prints
   nothing, the evidence stands. Say in the pull request which `main` commit it
