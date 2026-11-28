@@ -113,9 +113,11 @@ impl Lab {
                 .arg(self.rpc_log());
         }
 
-        // Lever reads the person's OpenCode settings: here the person has none.
+        // Lever reads the person's OpenCode settings and store: here the person has none.
         let home = self.directory.join("home");
-        cmd.env("HOME", &home).env("XDG_CONFIG_HOME", home.join(".config"));
+        cmd.env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"));
         for key in ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT"] {
             cmd.env_remove(key);
         }

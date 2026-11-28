@@ -1602,6 +1602,23 @@ finally:
                     },
                     'after_tool': 'Started a subagent to inspect the env file.',
                 },
+                {
+                    'match': 'hand-session-check',
+                    # Held, so the session is listed while its first turn works.
+                    'hold_until': f'{tmp}/hand-release',
+                    'tool_call': {
+                        'name': 'shell',
+                        'arguments': {
+                            'command': 'echo HAND_SESSION_CMD_OK',
+                            'description': 'Echo marker from terminal session',
+                        },
+                    },
+                    'after_tool': 'Terminal command output: {tool_output}',
+                },
+                {
+                    'match': 'hand-followup',
+                    'reply': 'Continued from drawer on {model}.',
+                },
             ],
             'default_reply': 'Stub ({model}): {prompt}',
         }
@@ -2755,6 +2772,159 @@ finally:
             )
             self.key('meta_l', 'spc')
             self.wait('drawer closed after lifecycle checks', lambda: not self.agent_view()['drawer_up'])
+
+            # 8c. Terminal session started by hand (#382): `opencode run` in a
+            # folder against the stub Model becomes a thread in that folder
+            # while its first turn still works, with Lever's own harness
+            # stopped so discovery runs OpenCode once to list and then stops
+            # it. It does not duplicate Lever threads or list subagents, and
+            # once the store is quiet no listing starts again. It loads its
+            # history on open and accepts a follow-up from the drawer.
+            hand_dir = f'{tmp}/hand-session'
+            self.run(f'install -d -o {person} -g {person} {hand_dir}')
+            # Every OpenCode now is Lever's harness or under it; no session
+            # by hand runs yet.
+            self.run("ps -eo pid,ppid,args | grep '[o]pencode'; pkill -KILL -x opencode; true")
+            # A killed process Lever has yet to reap is a zombie, not running.
+            self.wait("Lever's own OpenCode stopped before the hand-started session",
+                      lambda: not self.guest.ssh("ps -eo stat=,comm= | awk '$2 == \"opencode\" && $1 !~ /^Z/'",
+                                                 check=False).stdout.strip())
+            threads_before_hand = list(self.agent_view()['state']['threads'])
+            self.run(
+                # Only the command goes to the background, so nothing holds ssh's output.
+                f'cd {hand_dir} || exit 1; nohup chpst -u {person}:{person} env -i HOME={home} '
+                f'XDG_CONFIG_HOME={home}/.config XDG_DATA_HOME={home}/.local/share '
+                f'XDG_CACHE_HOME={home}/.cache XDG_STATE_HOME={home}/.local/state '
+                f'PATH=/usr/local/bin:/usr/bin:/bin '
+                f'OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_FREE_MODELS=1 '
+                f'opencode run --model stub/stub-1 "please hand-session-check" '
+                f'</dev/null >{tmp}/hand-run.log 2>&1 &'
+            )
+            hand_started = time.monotonic()
+            hand_listed = self.wait(
+                'session started by hand with opencode run appears in Lever thread list while its turn works',
+                lambda: (v := self.agent_view())
+                and any(t.get('cwd') == hand_dir for t in v['state']['threads'])
+                and v,
+                timeout=20,
+            )
+            hand_listed_after = time.monotonic() - hand_started
+            turn_still_held = self.guest.ssh(f'test -e {tmp}/hand-release', check=False).returncode != 0
+            self.run(f'touch {tmp}/hand-release')
+            self.wait('opencode run started by hand finishes',
+                      lambda: not self.guest.ssh("pgrep -f '[o]pencode run --model stub/stub-1'",
+                                                 check=False).stdout.strip(),
+                      timeout=90)
+            self.log('opencode run output:\n' + self.guest.ssh(f'cat {tmp}/hand-run.log', check=False).stdout)
+            # Once the store goes quiet, Lever starts no OpenCode to list it.
+            time.sleep(5)
+            listing_pids = json.loads(self.python("""
+import json, time
+from pathlib import Path
+def stats():
+    for path in Path('/proc').glob('[0-9]*/stat'):
+        try:
+            stat = path.read_text()
+        except OSError:
+            continue
+        yield path.parent.name, stat[stat.index('(') + 1:stat.rindex(')')], stat[stat.rindex(')') + 2:].split()[1]
+seen = set()
+end = time.monotonic() + 8
+while time.monotonic() < end:
+    found = list(stats())
+    levers = {pid for pid, name, _ in found if name == 'crowbar-lever'}
+    seen.update(pid for pid, name, ppid in found if name == 'opencode' and ppid in levers)
+    time.sleep(0.05)
+print(json.dumps(sorted(seen)))
+"""))
+            threads_after_hand = self.agent_view()['state']['threads']
+            hand_entry = next(t for t in threads_after_hand if t.get('cwd') == hand_dir)
+            hand_thread_id = hand_entry['thread']
+            self.check(
+                'a session started by hand with opencode run becomes a thread in its folder while its turn '
+                'works, without duplicating Lever threads, listing subagents, or starting OpenCode again on a '
+                'quiet store',
+                hand_thread_id.startswith('t-')
+                and turn_still_held
+                and 'ses_' not in json.dumps(threads_after_hand)
+                and len(threads_after_hand) == len(threads_before_hand) + 1
+                and not listing_pids,
+                json.dumps({
+                    'before': len(threads_before_hand),
+                    'after': len(threads_after_hand),
+                    'entry': hand_entry,
+                    'listed_after_s': round(hand_listed_after, 1),
+                    'turn_still_held': turn_still_held,
+                    'listings_on_quiet_store': listing_pids,
+                }),
+            )
+            self.key('meta_l', 'spc')
+            self.wait('drawer opens for hand-started session check', lambda: self.agent_view()['drawer_up'])
+            self.key('ctrl', 'l')
+            self.wait('thread list opens showing hand-started session', lambda: self.agent_view()['state']['list_view'])
+            time.sleep(0.3)
+            self.capture('31d-hand-session-listed')
+            click_control(f'thread:{hand_thread_id}')
+            hand_opened = self.wait(
+                'opening the hand-started thread imports its history into Lever and the drawer',
+                lambda: (v := self.agent_view())
+                and not v['state']['list_view']
+                and v['state']['thread'] == hand_thread_id
+                and len(v['state'].get('turns', [])) >= 1
+                and 'HAND_SESSION_CMD_OK' in v['state']['turns'][0].get('answer', '')
+                and v,
+                timeout=30,
+            )
+            time.sleep(0.4)
+            self.capture('31e-hand-session-opened')
+            self.type('please hand-followup')
+            self.key('ret')
+            hand_continued = self.wait(
+                'follow-up sent from the drawer on the hand-started thread completes',
+                lambda: (v := self.agent_view())
+                and v['state']['thread'] == hand_thread_id
+                and len(v['state'].get('turns', [])) >= 2
+                and v['state']['turns'][1]['state']['kind'] == 'done'
+                and v,
+                timeout=45,
+            )
+            hand_turns = hand_continued['state']['turns']
+            hand_resume_out = self.run(
+                f'chpst -u {person} env HOME={home} XDG_RUNTIME_DIR=/run/user/{void_base.PERSON_UID} '
+                f'crowbar-agent --resume {hand_thread_id} </dev/null 2>&1'
+            )
+            followup_reqs = [
+                r for r in stub_requests()
+                if 'hand-followup' in (r.get('prompt') or '')
+            ]
+            followup_saw_terminal_act = any(
+                'HAND_SESSION_CMD_OK' in out
+                for r in followup_reqs
+                for out in (r.get('history_tool_outputs') or [])
+            )
+            self.check(
+                'opening a hand-started thread imports its turn and acts into Lever, keeps the mode it was '
+                'listed with, and sending from the drawer continues the same session',
+                'hand-session-check' in hand_turns[0].get('message', '')
+                and 'HAND_SESSION_CMD_OK' in hand_turns[0].get('answer', '')
+                and len(hand_turns[0].get('acts') or []) >= 1
+                and 'Continued from drawer' in hand_turns[1].get('answer', '')
+                and followup_saw_terminal_act
+                and 'ses_' not in json.dumps(hand_turns)
+                and 'HAND_SESSION_CMD_OK' in hand_resume_out
+                and 'Continued from drawer' in hand_resume_out
+                and hand_continued['state'].get('mode') == hand_entry.get('mode'),
+                json.dumps({
+                    'turns': [{k: t.get(k) for k in ('turn', 'message', 'answer', 'state')} for t in hand_turns],
+                    'acts0': len(hand_turns[0].get('acts') or []),
+                    'followup_saw_terminal_act': followup_saw_terminal_act,
+                    'listed_mode': hand_entry.get('mode'),
+                    'opened_mode': hand_continued['state'].get('mode'),
+                }),
+            )
+            self.key('meta_l', 'spc')
+            self.wait('drawer closed after hand-started session check', lambda: not self.agent_view()['drawer_up'])
+
             self.agent_restart_recovery(tmp, home)
 
             # 9. With no Model reachable, a message is refused and the drawer says why.

@@ -39,10 +39,11 @@ use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AgentCapabilities, AvailableCommand, AvailableCommandInput, AvailableCommandsUpdate,
     CLIENT_METHOD_NAMES, CancelNotification, CloseSessionRequest, CloseSessionResponse, ConfigOptionUpdate,
     ContentBlock, ContentChunk, Diff, Error as AcpError, Implementation, InitializeRequest, InitializeResponse,
-    JsonRpcMessage, LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, Notification,
-    PROTOCOL_LEVEL_METHOD_NAMES, PermissionOption, PermissionOptionKind, PromptRequest, PromptResponse, Request,
-    RequestId, RequestPermissionRequest, Response, SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
-    SessionConfigOptionCategory, SessionConfigSelectOption, SessionId, SessionInfoUpdate, SessionNotification,
+    JsonRpcMessage, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse,
+    NewSessionRequest, NewSessionResponse, Notification, PROTOCOL_LEVEL_METHOD_NAMES, PermissionOption,
+    PermissionOptionKind, PromptRequest, PromptResponse, Request, RequestId, RequestPermissionRequest, Response,
+    SessionCapabilities, SessionCloseCapabilities, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigSelectOption, SessionId, SessionInfo, SessionInfoUpdate, SessionListCapabilities, SessionNotification,
     SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason, TextContent, ToolCall,
     ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
     UnstructuredCommandInput,
@@ -81,8 +82,106 @@ struct StubCommand {
 /// offer the one it had.
 const DEFAULT_EFFORT: &str = "default";
 
+#[derive(Debug, Clone, Deserialize)]
+struct StubExternalSession {
+    session_id: String,
+    cwd: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    updated_at: Option<String>,
+    #[serde(default)]
+    is_subagent: bool,
+    #[serde(default)]
+    parent_session_id: Option<String>,
+    #[serde(default)]
+    history: Vec<Step>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChangeAfterList {
+    on_start: usize,
+    sessions: Value,
+    /// If true, the change is made after the listing is read and before its
+    /// answer is sent, not after.
+    #[serde(default)]
+    before_answer: bool,
+    /// Which of the process's listings it follows: the first by default.
+    #[serde(default = "first_listing")]
+    listing: u64,
+}
+
+fn first_listing() -> u64 {
+    1
+}
+
+/// Replaces the sessions file as `change_after_list` says, if this process
+/// and its `listed`th listing are the ones it names, `before` its answer or
+/// after it.
+fn change_store_after_listing(script: &Script, before: bool, listed: u64) {
+    if script
+        .change_after_list
+        .as_ref()
+        .is_none_or(|c| c.before_answer != before || c.listing != listed)
+    {
+        return;
+    }
+    let (Some(change), Some(starts), Some(file)) =
+        (&script.change_after_list, &script.touch_on_start, &script.sessions_file)
+    else {
+        return;
+    };
+    let started = std::fs::read_to_string(starts).map(|t| t.lines().count()).unwrap_or(0);
+    if started != change.on_start {
+        return;
+    }
+    if !before {
+        // After the answer has gone out, which a writer thread sends.
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let tmp = format!("{file}.tmp");
+    if std::fs::write(&tmp, change.sessions.to_string()).is_ok() {
+        let _ = std::fs::rename(&tmp, file);
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct Script {
+    /// A file the stub appends a line to each time it starts, as OpenCode
+    /// writes to its own store whenever it opens it.
+    #[serde(default)]
+    touch_on_start: Option<String>,
+    /// If set, the process that starts this many times (as
+    /// `touch_on_start` counts) fails every `session/list`.
+    #[serde(default)]
+    fail_list_on_start: Option<usize>,
+    /// A file the stub appends a line to as it answers each listing, as a
+    /// running harness's own turn writes to its store meanwhile.
+    #[serde(default)]
+    touch_on_list: Option<String>,
+    #[serde(default)]
+    list_sessions: bool,
+    /// If set, the sessions file is replaced with these sessions once the
+    /// process that starts the `on_start`th time (as `touch_on_start` counts)
+    /// has answered a listing: the store changes after the listing was taken.
+    #[serde(default)]
+    change_after_list: Option<ChangeAfterList>,
+    /// If set, the mode a session this process did not begin is reported in
+    /// when it is loaded, as OpenCode reports its own default agent.
+    #[serde(default)]
+    load_mode: Option<String>,
+    /// If true, `session/list` goes unanswered once this process has taken
+    /// a prompt, as a harness that is busy and never gets to it.
+    #[serde(default)]
+    withhold_list_after_prompt: bool,
+    #[serde(default)]
+    sessions_file: Option<String>,
+    #[serde(default)]
+    external_sessions: Vec<StubExternalSession>,
+    #[serde(default)]
+    list_page_size: Option<usize>,
+    #[serde(default)]
+    load_session_error: Option<ScriptError>,
     #[serde(default)]
     delete_session: bool,
     #[serde(default)]
@@ -264,6 +363,9 @@ fn default_stop_reason() -> String {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Step {
+    UserText {
+        text: String,
+    },
     Text {
         text: String,
     },
@@ -1521,6 +1623,12 @@ fn emit_step(
             }
             thread::sleep(dur);
         }
+        Step::UserText { text } => {
+            writer.send_update(
+                session_id,
+                SessionUpdate::UserMessageChunk(ContentChunk::new(ContentBlock::Text(TextContent::new(text.clone())))),
+            );
+        }
         Step::Text { text } => {
             let rendered = match model {
                 Some(m) => text.replace("{model}", m),
@@ -1729,9 +1837,28 @@ fn build_config_options(
     (!options.is_empty()).then_some(options)
 }
 
+fn read_external_sessions(script: &Script) -> Vec<StubExternalSession> {
+    let mut all = script.external_sessions.clone();
+    if let Some(path) = &script.sessions_file
+        && let Ok(raw) = std::fs::read_to_string(path)
+        && let Ok(from_file) = serde_json::from_str::<Vec<StubExternalSession>>(&raw)
+    {
+        all.extend(from_file);
+    }
+    all
+}
+
 fn run(options: Options) -> Result<(), String> {
     let script_text = std::fs::read_to_string(&options.script).map_err(|e| format!("could not read script: {e}"))?;
     let script: Script = serde_json::from_str(&script_text).map_err(|e| format!("invalid script JSON: {e}"))?;
+    if let Some(path) = &script.touch_on_start {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| format!("could not open {path}: {e}"))?;
+        writeln!(file, "started").map_err(|e| format!("could not write {path}: {e}"))?;
+    }
     if let Some(env_path) = &options.env_out {
         let snapshot = json!({
             "OPENCODE_CONFIG_CONTENT": std::env::var("OPENCODE_CONFIG_CONTENT").ok(),
@@ -1783,6 +1910,8 @@ fn run(options: Options) -> Result<(), String> {
     let next_request = Arc::new(AtomicU64::new(0));
     let modes = Arc::new(Modes::read(script.modes, script.mode_values.as_deref()));
     let next_session = AtomicU64::new(1);
+    let prompted = std::sync::atomic::AtomicBool::new(false);
+    let listings = AtomicU64::new(0);
     let free_disabled = std::env::var("OPENCODE_DISABLE_FREE_MODELS").ok().as_deref() == Some("1");
     let default_model = script
         .default_model
@@ -1850,6 +1979,9 @@ fn run(options: Options) -> Result<(), String> {
             match serde_json::from_value::<InitializeRequest>(params) {
                 Ok(_init) => {
                     let mut session_caps = SessionCapabilities::new().close(SessionCloseCapabilities::new());
+                    if script.list_sessions || script.sessions_file.is_some() || !script.external_sessions.is_empty() {
+                        session_caps = session_caps.list(SessionListCapabilities::new());
+                    }
                     if script.delete_session {
                         session_caps =
                             session_caps.delete(agent_client_protocol_schema::v1::SessionDeleteCapabilities::new());
@@ -2201,15 +2333,110 @@ fn run(options: Options) -> Result<(), String> {
                 }
                 Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
             }
+        } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_list {
+            if !(script.list_sessions || script.sessions_file.is_some() || !script.external_sessions.is_empty()) {
+                writer.send_error(id, AcpError::method_not_found());
+                continue;
+            }
+            if script.withhold_list_after_prompt && prompted.load(Ordering::Relaxed) {
+                continue;
+            }
+            if let (Some(fail_on), Some(starts)) = (script.fail_list_on_start, &script.touch_on_start)
+                && std::fs::read_to_string(starts).map(|t| t.lines().count()).unwrap_or(0) == fail_on
+            {
+                writer.send_error(id, AcpError::new(-32000, "store is busy".to_string()));
+                continue;
+            }
+            match serde_json::from_value::<ListSessionsRequest>(params) {
+                Ok(list_req) => {
+                    let all = read_external_sessions(&script);
+                    let filtered: Vec<&StubExternalSession> = all
+                        .iter()
+                        .filter(|s| {
+                            list_req
+                                .cwd
+                                .as_ref()
+                                .is_none_or(|wanted| wanted.to_string_lossy() == s.cwd)
+                        })
+                        .collect();
+                    let offset: usize = list_req
+                        .cursor
+                        .as_deref()
+                        .and_then(|c| c.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    let page_size = script.list_page_size.unwrap_or(filtered.len().max(1));
+                    let end = (offset + page_size).min(filtered.len());
+                    let page: Vec<SessionInfo> = filtered
+                        .get(offset..end)
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|s| {
+                            let mut info = SessionInfo::new(s.session_id.clone(), PathBuf::from(&s.cwd));
+                            if let Some(title) = &s.title {
+                                info = info.title(title.clone());
+                            }
+                            if let Some(updated_at) = &s.updated_at {
+                                info = info.updated_at(updated_at.clone());
+                            }
+                            if s.is_subagent || s.parent_session_id.is_some() {
+                                let mut meta = serde_json::Map::new();
+                                if s.is_subagent {
+                                    meta.insert("isSubagent".to_string(), json!(true));
+                                }
+                                if let Some(parent) = &s.parent_session_id {
+                                    meta.insert("parentSessionId".to_string(), json!(parent));
+                                }
+                                info = info.meta(meta);
+                            }
+                            info
+                        })
+                        .collect();
+                    let mut resp = ListSessionsResponse::new(page);
+                    let last_page = end >= filtered.len();
+                    if !last_page {
+                        resp = resp.next_cursor(end.to_string());
+                    }
+                    let listed = if last_page {
+                        listings.fetch_add(1, Ordering::Relaxed) + 1
+                    } else {
+                        0
+                    };
+                    if let Some(path) = &script.touch_on_list
+                        && let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path)
+                    {
+                        let _ = writeln!(file, "listed");
+                    }
+                    change_store_after_listing(&script, true, listed);
+                    writer.send_result(id, resp);
+                    change_store_after_listing(&script, false, listed);
+                }
+                Err(e) => writer.send_error(id, AcpError::invalid_params().data(json!(e.to_string()))),
+            }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_load {
             match serde_json::from_value::<LoadSessionRequest>(params) {
                 Ok(load_req) => {
                     if !script.load_session {
                         writer.send_error(id, AcpError::method_not_found());
+                    } else if let Some(err) = &script.load_session_error {
+                        writer.send_error(id, AcpError::new(err.code, err.message.clone()));
                     } else {
-                        let (writer, replay) = (writer.clone(), script.load_replay.clone());
-                        let delay = Duration::from_millis(script.load_delay_ms);
                         let sid = load_req.session_id.0.as_ref().to_string();
+                        if let Some(mode) = &script.load_mode {
+                            session_modes
+                                .lock()
+                                .unwrap()
+                                .entry(sid.clone())
+                                .or_insert_with(|| mode.clone());
+                        }
+                        let external = read_external_sessions(&script)
+                            .into_iter()
+                            .find(|s| s.session_id == sid);
+                        let external_history = external.map(|s| s.history).filter(|h| !h.is_empty());
+                        let (writer, replay) = (
+                            writer.clone(),
+                            external_history.unwrap_or_else(|| script.load_replay.clone()),
+                        );
+                        let delay = Duration::from_millis(script.load_delay_ms);
                         let cur = session_models
                             .lock()
                             .unwrap()
@@ -2306,6 +2533,7 @@ fn run(options: Options) -> Result<(), String> {
                 writer.send_result(id, answer(running));
             }
         } else if req.method.as_ref() == AGENT_METHOD_NAMES.session_prompt {
+            prompted.store(true, Ordering::Relaxed);
             let prompt_req = match serde_json::from_value::<PromptRequest>(params) {
                 Ok(p) => p,
                 Err(e) => {
@@ -2491,8 +2719,42 @@ fn run(options: Options) -> Result<(), String> {
     Ok(())
 }
 
+/// Answers `session export --standalone <id>` as OpenCode does, from
+/// `$STUB_EXPORT_DIR/export-<id>.json`, logging each to `exports.log` there
+/// and writing to `$STUB_TOUCH` first, as OpenCode writes to its store as it
+/// starts.
+fn export_session(args: &[String]) -> ExitCode {
+    let Ok(dir) = std::env::var("STUB_EXPORT_DIR") else {
+        return ExitCode::from(1);
+    };
+    let dir = PathBuf::from(dir);
+    if let Ok(touch) = std::env::var("STUB_TOUCH")
+        && let Ok(mut file) = OpenOptions::new().create(true).append(true).open(touch)
+    {
+        let _ = writeln!(file, "export");
+    }
+    let id = args.last().cloned().unwrap_or_default();
+    if let Ok(mut log) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("exports.log"))
+    {
+        let _ = writeln!(log, "{id}");
+    }
+    match std::fs::read_to_string(dir.join(format!("export-{id}.json"))) {
+        Ok(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(_) => ExitCode::from(1),
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("session") && args.get(1).map(String::as_str) == Some("export") {
+        return export_session(&args);
+    }
     let Some(options) = parse_options(&args) else {
         eprintln!("usage: crowbar-stub-harness --script <path> [--log <path>]");
         return ExitCode::from(2);

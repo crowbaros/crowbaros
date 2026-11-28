@@ -39,8 +39,8 @@ crowbar-lever \
   --surface-socket <path> --shell-uid <uid> \
   --person-socket <path> --person-uid <uid> \
   [--fulcrum-socket <path>] \
-  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>]] \
-  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>]
+  [--harness <program> [--harness-arg <arg>]... [--harness-env <KEY=VALUE>]... [--harness-name <name>] [--harness-watch <dir>]...] \
+  [--idle-timeout-ms <ms>] [--stop-timeout-ms <ms>] [--wake-quiet-ms <ms>] [--discovery-debounce-ms <ms>] [--discovery-timeout-ms <ms>]
 ```
 
 On Base:
@@ -279,6 +279,109 @@ ACP today:
   harness that never stops writing holds back neither Lever's peers nor a stop
   signal. A harness that writes more than 16 MiB with no line end is stopped,
   and its working turns are `interrupted`.
+- **Sessions started outside Lever.** Lever discovers sessions the person starts
+  by hand in a terminal (or another client of the harness) through a
+  harness-agnostic discovery layer (`SessionDiscoverer`, `StoreWatcher`, and
+  `DiscoveryRunner`):
+  - **Watching the harness's store.** Lever watches the harness's store
+    directories with Linux `inotify` (watching the nearest existing ancestor
+    until a not-yet-created store directory appears, then promoting the watch).
+    For OpenCode, Lever watches the database OpenCode uses and its SQLite
+    sidecar files (`-wal`, `-journal`, `-shm`): `OPENCODE_DB` when it is set,
+    taken from OpenCode's data directory unless absolute, or `opencode.db`
+    there; the data directory is `$XDG_DATA_HOME/opencode`, or
+    `~/.local/share/opencode`. A database that is a link is watched where it
+    leads as well, as it was when Lever started, even when the file it leads
+    to is not there yet, following each link from the folder it is really
+    in. Additional
+    watch directories can be passed with `--harness-watch <dir>` for any ACP
+    harness.
+  - **Listing without keeping the harness running.** After a short debounce
+    (`--discovery-debounce-ms`, default `400` ms, and never more than 2 s after
+    the first change while the store keeps changing), a background worker runs
+    a one-shot listing command against the harness and closes it as soon as the
+    list is returned, so no harness stays running for discovery. When Lever's
+    own harness is running, it is asked over its pipe instead; one that leaves
+    a listing unanswered for `--discovery-timeout-ms` (default `15000`) is not
+    asked again while it runs. Listing writes to the harness's own store as the
+    harness starts, so a change seen while a pass runs brings a follow-up pass,
+    and a follow-up brings another only when what it listed differs from the
+    pass before it, or when the store may have changed after it listed. A
+    one-shot listing lists twice in the same harness: the harness writes to its
+    store as it starts and not once it has answered, so the second listing,
+    taken once the first has answered, has every write made since in it, and
+    the store is watched from then to the pass's end for any write after it.
+    The harness's own commands, run after listing as classifying a session
+    does, run only for sessions not yet classified, so a quiet store goes
+    quiet. A follow-up that lists the same, records no session Lever did not
+    know of, and still sees a change brings another at most three times in a
+    row, in case a harness
+    writes to its store as it ends; one pass 5 s later then looks once more,
+    and brings no more unless what it lists has changed. Lever's own running harness is asked
+    again when a write came while it listed, which may be its own turn's or
+    the person's, within the same three while what it lists does not
+    change. A failed pass brings at most one follow-up. A listing that fails
+    while a session waits to be tried again or to be written, or a session a
+    pass found and could not write, brings another pass after a wait that
+    doubles from 1 s to 60 s and starts again once a pass's writes all
+    succeed; such a pass is a follow-up, and brings no run of its own. A
+    change seen once a pass has ended always brings a pass. What a pass
+    cannot tell from its own writes is a write in the moment a pass hands
+    what it found to Lever, or one while that later pass lists; a session's
+    next write brings it. Closing a file written to is not watched, as every
+    write was seen as it was made. No listing starts a harness while the
+    harness's store has no data, as starting it would make one, nor, once
+    the store appears, until it has gone 1 s unwritten or 3 s have passed:
+    two OpenCode 2.4.1 processes that set up a new store at once can end one
+    of them, the person's in their terminal or Lever's own. Each listing
+    command has a 15 s deadline,
+    runs in a process group of its own that is ended with it, whatever of
+    the group is left ending too, and ends with Lever. Generic ACP harnesses
+    are queried via one-shot `initialize` + paginated `session/list`. For
+    OpenCode, Lever lists across all directories via one-shot `opencode acp`
+    `session/list` and classifies each unseen session with OpenCode's own
+    `opencode session export --standalone <id>`, without reading OpenCode's
+    internal SQLite schema. Sessions are classified newest first. The first
+    export of a pass has the full 15 s, and the rest only what is left of
+    the pass's 2 s, none starting with less than 0.5 s; what is left waits
+    for the next pass, which follows at once. A session becomes a thread
+    only on positive evidence: its export has messages and no parent. Only
+    an export that names a parent marks it a subagent. A session whose
+    export fails is tried again after a wait that doubles each time, from 5
+    s up to 5 minutes, or at once when the harness changes it. An empty or
+    archived one is remembered in Lever's database with its `updated` stamp,
+    and looked at again only once that stamp changes. Sessions Lever started
+    itself, the sessions it opens to read what the harness offers, the
+    sessions a replacement took over from, and subagents Lever knows about
+    are never listed twice or promoted to threads.
+  - **Lazy import on open or send.** A newly discovered session becomes a thread
+    in Lever's database with its own `t-...` ID and the folder (`cwd`) it was
+    started in, and appears in `list` and live `threads` updates. The first
+    `resume` (or a direct `send` before `resume`) loads the session through ACP
+    `session/load`, records its replayed turns, acts, and subagents atomically
+    in Lever's SQLite database, and clears its pending-import flag. Later
+    resumes read straight from SQLite without starting the harness, and a
+    follow-up message continues the same harness session. The thread takes
+    the session's Model and effort, except one the person chose for it before
+    opening it, and keeps the mode it was found with: a mode is chosen for
+    each message, and OpenCode reports its own default for a loaded session. A thread is not opened while it is being deleted. Deleting a thread deletes the harness's
+    own copy too where the harness can, so the session is gone from the
+    terminal as well; either way Lever remembers its harness session ID and its
+    subagents', so a listing taken before the delete does not bring it back.
+  - **Same session in a terminal and in the Agent's surface.** What the person
+    sees in the Agent's surface is Lever's record (ADR 0036), read from the
+    harness once, when the thread is first opened. What follows from that:
+    - A session opened while its first terminal turn still works is recorded
+      as far as the harness had written it; the rest of that turn, and turns
+      sent later in the terminal, are not read into Lever's record.
+    - A message sent from the drawer goes to the same harness session, and the
+      Model sees the terminal's turns with it. The desktop check shows this for
+      a session whose terminal turn had ended.
+    - A terminal that has the session open is not told of turns sent from the
+      drawer until it loads the session again.
+    - Sending from both places at the same moment is not tested. Each harness
+      process writes to the same session in the harness's store, and nothing
+      orders the two turns.
 
 ## Channels and framing
 
@@ -772,7 +875,9 @@ as `stopped`, or as `failed` if the harness failed instead. A harness that has
 not ended the turn after `--stop-timeout-ms` is stopped, as
 [the harness](#the-harness) says. Stop withdraws every request of the thread
 that waits, whether or not a turn is working, and with `turn`, only that
-turn's. A thread with no turn working is answered `ok` too.
+turn's. A message sent to a thread whose history Lever is still reading from
+the harness is not sent after a Stop: it is answered `working` once the
+history is read. A thread with no turn working is answered `ok` too.
 
 Request:
 
